@@ -10,4 +10,5 @@ dependencies = [
     "langchain-core>=1.6.12",
     "langchain-openai>=1.7.2",
     "pymupdf>=2.0",
+    "tqdm>=4.70.1",
 ]

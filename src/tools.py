@@ -1,4 +1,4 @@
-from src.indexing import vectore_store
+from src.indexing import get_vector_store
 from langchain.tools import tool
 
 last_retrieved_context = []
@@ -11,7 +11,8 @@ def collecting_info(query: str) -> str:
     """
     global last_retrieved_context
 
-    docs = vectore_store.similarity_search(query, k=2) 
+    store = get_vector_store()
+    docs = store.similarity_search(query, k=2) 
 
     # save the Real retrieved chunks
     last_retrieved_context = [doc.page_content for doc in docs]
