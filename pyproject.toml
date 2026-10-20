@@ -5,10 +5,16 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
+    "deepeval>=4.3.1",
     "dotenv>=0.9.9",
     "langchain>=1.4.6",
     "langchain-core>=1.6.12",
     "langchain-openai>=1.7.2",
+    "portalocker[win32]>=4.4.1",
     "pymupdf>=2.0",
     "tqdm>=4.70.1",
+    "typesafe-sdk>=0.7.5",
 ]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]

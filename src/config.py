@@ -12,6 +12,8 @@ INDEX_PATH = Path(os.getenv("INDEX_PATH", str(PROJECT_ROOT / "data" / "vector_st
 
 # --- API Settings ---
 BASE_URL = os.getenv("BASE_URL", "https://api.gapgpt.app/v1")
+JEV_URL = os.getenv("JEV_URL", "https://api.gapgpt.app/v1/systemone")
+
 api_key = os.getenv("API_KEY")
 if not api_key:
     raise RuntimeError(
@@ -22,6 +24,7 @@ API_KEY = SecretStr(api_key)
 # --- Models ---
 MODEL = os.getenv("MODEL", "deepseek-v4-flash")
 EMBED_MODEL = os.getenv("EMBED_MODEL", "text-embedding-3-large") 
+JEV_MODEL = os.getenv("JEV_MODEL", "typesafe/jev-1.13") 
 # CONTEXT_WINDOW = int(os.getenv("CONTEXT_WINDOW", "128000"))
 
 if __name__ == "__main__":
