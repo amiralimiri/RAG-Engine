@@ -4,8 +4,8 @@ from src.agent import ask
 from tqdm import tqdm
 
 EVAL_DIR = Path(__file__).resolve().parent
-INPUT_PATH = EVAL_DIR / "eval_dataset.jsonl"
-OUTPUT_PATH = EVAL_DIR / "results.jsonl"
+INPUT_PATH = EVAL_DIR / "data/eval_dataset.jsonl"
+OUTPUT_PATH = EVAL_DIR / "data/results.jsonl"
 
 with INPUT_PATH.open("r", encoding="utf-8") as file:
     test_cases = [json.loads(line) for line in file if line.strip()]

@@ -2,20 +2,11 @@
 from deepeval.metrics.jev_eval import Noul, Score, Choice
 from deepeval.test_case import LLMTestCase, SingleTurnParams
 from deepeval.metrics import JevEval
-from deepeval.models import TypeSafeModel
 from deepeval import assert_test
-from src import config
-import os
+from evaluation.judge import judge
 
 
 def test_correctness():
-    
-    os.environ["TYPESAFE_BASE_URL"] = config.JEV_URL
-    
-    custom_judge = TypeSafeModel(
-        model=config.JEV_MODEL, 
-        api_key=config.API_KEY.get_secret_value(),           
-    )
         
     correctness_metric = JevEval(
         name="Correctness",
@@ -42,7 +33,7 @@ def test_correctness():
                 },
             )
         ],
-        system_one_model=custom_judge,
+        system_one_model=judge.jev,
         threshold=0.5,
     )
     test_case = LLMTestCase(

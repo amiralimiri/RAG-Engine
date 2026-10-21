@@ -2,17 +2,10 @@
 from deepeval import assert_test
 from deepeval.test_case import LLMTestCase, SingleTurnParams
 from deepeval.metrics import GEval
-from deepeval.models import LocalModel
-from src import config
+from evaluation.judge import judge
 
 def test_correctness():
-    
-    custom_judge = LocalModel(
-        model=config.MODEL, 
-        base_url=config.BASE_URL,  
-        api_key=config.API_KEY.get_secret_value(),           
-    )
-    
+     
     correctness_metric = GEval(
         name="Correctness",
         criteria=(
@@ -20,7 +13,7 @@ def test_correctness():
             "Ignore differences in phrasing, conversational filler, or formatting as long as the core value/answer matches."
         ),
         evaluation_params=[SingleTurnParams.ACTUAL_OUTPUT, SingleTurnParams.EXPECTED_OUTPUT],
-        model=custom_judge,
+        model=judge.llm,
         threshold=0.5
     )
     
