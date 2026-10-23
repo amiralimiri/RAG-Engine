@@ -5,11 +5,16 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
+    "beautifulsoup4>=4.15.0",
     "deepeval>=4.3.1",
     "dotenv>=0.9.9",
     "langchain>=1.4.6",
+    "langchain-community>=0.4.2",
     "langchain-core>=1.6.12",
     "langchain-openai>=1.7.2",
+    "langchain-pinecone>=0.2.13",
+    "langchain-tavily>=0.2.18",
+    "langchain-typesafe>=0.0.1a3",
     "portalocker[win32]>=4.4.1",
     "pymupdf>=2.0",
     "tqdm>=4.70.1",
@@ -18,3 +23,8 @@ dependencies = [
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
+
+[dependency-groups]
+dev = [
+    "ipykernel>=7.4.0",
+]
