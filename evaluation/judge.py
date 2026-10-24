@@ -1,6 +1,8 @@
 import os
 from deepeval.models import LocalModel, TypeSafeModel
-from src import config
+from app.core.config import get_settings
+
+settings = get_settings()
 
 class JudgeModels:
     _instance = None
@@ -14,17 +16,17 @@ class JudgeModels:
 
     def _initialize_models(self):
         self.llm = LocalModel(
-            model=config.MODEL, 
-            base_url=config.BASE_URL,  
-            api_key=config.API_KEY.get_secret_value(),          
+            model=settings.llm_model, 
+            base_url=settings.base_url,  
+            api_key=settings.api_key.get_secret_value(),          
         )
 
-        if hasattr(config, "JEV_URL") and config.JEV_URL:
-            os.environ["TYPESAFE_BASE_URL"] = config.JEV_URL
+        if hasattr(settings, "jev_url") and settings.jev_url:
+            os.environ["TYPESAFE_BASE_URL"] = settings.jev_url
 
         self.jev = TypeSafeModel(
-            model=config.JEV_MODEL, 
-            api_key=config.API_KEY.get_secret_value(),          
+            model=settings.jev_model, 
+            api_key=settings.api_key.get_secret_value(),          
         )
 
 # Global Instance
