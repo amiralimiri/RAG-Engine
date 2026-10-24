@@ -18,6 +18,7 @@ dependencies = [
     "langchain-typesafe>=0.0.1a3",
     "portalocker[win32]>=4.4.1",
     "pymupdf>=2.0",
+    "python-docx>=1.2.0",
     "tqdm>=4.70.1",
     "typesafe-sdk>=0.7.5",
 ]
