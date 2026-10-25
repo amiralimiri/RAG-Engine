@@ -35,4 +35,4 @@ Create `tests/test_feedback_api.py`:
 - `test_chat_endpoint_stores_trace_in_audit(client, monkeypatch)`: Call `POST /api/chat`, verify `write_audit` received the matching `trace_id`.
 - `test_feedback_endpoint_accepts_valid_payload(client, monkeypatch)`: Post valid feedback (`{"trace_id": "tr-123", "score": 1.0, "comment": "great"}`), assert HTTP 200 and accepted status.
 - `test_feedback_endpoint_validates_score_bounds(client)`: Post score `1.5` and `-0.2`, assert HTTP 422 for both.
-- `test_feedback_task_executes_langfuse_score(monkeypatch)`: Invoke `_submit_feedback_task` directly with mock client, verify `client.score` called with exact arguments.
+- `test_feedback_task_executes_langfuse_score(monkeypatch)`: Invoke `_submit_feedback_task` directly with mock client, verify `client.create_score` (or `client.score`) called with exact arguments.

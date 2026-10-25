@@ -30,4 +30,4 @@ Create `tests/test_jev_telemetry.py`:
 - `test_estimate_jev_tokens()`: Test with various string lengths, verify output structure `{"input": int, "output": int, "total": int}` and minimum count of 1.
 - `test_ask_jev_backward_compatibility(monkeypatch)`: Mock `agent_graph.invoke`, call `ask("hello")`, verify correct invocation without errors.
 - `test_ask_jev_passes_callback(monkeypatch)`: Verify `agent_graph.invoke` receives callback in config.
-- `test_jev_node_fails_open_when_langfuse_client_fails(monkeypatch)`: Mock `get_langfuse_client` returning a mock whose `generation()` throws; verify `route_question_jev` executes and returns decision normally.
+- `test_jev_node_fails_open_when_langfuse_client_fails(monkeypatch)`: Mock `get_langfuse_client` returning a mock whose generation recording throws; verify `route_question_jev` executes and returns decision normally.

@@ -10,7 +10,7 @@ None
 Add the `langfuse` dependency to the project package configuration, and extend application settings to support Langfuse environment variables with sensible defaults.
 
 ## Deliverables
-1. `pyproject.toml`: Add `"langfuse>=2.0.0"` to `project.dependencies`.
+1. `pyproject.toml`: Add `"langfuse>=5.0.0"` to `project.dependencies`.
 2. `app/core/config.py`: Add the following fields to `Settings`:
    - `langfuse_public_key: str | None = None`
    - `langfuse_secret_key: SecretStr | None = None`

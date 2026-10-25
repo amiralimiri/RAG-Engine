@@ -89,14 +89,14 @@ To cleanly separate and compare workflows within Langfuse:
 
 ## Implementation Roadmap
 
-1. **Dependencies**: Add `langfuse>=2.0.0` to `pyproject.toml`.
+1. **Dependencies**: Add `langfuse>=5.0.0` to `pyproject.toml`.
 2. **Configuration**: Add Langfuse settings (`LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_HOST`, `LANGFUSE_ENABLED`) to `app/core/config.py`.
-3. **Telemetry Core**: Implement `app/core/telemetry.py` with `get_langfuse_callback()`, `get_langfuse_client()`, and trace helpers.
+3. **Telemetry Core**: Implement `app/core/telemetry.py` conforming to Langfuse v5 standards (`from langfuse.langchain import CallbackHandler`, `get_langfuse_client()`, `extract_trace_id()`).
 4. **Audit Extension**: Update `app/services/audit.py` to support `trace_id`.
 5. **Workflow Telemetry**:
    - Update `ask()` in `app/rag/fix_single_llm.py` to accept telemetry kwargs and pass callback to `agent_graph.invoke()`.
-   - Update `ask()` in `app/rag/fix_single_jev.py` similarly, adding JEV span enrichment.
+   - Update `ask()` in `app/rag/fix_single_jev.py` similarly, adding JEV span enrichment using Langfuse v5 `start_observation`.
 6. **API Routes**:
    - Update `POST /api/chat` in `app/api/routes.py` to initialize telemetry, pass callbacks, persist `trace_id`, and return it.
-   - Add `POST /api/feedback` endpoint with background dispatch.
-7. **Evaluation Bridge**: Implement `app/services/evaluation.py` connecting `evaluation/judge.py` to Langfuse trace scores.
+   - Add `POST /api/feedback` endpoint with background dispatch using `client.create_score()`.
+7. **Evaluation Bridge**: Implement `app/services/evaluation.py` connecting `evaluation/judge.py` to Langfuse trace scores via `client.create_score()`.

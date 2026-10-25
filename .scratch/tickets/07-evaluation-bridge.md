@@ -16,13 +16,13 @@ Implement `app/services/evaluation.py` to bridge DeepEval judge evaluations (`ev
 2. `tests/test_evaluation_bridge.py`: Unit tests verifying evaluation execution, score reporting, and fail-open behavior.
 
 ## Acceptance Criteria
-- [ ] `score_trace_metric()` submits `name`, `value`, and `comment` to Langfuse client via `client.score()`.
+- [ ] `score_trace_metric()` submits `name`, `value`, and `comment` to Langfuse client via `client.create_score()` (or `client.score()`).
 - [ ] If Langfuse client is `None` or disabled, evaluation bridge returns `None`/`False` without raising an exception.
 - [ ] If judge evaluation fails or times out, the error is logged and returns `None` (fail-open).
 - [ ] Scores submitted to Langfuse are strictly normalized between `0.0` and `1.0`.
 
 ## TDD Test Requirements
 Create `tests/test_evaluation_bridge.py`:
-- `test_score_trace_metric_submits_to_langfuse(monkeypatch)`: Mock Langfuse client, call `score_trace_metric("tr-1", "faithfulness", 0.95, "looks good")`, verify `client.score` called with exact arguments and returns `True`.
+- `test_score_trace_metric_submits_to_langfuse(monkeypatch)`: Mock Langfuse client, call `score_trace_metric("tr-1", "faithfulness", 0.95, "looks good")`, verify `client.create_score` (or `client.score`) called with exact arguments and returns `True`.
 - `test_score_trace_metric_handles_disabled_telemetry(monkeypatch)`: Set client to `None`, call `score_trace_metric()`, assert returns `False` and no exception raised.
 - `test_score_trace_metric_handles_langfuse_error(monkeypatch)`: Mock `client.score` raising network exception, assert function catches error and returns `False`.
