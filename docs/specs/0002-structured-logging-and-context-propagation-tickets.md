@@ -2,7 +2,7 @@
 
 - **Specification Reference:** [`docs/specs/0002-structured-logging-and-context-propagation-spec.md`](./0002-structured-logging-and-context-propagation-spec.md)
 - **ADR Reference:** [`docs/adr/0002-structured-logging-and-context-propagation.md`](../adr/0002-structured-logging-and-context-propagation.md)
-- **Status:** Ready for Implementation (`ready-for-agent`)
+- **Status:** Completed
 
 ---
 

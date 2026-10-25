@@ -1,16 +1,27 @@
+from collections.abc import Mapping
 import logging
 import logging.handlers
 import re
 import sys
+import warnings
 from pathlib import Path
-from typing import Any, MutableMapping
+from typing import Any
 import structlog
 from structlog.types import EventDict, WrappedLogger
 from app.core.config import get_settings
 
+SAFE_KEY_EXEMPTIONS = {
+    "session_id",
+    "prompt_tokens",
+    "completion_tokens",
+    "total_tokens",
+    "author",
+    "authors",
+}
+
 # Precompiled regexes for high-entropy secrets and credential tokens
 SENSITIVE_KEY_PATTERNS = re.compile(
-    r"(?i)(password|secret|api[_-]?key|token|auth(orization)?|cookie|credential|session)"
+    r"(?i)(password|secret|api[_-]?key|access[_-]?token|refresh[_-]?token|auth[_-]?token|bearer[_-]?token|token|auth(?:orization|entication)?|cookie|credential|session[_-]?token)"
 )
 REGEX_PATTERNS = [
     # Bearer tokens
@@ -24,20 +35,64 @@ REGEX_PATTERNS = [
 REDACTED_STR = "[REDACTED]"
 
 
-def _scrub_value(value: Any) -> Any:
-    """Recursively scrub strings, mappings, and sequences."""
+def _is_sensitive_key(key: Any) -> bool:
+    """Check if key matches sensitive patterns while respecting safe exemptions."""
+    key_str = str(key)
+    if key_str in SAFE_KEY_EXEMPTIONS:
+        return False
+    return bool(SENSITIVE_KEY_PATTERNS.search(key_str))
+
+
+def _scrub_value(
+    value: Any, depth: int = 0, max_depth: int = 10, seen: set[int] | None = None
+) -> Any:
+    """Recursively scrub strings, mappings, and sequences with bounded recursion depth."""
+    if depth >= max_depth:
+        return value
+
     if isinstance(value, str):
         for pattern, replacement in REGEX_PATTERNS:
             value = pattern.sub(replacement, value)
         return value
-    if isinstance(value, MutableMapping):
+
+    # Circular reference protection
+    if isinstance(value, (Mapping, list, tuple, set)):
+        if seen is None:
+            seen = set()
+        val_id = id(value)
+        if val_id in seen:
+            return "[CIRCULAR]"
+        seen.add(val_id)
+
+    if isinstance(value, Mapping):
         return {
-            k: (REDACTED_STR if SENSITIVE_KEY_PATTERNS.search(str(k)) else _scrub_value(v))
+            k: (
+                REDACTED_STR
+                if _is_sensitive_key(k)
+                else _scrub_value(v, depth + 1, max_depth, seen)
+            )
             for k, v in value.items()
         }
-    if isinstance(value, (list, tuple, set)):
-        scrubbed = [_scrub_value(v) for v in value]
-        return type(value)(scrubbed)
+
+    if type(value) is list:
+        return [_scrub_value(v, depth + 1, max_depth, seen) for v in value]
+
+    if type(value) is tuple:
+        return tuple(_scrub_value(v, depth + 1, max_depth, seen) for v in value)
+
+    if type(value) is set:
+        return {_scrub_value(v, depth + 1, max_depth, seen) for v in value}
+
+    if isinstance(value, tuple):
+        # Handle namedtuples and custom tuple subclasses safely
+        scrubbed = [_scrub_value(v, depth + 1, max_depth, seen) for v in value]
+        if hasattr(value, "_fields"):
+            try:
+                return type(value)(*scrubbed)
+            except Exception:
+                return tuple(scrubbed)
+        return tuple(scrubbed)
+
     return value
 
 
@@ -45,12 +100,19 @@ def scrub_sensitive_data(
     logger: WrappedLogger, method_name: str, event_dict: EventDict
 ) -> EventDict:
     """Structlog processor to scrub credentials and PII from keys and string values."""
-    for key, value in list(event_dict.items()):
-        if SENSITIVE_KEY_PATTERNS.search(str(key)):
-            event_dict[key] = REDACTED_STR
-        else:
-            event_dict[key] = _scrub_value(value)
-    return event_dict
+    try:
+        for key, value in list(event_dict.items()):
+            if _is_sensitive_key(key):
+                event_dict[key] = REDACTED_STR
+            else:
+                event_dict[key] = _scrub_value(value)
+        return event_dict
+    except Exception as exc:
+        warnings.warn(
+            f"scrub_sensitive_data encountered an error and failed open: {exc}",
+            RuntimeWarning,
+        )
+        return event_dict
 
 
 def get_logger(name: str | None = None) -> structlog.stdlib.BoundLogger:

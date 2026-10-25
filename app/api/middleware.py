@@ -37,30 +37,29 @@ class CorrelationLoggingMiddleware(BaseHTTPMiddleware):
             status_code = response.status_code
             response.headers["X-Request-ID"] = request_id
             return response
-        except Exception:
-            raise
         finally:
-            duration_ms = round((time.perf_counter() - start_time) * 1000, 2)
-            path = request.url.path
-            is_suppressed = path in SUPPRESSED_PATHS or path.startswith("/static/")
+            try:
+                duration_ms = round((time.perf_counter() - start_time) * 1000, 2)
+                path = request.url.path
+                is_suppressed = path in SUPPRESSED_PATHS or path.startswith("/static/")
 
-            log_kwargs = {
-                "http_method": request.method,
-                "http_path": path,
-                "http_status": status_code,
-                "duration_ms": duration_ms,
-                "client_ip": request.client.host if request.client else None,
-                "user_agent": request.headers.get("user-agent"),
-            }
+                log_kwargs = {
+                    "http_method": request.method,
+                    "http_path": path,
+                    "http_status": status_code,
+                    "duration_ms": duration_ms,
+                    "client_ip": request.client.host if request.client else None,
+                    "user_agent": request.headers.get("user-agent"),
+                }
 
-            if is_suppressed:
-                logger.debug("http_request_finished", **log_kwargs)
-            elif status_code >= 500:
-                logger.error("http_request_finished", **log_kwargs)
-            elif status_code >= 400:
-                logger.warning("http_request_finished", **log_kwargs)
-            else:
-                logger.info("http_request_finished", **log_kwargs)
-
-            # Ensure contextvars do not leak into future tasks on recycled threads
-            structlog.contextvars.clear_contextvars()
+                if is_suppressed:
+                    logger.debug("http_request_finished", **log_kwargs)
+                elif status_code >= 500:
+                    logger.error("http_request_finished", **log_kwargs)
+                elif status_code >= 400:
+                    logger.warning("http_request_finished", **log_kwargs)
+                else:
+                    logger.info("http_request_finished", **log_kwargs)
+            finally:
+                # Ensure contextvars do not leak into future tasks on recycled threads
+                structlog.contextvars.clear_contextvars()

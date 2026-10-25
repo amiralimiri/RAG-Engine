@@ -5,12 +5,10 @@ from unittest.mock import patch
 import pytest
 from fastapi.testclient import TestClient
 import structlog
-from app.api.middleware import SUPPRESSED_PATHS, CorrelationLoggingMiddleware
 from app.api.routes import capture_context, run_with_context
 from app.core.config import Settings
 from app.core.logger import (
     configure_logging,
-    get_logger,
     scrub_sensitive_data,
 )
 from app.main import app
@@ -215,3 +213,92 @@ def test_langgraph_step_contextvars():
     structlog.contextvars.clear_contextvars()
     jev_direct_answer(state)
     assert structlog.contextvars.get_contextvars().get("step") == "direct_answer"
+
+
+def test_safe_key_exemptions_not_redacted():
+    """Verify correlation keys, token counters, and author metadata are not over-redacted."""
+    payload = {
+        "event": "llm_completion",
+        "session_id": "sess-test-999",
+        "prompt_tokens": 120,
+        "completion_tokens": 45,
+        "total_tokens": 165,
+        "author": "Alice Engineer",
+        "authors": ["Bob", "Charlie"],
+        "nested": {
+            "session_id": "nested-sess-111",
+            "total_tokens": 500,
+            "author": "Documentation Team",
+        },
+        # Ensure actual credentials in the same payload are still redacted
+        "password": "SecretPassword",
+        "api_key": "sk-12345678901234567890123456",
+    }
+    scrubbed = scrub_sensitive_data(None, "info", payload)
+
+    assert scrubbed["session_id"] == "sess-test-999"
+    assert scrubbed["prompt_tokens"] == 120
+    assert scrubbed["completion_tokens"] == 45
+    assert scrubbed["total_tokens"] == 165
+    assert scrubbed["author"] == "Alice Engineer"
+    assert scrubbed["authors"] == ["Bob", "Charlie"]
+    assert scrubbed["nested"]["session_id"] == "nested-sess-111"
+    assert scrubbed["nested"]["total_tokens"] == 500
+    assert scrubbed["nested"]["author"] == "Documentation Team"
+    assert scrubbed["password"] == "[REDACTED]"
+    assert scrubbed["api_key"] == "[REDACTED]"
+
+
+def test_namedtuple_logging_safety():
+    """Verify logging a namedtuple raises zero TypeError exceptions and preserves attributes."""
+    import urllib.parse
+    from collections import namedtuple
+
+    url_result = urllib.parse.urlsplit("https://example.com/docs/api?q=123")
+    Point = namedtuple("Point", ["x", "y"])
+    pt = Point(10, 20)
+
+    payload = {
+        "event": "parse_complete",
+        "parsed_url": url_result,
+        "coordinates": pt,
+    }
+
+    # Must execute cleanly without raising TypeError: ... missing required positional arguments
+    scrubbed = scrub_sensitive_data(None, "info", payload)
+    assert scrubbed["parsed_url"].scheme == "https"
+    assert scrubbed["parsed_url"].netloc == "example.com"
+    assert scrubbed["coordinates"].x == 10
+    assert scrubbed["coordinates"].y == 20
+
+
+def test_recursion_depth_and_circular_safety():
+    """Verify circular or deeply nested structures degrade gracefully at max_depth without RecursionError."""
+    # 1. Circular dictionary
+    circular_dict = {"name": "root"}
+    circular_dict["self"] = circular_dict
+
+    # 2. Circular list
+    circular_list = [1, 2]
+    circular_list.append(circular_list)
+
+    # 3. Deeply nested dictionary (> 15 levels)
+    deep_dict = {"depth": 0}
+    curr = deep_dict
+    for i in range(1, 20):
+        curr["child"] = {"depth": i}
+        curr = curr["child"]
+
+    payload = {
+        "event": "complex_structure",
+        "circular_d": circular_dict,
+        "circular_l": circular_list,
+        "deep": deep_dict,
+    }
+
+    # Must not raise RecursionError
+    scrubbed = scrub_sensitive_data(None, "info", payload)
+    assert scrubbed["event"] == "complex_structure"
+    assert scrubbed["circular_d"]["self"] == "[CIRCULAR]"
+    assert scrubbed["circular_l"][2] == "[CIRCULAR]"
+
