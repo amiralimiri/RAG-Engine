@@ -1,7 +1,7 @@
 # Ticket 06: Update Chat API & Add Feedback Endpoint
 
 ## Status
-Pending
+Completed
 
 ## Dependencies
 Ticket 02 (`02-telemetry-module.md`), Ticket 03 (`03-audit-sqlite-migration.md`), Ticket 04 (`04-workflow-instrumentation-fix-single-llm.md`), Ticket 05 (`05-workflow-instrumentation-fix-single-jev.md`)
@@ -21,13 +21,13 @@ Update `app/api/routes.py` to:
 2. `tests/test_feedback_api.py`: Integration tests for `/api/chat` trace return and `/api/feedback` handling.
 
 ## Acceptance Criteria
-- [ ] `POST /api/chat` returns HTTP 200 with JSON containing `"trace_id"`.
-- [ ] `POST /api/chat` passes `session_id`, `user_id`, and callback to the respective workflow `ask()` function.
-- [ ] `POST /api/chat` records `trace_id` in `data/audit.db` via `write_audit()`.
-- [ ] `POST /api/feedback` returns HTTP 200 with `{"status": "accepted", "trace_id": "<id>"}`.
-- [ ] `POST /api/feedback` rejects invalid scores (< 0.0 or > 1.0) with HTTP 422 Unprocessable Entity.
-- [ ] Feedback submission runs in a FastAPI background task without blocking the response.
-- [ ] If Langfuse client fails in the background task, the error is logged without crashing the application.
+- [x] `POST /api/chat` returns HTTP 200 with JSON containing `"trace_id"`.
+- [x] `POST /api/chat` passes `session_id`, `user_id`, and callback to the respective workflow `ask()` function.
+- [x] `POST /api/chat` records `trace_id` in `data/audit.db` via `write_audit()`.
+- [x] `POST /api/feedback` returns HTTP 200 with `{"status": "accepted", "trace_id": "<id>"}`.
+- [x] `POST /api/feedback` rejects invalid scores (< 0.0 or > 1.0) with HTTP 422 Unprocessable Entity.
+- [x] Feedback submission runs in a FastAPI background task without blocking the response.
+- [x] If Langfuse client fails in the background task, the error is logged without crashing the application.
 
 ## TDD Test Requirements
 Create `tests/test_feedback_api.py`:
