@@ -1,7 +1,7 @@
 # Ticket 03: SQLite Audit Migration & Trace ID Persistence
 
 ## Status
-Pending
+Completed
 
 ## Dependencies
 Ticket 01 (`01-dependencies-and-config.md`)
@@ -17,11 +17,11 @@ Extend the SQLite query audit schema in `app/services/audit.py` to store an opti
 2. `tests/test_audit_migration.py`: Unit tests verifying table creation, migration idempotency, and data insertion.
 
 ## Acceptance Criteria
-- [ ] Fresh database: calling `init_db()` creates `query_audit` with `(id, created_at, workflow, question, source_used, trace_json, trace_id)`.
-- [ ] Existing database without `trace_id`: calling `init_db()` alters the table and preserves all pre-existing rows.
-- [ ] Already migrated database: calling `init_db()` runs cleanly without throwing `duplicate column name` error.
-- [ ] `write_audit()` accepts `trace_id` parameter (default `None`).
-- [ ] Records inserted with or without `trace_id` persist correctly and can be retrieved via SQLite query.
+- [x] Fresh database: calling `init_db()` creates `query_audit` with `(id, created_at, workflow, question, source_used, trace_json, trace_id)`.
+- [x] Existing database without `trace_id`: calling `init_db()` alters the table and preserves all pre-existing rows.
+- [x] Already migrated database: calling `init_db()` runs cleanly without throwing `duplicate column name` error.
+- [x] `write_audit()` accepts `trace_id` parameter (default `None`).
+- [x] Records inserted with or without `trace_id` persist correctly and can be retrieved via SQLite query.
 
 ## TDD Test Requirements
 Create `tests/test_audit_migration.py`:
