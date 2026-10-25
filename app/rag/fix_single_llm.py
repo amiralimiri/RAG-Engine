@@ -1,6 +1,5 @@
 import logging
-from typing import cast
-from typing import Literal
+from typing import Any, Literal, cast
 from langchain_openai import ChatOpenAI
 from langchain_tavily import TavilySearch
 from langgraph.graph import StateGraph, START, END
@@ -309,7 +308,15 @@ def build_graph():
 agent_graph = build_graph()
 
 
-def ask(question: str):
+def ask(
+    question: str,
+    *,
+    session_id: str | None = None,
+    user_id: str | None = None,
+    metadata: dict | None = None,
+    tags: list[str] | None = None,
+    callback: Any | None = None,
+) -> dict:
     initial: AgentState = {
         "question": question,
         "current_query": "",
@@ -323,4 +330,5 @@ def ask(question: str):
         "trace": [],
         "citations": [],
     }
-    return agent_graph.invoke(initial)
+    config = {"callbacks": [callback]} if callback else None
+    return agent_graph.invoke(initial, config=config)

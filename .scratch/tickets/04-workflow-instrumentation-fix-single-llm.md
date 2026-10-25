@@ -1,7 +1,7 @@
 # Ticket 04: Instrument fix_single_llm Workflow
 
 ## Status
-Pending
+Completed
 
 ## Dependencies
 Ticket 02 (`02-telemetry-module.md`)
@@ -28,10 +28,10 @@ Extend the `ask()` entry point in `app/rag/fix_single_llm.py` with telemetry kwa
 2. `tests/test_llm_telemetry.py`: Unit tests verifying invocation with and without callback.
 
 ## Acceptance Criteria
-- [ ] `ask("How do I reset password?")` works without any keyword arguments (100% backward-compatible).
-- [ ] `ask("...", callback=mock_callback)` attaches the callback to LangGraph invocation config.
-- [ ] No nodes, conditional routes, prompt strings, or helper functions inside `fix_single_llm.py` are modified or removed.
-- [ ] Returned dictionary structure from `ask()` remains unchanged (`answer`, `source_used`, `trace`, `citations`, etc.).
+- [x] `ask("How do I reset password?")` works without any keyword arguments (100% backward-compatible).
+- [x] `ask("...", callback=mock_callback)` attaches the callback to LangGraph invocation config.
+- [x] No nodes, conditional routes, prompt strings, or helper functions inside `fix_single_llm.py` are modified or removed.
+- [x] Returned dictionary structure from `ask()` remains unchanged (`answer`, `source_used`, `trace`, `citations`, etc.).
 
 ## TDD Test Requirements
 Create `tests/test_llm_telemetry.py`:
