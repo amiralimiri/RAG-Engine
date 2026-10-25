@@ -10,7 +10,6 @@ from app.core.telemetry import flush_telemetry
 from app.services.audit import init_db
 
 
-configure_logging()
 settings = get_settings()
 
 

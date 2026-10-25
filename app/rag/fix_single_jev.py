@@ -6,7 +6,7 @@ from langgraph.graph import StateGraph, START, END
 from langchain_typesafe import Noul, Choice, TypeSafeClassifier
 
 from app.core.config import get_settings
-from app.core.telemetry import get_langfuse_client
+from app.core.telemetry import get_langfuse_client, extract_trace_id
 from app.rag.state import AgentState, RouteDecision, EvidenceGrade
 from app.rag.vectorstore import get_retriever
 
@@ -65,31 +65,43 @@ def _estimate_jev_tokens(prompt_text: str, output_text: str) -> dict[str, int]:
     }
 
 
-def _record_jev_generation(name: str, input_text: str, output_text: str) -> None:
+def _record_jev_generation(
+    name: str,
+    input_text: str,
+    output_text: str,
+    trace_id: str | None = None,
+) -> None:
     try:
         client = get_langfuse_client()
         if not client:
             return
         usage = _estimate_jev_tokens(input_text, output_text)
+        trace_context = {"trace_id": trace_id} if trace_id else None
         if hasattr(client, "start_observation"):
-            client.start_observation(
-                name=name,
-                as_type="generation",
-                model=settings.jev_model,
-                input=input_text,
-                output=output_text,
-                usage_details=usage,
-                metadata={"classifier": "typesafe_jev"},
-            ).end()
+            obs_kwargs: dict[str, Any] = {
+                "name": name,
+                "as_type": "generation",
+                "model": settings.jev_model,
+                "input": input_text,
+                "output": output_text,
+                "usage_details": usage,
+                "metadata": {"classifier": "typesafe_jev"},
+            }
+            if trace_context:
+                obs_kwargs["trace_context"] = trace_context
+            client.start_observation(**obs_kwargs).end()
         elif hasattr(client, "generation"):
-            client.generation(
-                name=name,
-                model=settings.jev_model,
-                input=input_text,
-                output=output_text,
-                usage=usage,
-                metadata={"classifier": "typesafe_jev"},
-            )
+            gen_kwargs: dict[str, Any] = {
+                "name": name,
+                "model": settings.jev_model,
+                "input": input_text,
+                "output": output_text,
+                "usage": usage,
+                "metadata": {"classifier": "typesafe_jev"},
+            }
+            if trace_id:
+                gen_kwargs["trace_id"] = trace_id
+            client.generation(**gen_kwargs)
     except Exception as exc:
         logger.debug("Failed to record JEV generation span: %s", exc)
 
@@ -136,7 +148,8 @@ def route_question_jev(state: AgentState):
     })
 
     decision = result.choices["route"].choice
-    _record_jev_generation("jev_router", question, decision)
+    trace_id = state.get("trace_id")
+    _record_jev_generation("jev_router", question, decision, trace_id=trace_id)
     # confidence = result.choices["route"].confidence
     # print(f"[Router] {decision} (confidence: {confidence:.3f})")
 
@@ -207,7 +220,8 @@ def grade_kb_jev(state: AgentState):
     })
 
     grade = result.choices["grade"].choice
-    _record_jev_generation("jev_kb_grader", prompt_state, grade)
+    trace_id = state.get("trace_id")
+    _record_jev_generation("jev_kb_grader", prompt_state, grade, trace_id=trace_id)
     # confidence = result.choices["grade"].confidence
     # print(f"[KB Grader] {grade} (confidence: {confidence:.3f})")
 
@@ -288,7 +302,8 @@ def grade_kb_jev_2(state: AgentState):
     })
 
     grade = result.choices["grade"].choice
-    _record_jev_generation("jev_kb_grader", prompt_state, grade)
+    trace_id = state.get("trace_id")
+    _record_jev_generation("jev_kb_grader", prompt_state, grade, trace_id=trace_id)
     # confidence = result.choices["grade"].confidence
     # print(f"[KB Grader] {grade} (confidence: {confidence:.3f})")
 
@@ -367,7 +382,8 @@ def grade_web_jev(state: AgentState):
     })
 
     grade = result.choices["grade"].choice
-    _record_jev_generation("jev_web_grader", prompt_state, grade)
+    trace_id = state.get("trace_id")
+    _record_jev_generation("jev_web_grader", prompt_state, grade, trace_id=trace_id)
     # confidence = result.choices["grade"].confidence
     # print(f"[Web Grader] {grade} (confidence: {confidence:.3f})")
 
@@ -445,7 +461,8 @@ def grade_web_jev_2(state: AgentState):
     })
 
     grade = result.choices["grade"].choice
-    _record_jev_generation("jev_web_grader", prompt_state, grade)
+    trace_id = state.get("trace_id")
+    _record_jev_generation("jev_web_grader", prompt_state, grade, trace_id=trace_id)
     # confidence = result.choices["grade"].confidence
     # print(f"[Web Grader] {grade} (confidence: {confidence:.3f})")
 
@@ -618,5 +635,15 @@ def ask(
         "trace": [],
         "citations": [],
     }
-    config = {"callbacks": [callback]} if callback else None
-    return agent_graph.invoke(initial, config=config)
+    extracted_tid = extract_trace_id(callback) or (metadata.get("trace_id") if isinstance(metadata, dict) else None)
+    if extracted_tid:
+        initial["trace_id"] = extracted_tid
+
+    config: dict[str, Any] = {}
+    if callback:
+        config["callbacks"] = [callback]
+    if tags:
+        config["tags"] = tags
+    if metadata:
+        config["metadata"] = metadata
+    return agent_graph.invoke(initial, config=config if config else None)

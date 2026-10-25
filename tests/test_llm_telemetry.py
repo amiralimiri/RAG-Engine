@@ -65,4 +65,28 @@ def test_ask_llm_accepts_all_telemetry_kwargs(monkeypatch):
     assert result == {"answer": "mock answer"}
     mock_invoke.assert_called_once()
     args, kwargs = mock_invoke.call_args
-    assert kwargs.get("config") == {"callbacks": [dummy_cb]}
+    assert kwargs.get("config") == {
+        "callbacks": [dummy_cb],
+        "tags": ["unit-test"],
+        "metadata": {"env": "test"},
+    }
+
+
+def test_ask_llm_propagates_tags_and_metadata_without_callback(monkeypatch):
+    """Calling ask() without callback still forwards tags and metadata in config."""
+    mock_invoke = MagicMock(return_value={"answer": "mock answer"})
+    monkeypatch.setattr(fix_single_llm.agent_graph, "invoke", mock_invoke)
+
+    result = fix_single_llm.ask(
+        "hello",
+        tags=["standalone-tag"],
+        metadata={"source": "cli"},
+    )
+
+    assert result == {"answer": "mock answer"}
+    mock_invoke.assert_called_once()
+    args, kwargs = mock_invoke.call_args
+    assert kwargs.get("config") == {
+        "tags": ["standalone-tag"],
+        "metadata": {"source": "cli"},
+    }

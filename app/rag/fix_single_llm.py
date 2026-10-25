@@ -330,5 +330,11 @@ def ask(
         "trace": [],
         "citations": [],
     }
-    config = {"callbacks": [callback]} if callback else None
-    return agent_graph.invoke(initial, config=config)
+    config: dict[str, Any] = {}
+    if callback:
+        config["callbacks"] = [callback]
+    if tags:
+        config["tags"] = tags
+    if metadata:
+        config["metadata"] = metadata
+    return agent_graph.invoke(initial, config=config if config else None)

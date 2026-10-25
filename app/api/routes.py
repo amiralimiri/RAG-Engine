@@ -10,6 +10,7 @@ from app.rag import fix_single_llm, fix_single_jev
 from app.rag.vectorstore import add_documents 
 from app.services.ingestion import load_file, chunk_documents, SUPPORTED
 from app.services.audit import write_audit
+from app.services.evaluation import score_trace_metric
 
 logger = logging.getLogger(__name__)
 
@@ -43,25 +44,12 @@ def _submit_feedback_task(
     name: str = "user_feedback",
     comment: str | None = None,
 ) -> None:
-    try:
-        client = get_langfuse_client()
-        if client:
-            if hasattr(client, "create_score"):
-                client.create_score(
-                    trace_id=trace_id,
-                    name=name,
-                    value=score,
-                    comment=comment,
-                )
-            elif hasattr(client, "score"):
-                client.score(
-                    trace_id=trace_id,
-                    name=name,
-                    value=score,
-                    comment=comment,
-                )
-    except Exception as exc:
-        logger.warning(f"Failed to submit score to Langfuse: {exc}")
+    score_trace_metric(
+        trace_id=trace_id,
+        metric_name=name,
+        score=score,
+        comment=comment,
+    )
 
 
 @router.get("/health")

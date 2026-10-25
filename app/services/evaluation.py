@@ -4,10 +4,14 @@ from typing import Optional
 from deepeval.metrics import AnswerRelevancyMetric, FaithfulnessMetric
 from deepeval.test_case import LLMTestCase
 
-from app.core.telemetry import get_langfuse_client
+from app.core import telemetry
 from evaluation.judge import judge
 
 logger = logging.getLogger(__name__)
+
+
+def get_langfuse_client():
+    return telemetry.get_langfuse_client()
 
 
 def score_trace_metric(

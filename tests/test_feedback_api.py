@@ -181,6 +181,7 @@ def test_feedback_task_executes_langfuse_score(monkeypatch):
     mock_client = MagicMock()
     mock_client.create_score = MagicMock()
 
+    monkeypatch.setattr("app.services.evaluation.get_langfuse_client", lambda: mock_client)
     monkeypatch.setattr("app.api.routes.get_langfuse_client", lambda: mock_client)
 
     _submit_feedback_task(
@@ -201,6 +202,7 @@ def test_feedback_task_executes_langfuse_score(monkeypatch):
 def test_feedback_task_falls_back_to_score_method(monkeypatch):
     """Invoke _submit_feedback_task when client only defines score()."""
     mock_client = MagicMock(spec=["score"])
+    monkeypatch.setattr("app.services.evaluation.get_langfuse_client", lambda: mock_client)
     monkeypatch.setattr("app.api.routes.get_langfuse_client", lambda: mock_client)
 
     _submit_feedback_task(
@@ -223,6 +225,7 @@ def test_feedback_task_handles_client_exception_gracefully(monkeypatch):
     mock_client = MagicMock()
     mock_client.create_score.side_effect = RuntimeError("Langfuse API unavailable")
 
+    monkeypatch.setattr("app.services.evaluation.get_langfuse_client", lambda: mock_client)
     monkeypatch.setattr("app.api.routes.get_langfuse_client", lambda: mock_client)
 
     # Should not raise exception

@@ -1,9 +1,8 @@
-from typing import List, Literal
-from typing_extensions import TypedDict
+from typing import Annotated, List, Literal
+from typing_extensions import NotRequired, TypedDict
 from pydantic import BaseModel, Field
 from langchain_core.documents import Document
 import operator
-from typing import Annotated, List
 
 class RouteDecision(BaseModel):
     route: Literal["kb", "direct"] = Field(description="kb for IT/support questions; direct for greetings/simple chat")
@@ -23,3 +22,4 @@ class AgentState(TypedDict):
     retry_count: int
     trace: Annotated[List[str], operator.add]
     citations: List[dict]
+    trace_id: NotRequired[str]

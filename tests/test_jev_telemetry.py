@@ -94,7 +94,31 @@ def test_ask_jev_accepts_all_telemetry_kwargs(monkeypatch):
     assert result == {"answer": "mock answer"}
     mock_invoke.assert_called_once()
     args, kwargs = mock_invoke.call_args
-    assert kwargs.get("config") == {"callbacks": [dummy_cb]}
+    assert kwargs.get("config") == {
+        "callbacks": [dummy_cb],
+        "tags": ["unit-test"],
+        "metadata": {"env": "test"},
+    }
+
+
+def test_ask_jev_propagates_tags_and_metadata_without_callback(monkeypatch):
+    """Calling ask() without callback still forwards tags and metadata in config."""
+    mock_invoke = MagicMock(return_value={"answer": "mock answer"})
+    monkeypatch.setattr(fix_single_jev.agent_graph, "invoke", mock_invoke)
+
+    result = fix_single_jev.ask(
+        "hello",
+        tags=["standalone-tag"],
+        metadata={"source": "cli"},
+    )
+
+    assert result == {"answer": "mock answer"}
+    mock_invoke.assert_called_once()
+    args, kwargs = mock_invoke.call_args
+    assert kwargs.get("config") == {
+        "tags": ["standalone-tag"],
+        "metadata": {"source": "cli"},
+    }
 
 
 def test_jev_node_fails_open_when_langfuse_client_fails(monkeypatch):
@@ -219,3 +243,37 @@ def test_jev_nodes_emit_generation_metadata(monkeypatch):
     assert obs_call_args2["as_type"] == "generation"
     assert obs_call_args2["output"] == "good"
     mock_observation.end.assert_called_once()
+
+
+def test_jev_nodes_emit_generation_with_trace_context(monkeypatch):
+    """When state contains trace_id, route_question_jev passes trace_context to start_observation."""
+    mock_jev = MagicMock()
+    mock_route_res = MagicMock()
+    mock_route_res.choices = {"route": MagicMock(choice="kb")}
+    mock_jev.invoke.return_value = mock_route_res
+    monkeypatch.setattr(fix_single_jev, "jev", lambda: mock_jev)
+
+    mock_client = MagicMock()
+    mock_observation = MagicMock()
+    mock_client.start_observation.return_value = mock_observation
+    monkeypatch.setattr(fix_single_jev, "get_langfuse_client", lambda: mock_client)
+
+    state = {
+        "question": "How to reset VPN?",
+        "current_query": "",
+        "kb_docs": [],
+        "web_results": "",
+        "kb_grade": "",
+        "web_grade": "",
+        "answer": "",
+        "source_used": "",
+        "retry_count": 0,
+        "trace": [],
+        "citations": [],
+        "trace_id": "trace-root-999",
+    }
+    route_res = fix_single_jev.route_question_jev(state)
+    assert route_res["source_used"] == "kb"
+    assert mock_client.start_observation.called
+    obs_call_args = mock_client.start_observation.call_args[1]
+    assert obs_call_args["trace_context"] == {"trace_id": "trace-root-999"}
