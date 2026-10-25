@@ -1,12 +1,12 @@
 import logging
-from typing import cast
-from typing import Literal
+from typing import Any, Literal, cast
 from langchain_openai import ChatOpenAI
 from langchain_tavily import TavilySearch
 from langgraph.graph import StateGraph, START, END
 from langchain_typesafe import Noul, Choice, TypeSafeClassifier
 
 from app.core.config import get_settings
+from app.core.telemetry import get_langfuse_client
 from app.rag.state import AgentState, RouteDecision, EvidenceGrade
 from app.rag.vectorstore import get_retriever
 
@@ -53,6 +53,46 @@ def web_search_tool():
         )
     return _web_search
 
+
+def _estimate_jev_tokens(prompt_text: str, output_text: str) -> dict[str, int]:
+    """Heuristic rule-of-thumb: 1 token ~= 4 characters."""
+    input_tokens = max(1, len(prompt_text) // 4)
+    output_tokens = max(1, len(output_text) // 4)
+    return {
+        "input": input_tokens,
+        "output": output_tokens,
+        "total": input_tokens + output_tokens,
+    }
+
+
+def _record_jev_generation(name: str, input_text: str, output_text: str) -> None:
+    try:
+        client = get_langfuse_client()
+        if not client:
+            return
+        usage = _estimate_jev_tokens(input_text, output_text)
+        if hasattr(client, "start_observation"):
+            client.start_observation(
+                name=name,
+                as_type="generation",
+                model=settings.jev_model,
+                input=input_text,
+                output=output_text,
+                usage_details=usage,
+                metadata={"classifier": "typesafe_jev"},
+            ).end()
+        elif hasattr(client, "generation"):
+            client.generation(
+                name=name,
+                model=settings.jev_model,
+                input=input_text,
+                output=output_text,
+                usage=usage,
+                metadata={"classifier": "typesafe_jev"},
+            )
+    except Exception as exc:
+        logger.debug("Failed to record JEV generation span: %s", exc)
+
 ########################## Node 1 — Route the Question ##########################
 
 def route_question_llm(state: AgentState):
@@ -96,6 +136,7 @@ def route_question_jev(state: AgentState):
     })
 
     decision = result.choices["route"].choice
+    _record_jev_generation("jev_router", question, decision)
     # confidence = result.choices["route"].confidence
     # print(f"[Router] {decision} (confidence: {confidence:.3f})")
 
@@ -138,12 +179,13 @@ def grade_kb_jev(state: AgentState):
         f"Source: {d.metadata.get('source', 'unknown')}\n{d.page_content}"
         for d in state["kb_docs"]
     )
+    prompt_state = (
+        f"Question: {state['question']}\n\n"
+        f"Private company KB evidence:\n{context}"
+    )
 
     result = jev().invoke({
-        "state": (
-            f"Question: {state['question']}\n\n"
-            f"Private company KB evidence:\n{context}"
-        ),
+        "state": prompt_state,
         "questions": {
             "grade": Choice(
                 instructions=(
@@ -165,6 +207,7 @@ def grade_kb_jev(state: AgentState):
     })
 
     grade = result.choices["grade"].choice
+    _record_jev_generation("jev_kb_grader", prompt_state, grade)
     # confidence = result.choices["grade"].confidence
     # print(f"[KB Grader] {grade} (confidence: {confidence:.3f})")
 
@@ -213,13 +256,14 @@ def grade_kb_jev_2(state: AgentState):
         f"Source: {d.metadata.get('source', 'unknown')}\n{d.page_content}"
         for d in state["kb_docs"]
     )
+    prompt_state = (
+        f"Original user question:\n{state['question']}\n\n"
+        f"Query used for retrieval (search aid only):\n{state['current_query']}\n\n"
+        f"Private company KB evidence:\n{context}"
+    )
 
     result = jev().invoke({
-        "state": (
-            f"Original user question:\n{state['question']}\n\n"
-            f"Query used for retrieval (search aid only):\n{state['current_query']}\n\n"
-            f"Private company KB evidence:\n{context}"
-        ),
+        "state": prompt_state,
         "questions": {
             "grade": Choice(
                 instructions=(
@@ -244,6 +288,7 @@ def grade_kb_jev_2(state: AgentState):
     })
 
     grade = result.choices["grade"].choice
+    _record_jev_generation("jev_kb_grader", prompt_state, grade)
     # confidence = result.choices["grade"].confidence
     # print(f"[KB Grader] {grade} (confidence: {confidence:.3f})")
 
@@ -294,11 +339,12 @@ Return valid JSON like {{"grade":"good"}}.
 
 
 def grade_web_jev(state: AgentState):
+    prompt_state = (
+        f"Question: {state['question']}\n\n"
+        f"Web evidence:\n{state['web_results']}"
+    )
     result = jev().invoke({
-        "state": (
-            f"Question: {state['question']}\n\n"
-            f"Web evidence:\n{state['web_results']}"
-        ),
+        "state": prompt_state,
         "questions": {
             "grade": Choice(
                 instructions=(
@@ -321,6 +367,7 @@ def grade_web_jev(state: AgentState):
     })
 
     grade = result.choices["grade"].choice
+    _record_jev_generation("jev_web_grader", prompt_state, grade)
     # confidence = result.choices["grade"].confidence
     # print(f"[Web Grader] {grade} (confidence: {confidence:.3f})")
 
@@ -366,12 +413,13 @@ Return valid JSON:
 
 
 def grade_web_jev_2(state: AgentState):
+    prompt_state = (
+        f"Original user question:\n{state['question']}\n\n"
+        f"Query used for web search (retrieval aid only):\n{state['current_query']}\n\n"
+        f"Web evidence:\n{state['web_results']}"
+    )
     result = jev().invoke({
-        "state": (
-            f"Original user question:\n{state['question']}\n\n"
-            f"Query used for web search (retrieval aid only):\n{state['current_query']}\n\n"
-            f"Web evidence:\n{state['web_results']}"
-        ),
+        "state": prompt_state,
         "questions": {
             "grade": Choice(
                 instructions=(
@@ -397,6 +445,7 @@ def grade_web_jev_2(state: AgentState):
     })
 
     grade = result.choices["grade"].choice
+    _record_jev_generation("jev_web_grader", prompt_state, grade)
     # confidence = result.choices["grade"].confidence
     # print(f"[Web Grader] {grade} (confidence: {confidence:.3f})")
 
@@ -547,7 +596,15 @@ agent_graph = build_graph()
 
 ########################## Helper Function ##########################
 
-def ask(question: str):
+def ask(
+    question: str,
+    *,
+    session_id: str | None = None,
+    user_id: str | None = None,
+    metadata: dict | None = None,
+    tags: list[str] | None = None,
+    callback: Any | None = None,
+) -> dict:
     initial: AgentState = {
         "question": question,
         "current_query": "",
@@ -561,4 +618,5 @@ def ask(question: str):
         "trace": [],
         "citations": [],
     }
-    return agent_graph.invoke(initial)
+    config = {"callbacks": [callback]} if callback else None
+    return agent_graph.invoke(initial, config=config)
