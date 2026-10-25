@@ -1,7 +1,7 @@
 # Ticket 07: DeepEval Judge to Langfuse Scoring Bridge
 
 ## Status
-Pending
+Completed
 
 ## Dependencies
 Ticket 02 (`02-telemetry-module.md`), Ticket 06 (`06-api-routes-chat-and-feedback.md`)
@@ -16,10 +16,10 @@ Implement `app/services/evaluation.py` to bridge DeepEval judge evaluations (`ev
 2. `tests/test_evaluation_bridge.py`: Unit tests verifying evaluation execution, score reporting, and fail-open behavior.
 
 ## Acceptance Criteria
-- [ ] `score_trace_metric()` submits `name`, `value`, and `comment` to Langfuse client via `client.create_score()` (or `client.score()`).
-- [ ] If Langfuse client is `None` or disabled, evaluation bridge returns `None`/`False` without raising an exception.
-- [ ] If judge evaluation fails or times out, the error is logged and returns `None` (fail-open).
-- [ ] Scores submitted to Langfuse are strictly normalized between `0.0` and `1.0`.
+- [x] `score_trace_metric()` submits `name`, `value`, and `comment` to Langfuse client via `client.create_score()` (or `client.score()`).
+- [x] If Langfuse client is `None` or disabled, evaluation bridge returns `None`/`False` without raising an exception.
+- [x] If judge evaluation fails or times out, the error is logged and returns `None` (fail-open).
+- [x] Scores submitted to Langfuse are strictly normalized between `0.0` and `1.0`.
 
 ## TDD Test Requirements
 Create `tests/test_evaluation_bridge.py`:
