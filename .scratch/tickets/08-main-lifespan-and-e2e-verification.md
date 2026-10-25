@@ -1,7 +1,7 @@
 # Ticket 08: FastAPI Lifespan & End-to-End Test Suite
 
 ## Status
-Pending
+Completed
 
 ## Dependencies
 Tickets 01 through 07
@@ -17,10 +17,10 @@ Update `app/main.py` with FastAPI's async `lifespan` context manager to run star
 2. `tests/test_e2e_observability.py`: End-to-end integration test suite exercising the complete lifecycle across both workflows.
 
 ## Acceptance Criteria
-- [ ] Application starts up cleanly, executes `init_db()`, and runs `flush_telemetry()` on server shutdown.
-- [ ] Complete pipeline functions end-to-end when Langfuse is enabled (spans created, callbacks invoked, trace ID generated, feedback submitted).
-- [ ] Complete pipeline functions end-to-end when Langfuse is disabled or keys are unset (zero degradation, `trace_id` gracefully `None`).
-- [ ] Entire test suite (`pytest`) runs and passes with zero regressions across pre-existing tests.
+- [x] Application starts up cleanly, executes `init_db()`, and runs `flush_telemetry()` on server shutdown.
+- [x] Complete pipeline functions end-to-end when Langfuse is enabled (spans created, callbacks invoked, trace ID generated, feedback submitted).
+- [x] Complete pipeline functions end-to-end when Langfuse is disabled or keys are unset (zero degradation, `trace_id` gracefully `None`).
+- [x] Entire test suite (`pytest`) runs and passes with zero regressions across pre-existing tests.
 
 ## TDD Test Requirements
 Create `tests/test_e2e_observability.py`:
