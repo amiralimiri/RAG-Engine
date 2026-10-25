@@ -1,6 +1,6 @@
 import json
 from pathlib import Path
-from src.agent import ask
+from app.rag.fix_single_jev import  ask
 from tqdm import tqdm
 
 EVAL_DIR = Path(__file__).resolve().parent
