@@ -16,6 +16,7 @@ dependencies = [
     "langchain-pinecone>=0.2.13",
     "langchain-tavily>=0.2.18",
     "langchain-typesafe>=0.0.1a3",
+    "langfuse>=5.0.4",
     "portalocker[win32]>=4.4.1",
     "pymupdf>=2.0",
     "pypdf>=6.21.2",

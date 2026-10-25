@@ -34,6 +34,11 @@ class Settings(BaseSettings):
     
     top_k: int = 4
     max_retries: int = 1
+
+    langfuse_public_key: str | None = None
+    langfuse_secret_key: SecretStr | None = None
+    langfuse_host: str = "https://cloud.langfuse.com"
+    langfuse_enabled: bool = True
     
     audit_db_path: str = str(BASE_DIR / "data" / "audit.db")
     upload_dir: str = str(BASE_DIR / "uploads")

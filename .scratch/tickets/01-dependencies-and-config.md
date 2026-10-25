@@ -1,7 +1,7 @@
 # Ticket 01: Dependencies and Configuration
 
 ## Status
-Pending
+Completed
 
 ## Dependencies
 None
@@ -19,11 +19,11 @@ Add the `langfuse` dependency to the project package configuration, and extend a
 3. `tests/test_telemetry_config.py`: Unit tests validating settings parsing and defaults.
 
 ## Acceptance Criteria
-- [ ] `langfuse` is listed in `pyproject.toml` dependencies and installs via `uv sync`.
-- [ ] `Settings` successfully loads `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_HOST`, and `LANGFUSE_ENABLED` from environment variables / `.env`.
-- [ ] `langfuse_host` defaults to `"https://cloud.langfuse.com"`.
-- [ ] `langfuse_enabled` defaults to `True`.
-- [ ] When keys are not supplied, `langfuse_public_key` and `langfuse_secret_key` default to `None` without validation errors.
+- [x] `langfuse` is listed in `pyproject.toml` dependencies and installs via `uv sync`.
+- [x] `Settings` successfully loads `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_HOST`, and `LANGFUSE_ENABLED` from environment variables / `.env`.
+- [x] `langfuse_host` defaults to `"https://cloud.langfuse.com"`.
+- [x] `langfuse_enabled` defaults to `True`.
+- [x] When keys are not supplied, `langfuse_public_key` and `langfuse_secret_key` default to `None` without validation errors.
 
 ## TDD Test Requirements
 Create `tests/test_telemetry_config.py`:
