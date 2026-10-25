@@ -3,6 +3,7 @@ from typing import Any, Literal, cast
 from langchain_openai import ChatOpenAI
 from langchain_tavily import TavilySearch
 from langgraph.graph import StateGraph, START, END
+import structlog
 from app.core.config import get_settings
 from app.rag.state import AgentState, RouteDecision, EvidenceGrade
 from app.rag.vectorstore import get_retriever
@@ -40,6 +41,7 @@ def web_search_tool():
 
 
 def route_question(state: AgentState):
+    structlog.contextvars.bind_contextvars(step="route_question")
     router = llm().with_structured_output(RouteDecision, method="json_mode")
     prompt = f"""
 You route messages for an enterprise IT support assistant.
@@ -58,11 +60,13 @@ def route_after_router(state: AgentState) -> Literal["retrieve_kb", "direct_answ
 
 
 def retrieve_kb(state: AgentState):
+    structlog.contextvars.bind_contextvars(step="retrieve_kb")
     docs = get_retriever().invoke(state["current_query"])
     return {"kb_docs": docs, "trace": [f"Private KB retrieval → {len(docs)} chunks"] }
 
 
 def grade_kb(state: AgentState):
+    structlog.contextvars.bind_contextvars(step="grade_kb")
     grader = llm().with_structured_output(EvidenceGrade, method="json_mode")
     context = "\n\n".join(f"Source: {d.metadata.get('source','unknown')}\n{d.page_content}" for d in state["kb_docs"])
     prompt = f"""
@@ -77,6 +81,7 @@ Otherwise return weak. JSON: {{"grade":"good"}} or {{"grade":"weak"}}.
 
 
 def grade_kb_2(state: AgentState):
+    structlog.contextvars.bind_contextvars(step="grade_kb")
     grader = llm().with_structured_output(EvidenceGrade, method="json_mode")
     context = "\n\n".join(f"Source: {d.metadata.get('source','unknown')}\n{d.page_content}" for d in state["kb_docs"])
     prompt = f"""
@@ -115,6 +120,7 @@ def after_kb(state: AgentState) -> Literal["generate_from_kb", "search_web"]:
 
 
 def search_web(state: AgentState):
+    structlog.contextvars.bind_contextvars(step="search_web")
     result = web_search_tool().invoke({"query": state["current_query"]})
     lines, citations = [], []
     if isinstance(result, dict):
@@ -135,6 +141,7 @@ def search_web(state: AgentState):
 
 
 def grade_web(state: AgentState):
+    structlog.contextvars.bind_contextvars(step="grade_web")
     grader = llm().with_structured_output(EvidenceGrade, method="json_mode")
     prompt = f"""
 Question: {state['question']}
@@ -147,6 +154,7 @@ Return valid JSON like {{"grade":"good"}}.
 
 
 def grade_web_2(state: AgentState):
+    structlog.contextvars.bind_contextvars(step="grade_web")
     grader = llm().with_structured_output(EvidenceGrade, method="json_mode")
 
     prompt = f"""
@@ -190,6 +198,7 @@ def after_web(state: AgentState) -> Literal["generate_from_web", "rewrite_query"
     return "insufficient"
 
 def rewrite_query(state: AgentState):
+    structlog.contextvars.bind_contextvars(step="rewrite_query")
     prompt = f"""
 Rewrite this IT support question for better private knowledge retrieval and vendor web search.
 Preserve intent, add useful technical keywords, do not answer, return only the query.
@@ -205,6 +214,7 @@ Question: {state['question']}
     
     
 def rewrite_query_2(state: AgentState):
+    structlog.contextvars.bind_contextvars(step="rewrite_query")
     prompt = f"""
 You improve search queries for an enterprise IT assistant.
 
@@ -230,6 +240,7 @@ Return only the new query.
 
 
 def generate_from_kb(state: AgentState):
+    structlog.contextvars.bind_contextvars(step="generate_from_kb")
     context = "\n\n".join(f"[Source: {d.metadata.get('source','unknown')}]\n{d.page_content}" for d in state["kb_docs"])
     answer = llm().invoke(f"""
 You are an enterprise IT support copilot. Answer ONLY from the private company KB below.
@@ -248,6 +259,7 @@ Question: {state['question']}\n\nPrivate KB:\n{context}
 
 
 def generate_from_web(state: AgentState):
+    structlog.contextvars.bind_contextvars(step="generate_from_web")
     answer = llm().invoke(f"""
 You are an enterprise IT support copilot. The private company KB was insufficient.
 Answer ONLY from the web evidence below. Clearly say this is external web information and may need IT validation before changing company-managed systems.
@@ -257,11 +269,13 @@ Question: {state['question']}\n\nWeb evidence:\n{state['web_results']}
 
 
 def direct_answer(state: AgentState):
+    structlog.contextvars.bind_contextvars(step="direct_answer")
     answer = llm().invoke(f"Respond briefly and naturally to: {state['question']}").content
     return {"answer": answer, "source_used": "direct", "trace": ["Direct response → no retrieval"] }
 
 
 def insufficient(state: AgentState):
+    structlog.contextvars.bind_contextvars(step="insufficient")
     return {
         "answer": "I couldn't find enough reliable evidence in the company knowledge base or external search to answer confidently. Please contact the IT help desk or provide more details.",
         "source_used": "insufficient_evidence",
@@ -317,6 +331,13 @@ def ask(
     tags: list[str] | None = None,
     callback: Any | None = None,
 ) -> dict:
+    context: dict[str, Any] = {"workflow": "fix_single_llm"}
+    if session_id:
+        context["session_id"] = session_id
+    if user_id:
+        context["user_id"] = user_id
+    structlog.contextvars.bind_contextvars(**context)
+
     initial: AgentState = {
         "question": question,
         "current_query": "",

@@ -1,5 +1,6 @@
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -39,6 +40,14 @@ class Settings(BaseSettings):
     langfuse_secret_key: SecretStr | None = None
     langfuse_host: str = "https://cloud.langfuse.com"
     langfuse_enabled: bool = True
+    
+    # Logging
+    log_level: str = "INFO"
+    log_format: Literal["auto", "json", "console"] = "auto"
+    log_to_file: bool = False
+    log_file_path: str = str(BASE_DIR / "logs" / "app.log")
+    log_max_bytes: int = 20_971_520  # 20 MB
+    log_backup_count: int = 5
     
     audit_db_path: str = str(BASE_DIR / "data" / "audit.db")
     upload_dir: str = str(BASE_DIR / "uploads")

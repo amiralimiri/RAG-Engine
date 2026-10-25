@@ -1,8 +1,11 @@
+import contextvars
 import logging
 import hmac
 from pathlib import Path
+from typing import Any, Callable
 from starlette.concurrency import run_in_threadpool
 from fastapi import APIRouter, UploadFile, File, HTTPException, Header, BackgroundTasks
+import structlog
 from pydantic import BaseModel, Field
 from app.core.config import get_settings
 from app.core.telemetry import get_langfuse_callback, extract_trace_id, get_langfuse_client
@@ -36,6 +39,22 @@ class FeedbackRequest(BaseModel):
     score: float = Field(..., ge=0.0, le=1.0, description="Score normalized from 0.0 to 1.0")
     name: str = Field(default="user_feedback", max_length=100)
     comment: str | None = Field(default=None, max_length=1000)
+
+
+def capture_context(func: Callable[..., Any]) -> Callable[..., Any]:
+    """Capture current contextvars snapshot and return a callable that runs inside it."""
+    ctx = contextvars.copy_context()
+
+    def _context_bound_runner(*args: Any, **kwargs: Any) -> Any:
+        return ctx.run(func, *args, **kwargs)
+
+    return _context_bound_runner
+
+
+def run_with_context(func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+    """Execute a callable inside a snapshot of current contextvars."""
+    ctx = contextvars.copy_context()
+    return ctx.run(func, *args, **kwargs)
 
 
 def _submit_feedback_task(
@@ -81,6 +100,15 @@ def chat(payload: ChatRequest):
     )
     trace_id = extract_trace_id(handler)
 
+    context_bindings: dict[str, Any] = {"workflow": payload.workflow}
+    if trace_id:
+        context_bindings["trace_id"] = trace_id
+    if payload.session_id:
+        context_bindings["session_id"] = payload.session_id
+    if payload.user_id:
+        context_bindings["user_id"] = payload.user_id
+    structlog.contextvars.bind_contextvars(**context_bindings)
+
     try:
         result = ask(
             payload.question,
@@ -89,6 +117,8 @@ def chat(payload: ChatRequest):
             callback=handler,
         )
         trace_id = extract_trace_id(handler) or trace_id or (result.get("trace_id") if isinstance(result, dict) else None)
+        if trace_id:
+            structlog.contextvars.bind_contextvars(trace_id=trace_id)
 
         write_audit(
             payload.workflow,
@@ -117,8 +147,9 @@ def chat(payload: ChatRequest):
 
 @router.post("/feedback")
 def feedback(payload: FeedbackRequest, background_tasks: BackgroundTasks):
+    structlog.contextvars.bind_contextvars(trace_id=payload.trace_id)
     background_tasks.add_task(
-        _submit_feedback_task,
+        capture_context(_submit_feedback_task),
         trace_id=payload.trace_id,
         score=payload.score,
         name=payload.name,
