@@ -1,13 +1,13 @@
 # Ticket 02: Telemetry Module & Callback Factory
 
 ## Status
-Pending
+Completed
 
 ## Dependencies
 Ticket 01 (`01-dependencies-and-config.md`)
 
 ## Scope
-Create the centralized telemetry module (`app/core/telemetry.py`) containing the Langfuse client singleton, callback handler factory, trace ID extraction helper, and shutdown flush utility. Enforce strict fail-open resilience.
+Create the centralized telemetry module (`app/core/telemetry.py`) conforming to Langfuse v5 standards (`from langfuse.langchain import CallbackHandler`), containing the Langfuse client singleton, callback handler factory, trace ID extraction helper, and shutdown flush utility. Enforce strict fail-open resilience.
 
 ## Deliverables
 1. `app/core/telemetry.py`:
@@ -18,15 +18,15 @@ Create the centralized telemetry module (`app/core/telemetry.py`) containing the
 2. `tests/test_telemetry.py`: Comprehensive unit tests covering fail-open scenarios and callback construction.
 
 ## Acceptance Criteria
-- [ ] If `langfuse_enabled` is `False`, `get_langfuse_client()` and `get_langfuse_callback()` return `None`.
-- [ ] If `langfuse_public_key` or `langfuse_secret_key` is `None` or empty, `get_langfuse_client()` and `get_langfuse_callback()` return `None`.
-- [ ] Any exception during `Langfuse()` or `CallbackHandler()` creation is trapped and logged as a warning; function returns `None` (fail-open).
-- [ ] `get_langfuse_callback()` properly formats:
+- [x] If `langfuse_enabled` is `False`, `get_langfuse_client()` and `get_langfuse_callback()` return `None`.
+- [x] If `langfuse_public_key` or `langfuse_secret_key` is `None` or empty, `get_langfuse_client()` and `get_langfuse_callback()` return `None`.
+- [x] Any exception during `Langfuse()` or `CallbackHandler()` creation is trapped and logged as a warning; function returns `None` (fail-open).
+- [x] `get_langfuse_callback()` uses Langfuse v5 (`from langfuse.langchain import CallbackHandler`), properly formats:
   - `trace_name = f"rag:{workflow_name}"`
   - default tags: `["workflow:<workflow_name>", "env:<app_env>"]` merged with any user-provided `tags`.
-  - passes `session_id`, `user_id`, and `metadata`.
-- [ ] `extract_trace_id()` safely handles `None`, handler objects with `get_trace_id()`, `trace_id`, or `root_trace_id`, and returns `str | None` without throwing.
-- [ ] `flush_telemetry()` calls `client.flush()` and catches any exception safely.
+  - preserves `session_id`, `user_id`, `metadata`, and propagates them into Langfuse observations.
+- [x] `extract_trace_id()` safely handles `None`, handler objects with `last_trace_id`, `_trace_context`, `get_trace_id()`, `trace_id`, or `root_trace_id`, and returns `str | None` without throwing.
+- [x] `flush_telemetry()` calls `client.flush()` and catches any exception safely.
 
 ## TDD Test Requirements
 Create `tests/test_telemetry.py`:

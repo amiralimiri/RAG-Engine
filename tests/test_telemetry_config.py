@@ -4,14 +4,14 @@ from pydantic import SecretStr
 from app.core.config import Settings
 
 
-def test_default_langfuse_settings(monkeypatch=None):
-    if monkeypatch is not None:
-        monkeypatch.delenv("LANGFUSE_PUBLIC_KEY", raising=False)
-        monkeypatch.delenv("LANGFUSE_SECRET_KEY", raising=False)
-        monkeypatch.delenv("LANGFUSE_HOST", raising=False)
-        monkeypatch.delenv("LANGFUSE_ENABLED", raising=False)
+def test_default_langfuse_settings(monkeypatch):
+    monkeypatch.delenv("LANGFUSE_PUBLIC_KEY", raising=False)
+    monkeypatch.delenv("LANGFUSE_SECRET_KEY", raising=False)
+    monkeypatch.delenv("LANGFUSE_HOST", raising=False)
+    monkeypatch.delenv("LANGFUSE_ENABLED", raising=False)
 
     settings = Settings(
+        _env_file=None,
         api_key="dummy-api-key",
         tavily_api_key="dummy-tavily-key",
         pinecone_api_key="dummy-pinecone-key",
