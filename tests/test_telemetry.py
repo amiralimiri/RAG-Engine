@@ -77,7 +77,7 @@ def test_callback_created_with_tags_and_metadata(monkeypatch):
     assert handler.session_id == "session-123"
     assert handler.user_id == "user-456"
     assert handler.metadata == {"classifier": "openai_json"}
-    assert handler._trace_context == {"trace_id": "tr-test-789"}
+    assert handler._trace_context == {"trace_id": "trtest789"}
 
 
 def test_extract_trace_id_handles_none_and_exceptions():

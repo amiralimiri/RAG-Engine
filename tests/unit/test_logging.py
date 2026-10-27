@@ -87,30 +87,36 @@ def test_stdlib_bridge_with_contextvars():
 
     # Re-attach custom stream handler with the configured formatter to capture output
     root = logging.getLogger()
+    original_streams = [getattr(h, "stream", None) for h in root.handlers]
     for h in root.handlers:
         h.setStream(log_capture)
 
-    structlog.contextvars.bind_contextvars(
-        request_id="req-unit-123",
-        trace_id="trace-unit-456",
-        step="test_step",
-    )
+    try:
+        structlog.contextvars.bind_contextvars(
+            request_id="req-unit-123",
+            trace_id="trace-unit-456",
+            step="test_step",
+        )
 
-    stdlib_logger = logging.getLogger("test.stdlib.logger")
-    stdlib_logger.info("Test stdlib log event", extra={"user_id": "u-42"})
+        stdlib_logger = logging.getLogger("test.stdlib.logger")
+        stdlib_logger.info("Test stdlib log event", extra={"user_id": "u-42"})
 
-    output = log_capture.getvalue().strip()
-    assert output, "Expected log output, got empty string"
-    log_data = json.loads(output)
+        output = log_capture.getvalue().strip()
+        assert output, "Expected log output, got empty string"
+        log_data = json.loads(output)
 
-    assert log_data["event"] == "Test stdlib log event"
-    assert log_data["logger"] == "test.stdlib.logger"
-    assert log_data["level"] == "info"
-    assert log_data["request_id"] == "req-unit-123"
-    assert log_data["trace_id"] == "trace-unit-456"
-    assert log_data["step"] == "test_step"
-    assert log_data["user_id"] == "u-42"
-    assert "timestamp" in log_data
+        assert log_data["event"] == "Test stdlib log event"
+        assert log_data["logger"] == "test.stdlib.logger"
+        assert log_data["level"] == "info"
+        assert log_data["request_id"] == "req-unit-123"
+        assert log_data["trace_id"] == "trace-unit-456"
+        assert log_data["step"] == "test_step"
+        assert log_data["user_id"] == "u-42"
+        assert "timestamp" in log_data
+    finally:
+        for h, orig in zip(root.handlers, original_streams):
+            if orig is not None and hasattr(h, "setStream"):
+                h.setStream(orig)
 
 
 def test_noise_suppression():

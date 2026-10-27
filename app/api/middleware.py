@@ -19,6 +19,7 @@ class CorrelationLoggingMiddleware(BaseHTTPMiddleware):
         request_id = request.headers.get("x-request-id") or str(uuid.uuid4())
         user_id = request.headers.get("x-user-id")
         session_id = request.headers.get("x-session-id")
+        trace_id = request.headers.get("x-trace-id") or request.headers.get("trace-id")
 
         # Bind transport context to contextvars
         context = {"request_id": request_id}
@@ -26,6 +27,8 @@ class CorrelationLoggingMiddleware(BaseHTTPMiddleware):
             context["user_id"] = user_id
         if session_id:
             context["session_id"] = session_id
+        if trace_id:
+            context["trace_id"] = trace_id.replace("-", "").lower()
 
         structlog.contextvars.bind_contextvars(**context)
 

@@ -33,6 +33,7 @@ class ChatRequest(BaseModel):
     workflow: str = "fix_single_jev"
     session_id: str | None = None
     user_id: str | None = None
+    trace_id: str | None = None
 
 
 class FeedbackRequest(BaseModel):
@@ -93,15 +94,18 @@ def chat(payload: ChatRequest):
         raise HTTPException(status_code=400, detail=f"Unknown workflow: {payload.workflow}")
 
     classifier_meta = "openai_json" if payload.workflow == "fix_single_llm" else "typesafe_jev"
+    sanitized_tid = payload.trace_id.replace("-", "").lower() if payload.trace_id else None
     handler = get_langfuse_callback(
         workflow_name=payload.workflow,
         session_id=payload.session_id,
         user_id=payload.user_id,
+        trace_id=sanitized_tid,
         metadata={"classifier": classifier_meta, "retrieval_strategy": "self_corrective"},
     )
     trace_id = extract_trace_id(handler)
     if handler is not None and not trace_id:
-        trace_id = str(uuid.uuid4())
+        ctx_tid = structlog.contextvars.get_contextvars().get("trace_id")
+        trace_id = ctx_tid.replace("-", "").lower() if ctx_tid else uuid.uuid4().hex
         if hasattr(handler, "_trace_context") and isinstance(handler._trace_context, dict):
             handler._trace_context["trace_id"] = trace_id
         elif not hasattr(handler, "last_trace_id") or handler.last_trace_id is None:

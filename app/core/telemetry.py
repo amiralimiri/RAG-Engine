@@ -115,7 +115,13 @@ def get_langfuse_callback(
 
         trace_name = f"rag:{workflow_name}"
         if not trace_id:
-            trace_id = structlog.contextvars.get_contextvars().get("trace_id") or str(uuid.uuid4())
+            ctx_tid = structlog.contextvars.get_contextvars().get("trace_id")
+            if ctx_tid:
+                trace_id = str(ctx_tid).replace("-", "").lower()
+            else:
+                trace_id = uuid.uuid4().hex
+        else:
+            trace_id = str(trace_id).replace("-", "").lower()
         trace_ctx = {"trace_id": trace_id}
 
         return LangfuseCallbackHandler(
