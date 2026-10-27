@@ -1238,6 +1238,11 @@ details[open] summary .accordion-arrow {
   border-radius: var(--radius-xs);
 }
 
+.thinking-status {
+  font-size: 11.5px;
+  color: var(--text-secondary);
+}
+
 .thinking-timer {
   font-family: var(--font-mono);
   font-weight: 600;

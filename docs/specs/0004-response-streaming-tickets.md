@@ -57,7 +57,7 @@
 | **Ticket 4** | Backend Automated Streaming Tests | `tests/test_chat_stream.py` | Ticket 3 | `completed` |
 | **Ticket 5** | Zero-Dependency Client SSE Parser | `static/js/app.js` | Ticket 3 | `completed` |
 | **Ticket 6** | Progressive UI State Machine & Interrupted Persistence | `static/js/app.js` | Ticket 5 | `completed` |
-| **Ticket 7** | End-to-End Integration Tests & Verification | `tests/test_frontend_streaming.py` | Ticket 4, Ticket 6 | `ready-for-agent` |
+| **Ticket 7** | End-to-End Integration Tests & Verification | `tests/test_frontend_streaming.py` | Ticket 4, Ticket 6 | `completed` |
 
 ---
 
@@ -224,7 +224,7 @@ Refactor the message submission lifecycle in `static/js/app.js` to use `POST /ap
 ## Ticket 7: End-to-End Integration Tests & Verification
 
 - **Title:** Implement E2E frontend-backend streaming test suite in `tests/test_frontend_streaming.py`
-- **Label:** `ready-for-agent`
+- **Label:** `completed`
 - **Blockers:** Ticket 4, Ticket 6
 - **Files Created:**
   - `tests/test_frontend_streaming.py`
@@ -233,7 +233,7 @@ Refactor the message submission lifecycle in `static/js/app.js` to use `POST /ap
 Author an integration test suite verifying the end-to-end streaming integration. The suite asserts that `static/js/app.js` contains all required streaming components, checks static asset mounts, validates schema contracts across both streaming and synchronous routes, verifies XSS sanitization during progressive chunk ingestion, and ensures zero regressions across the whole test suite.
 
 ### Acceptance Criteria
-- [ ] `tests/test_frontend_streaming.py` executes cleanly and passes under `pytest`.
-- [ ] Asserts that `app.js` includes `readEventStream`, `scheduleProgressiveRender`, and references `/api/chat/stream`.
-- [ ] Verifies that HTML escaping and DOMPurify sanitization are active in streaming handlers.
-- [ ] Runs the complete test suite (`pytest`) across all existing and new tests to confirm zero regressions across the application.
+- [x] `tests/test_frontend_streaming.py` executes cleanly and passes under `pytest`.
+- [x] Asserts that `app.js` includes `readEventStream`, `scheduleProgressiveRender`, and references `/api/chat/stream`.
+- [x] Verifies that HTML escaping and DOMPurify sanitization are active in streaming handlers.
+- [x] Runs the complete test suite (`pytest`) across all existing and new tests to confirm zero regressions across the application.
