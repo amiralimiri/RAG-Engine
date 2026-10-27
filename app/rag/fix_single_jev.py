@@ -647,6 +647,15 @@ def ask(
         context["session_id"] = session_id
     if user_id:
         context["user_id"] = user_id
+
+    extracted_tid = (
+        extract_trace_id(callback)
+        or (metadata.get("trace_id") if isinstance(metadata, dict) else None)
+        or structlog.contextvars.get_contextvars().get("trace_id")
+    )
+    if extracted_tid:
+        context["trace_id"] = extracted_tid
+
     structlog.contextvars.bind_contextvars(**context)
 
     initial: AgentState = {
@@ -662,7 +671,6 @@ def ask(
         "trace": [],
         "citations": [],
     }
-    extracted_tid = extract_trace_id(callback) or (metadata.get("trace_id") if isinstance(metadata, dict) else None)
     if extracted_tid:
         initial["trace_id"] = extracted_tid
 

@@ -22,4 +22,10 @@ def test_correctness():
         actual_output="The result is 2.5.",
         expected_output="2.5"
     )
-    assert_test(test_case, [correctness_metric])
+    try:
+        assert_test(test_case, [correctness_metric])
+    except Exception as exc:
+        if any(term in type(exc).__name__ for term in ("Timeout", "Connect", "RetryError")):
+            import pytest
+            pytest.skip(f"Live judge API unavailable: {exc}")
+        raise

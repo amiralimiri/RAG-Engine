@@ -5,6 +5,7 @@ from langchain_tavily import TavilySearch
 from langgraph.graph import StateGraph, START, END
 import structlog
 from app.core.config import get_settings
+from app.core.telemetry import extract_trace_id
 from app.rag.state import AgentState, RouteDecision, EvidenceGrade
 from app.rag.vectorstore import get_retriever
 
@@ -336,6 +337,15 @@ def ask(
         context["session_id"] = session_id
     if user_id:
         context["user_id"] = user_id
+
+    extracted_tid = (
+        extract_trace_id(callback)
+        or (metadata.get("trace_id") if isinstance(metadata, dict) else None)
+        or structlog.contextvars.get_contextvars().get("trace_id")
+    )
+    if extracted_tid:
+        context["trace_id"] = extracted_tid
+
     structlog.contextvars.bind_contextvars(**context)
 
     initial: AgentState = {
@@ -351,6 +361,8 @@ def ask(
         "trace": [],
         "citations": [],
     }
+    if extracted_tid:
+        initial["trace_id"] = extracted_tid
     config: dict[str, Any] = {}
     if callback:
         config["callbacks"] = [callback]

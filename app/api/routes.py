@@ -1,6 +1,7 @@
 import contextvars
 import logging
 import hmac
+import uuid
 from pathlib import Path
 from typing import Any, Callable
 from starlette.concurrency import run_in_threadpool
@@ -99,6 +100,15 @@ def chat(payload: ChatRequest):
         metadata={"classifier": classifier_meta, "retrieval_strategy": "self_corrective"},
     )
     trace_id = extract_trace_id(handler)
+    if handler is not None and not trace_id:
+        trace_id = str(uuid.uuid4())
+        if hasattr(handler, "_trace_context") and isinstance(handler._trace_context, dict):
+            handler._trace_context["trace_id"] = trace_id
+        elif not hasattr(handler, "last_trace_id") or handler.last_trace_id is None:
+            try:
+                handler.last_trace_id = trace_id
+            except Exception:
+                pass
 
     context_bindings: dict[str, Any] = {"workflow": payload.workflow}
     if trace_id:

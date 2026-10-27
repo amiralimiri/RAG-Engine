@@ -1,5 +1,7 @@
 import logging
 from typing import Any, Optional
+import uuid
+import structlog
 
 from langfuse import Langfuse
 from langfuse.langchain import CallbackHandler
@@ -112,7 +114,9 @@ def get_langfuse_callback(
             combined_tags.extend(tags)
 
         trace_name = f"rag:{workflow_name}"
-        trace_ctx = {"trace_id": trace_id} if trace_id else None
+        if not trace_id:
+            trace_id = structlog.contextvars.get_contextvars().get("trace_id") or str(uuid.uuid4())
+        trace_ctx = {"trace_id": trace_id}
 
         return LangfuseCallbackHandler(
             public_key=settings.langfuse_public_key,
@@ -140,6 +144,8 @@ def extract_trace_id(handler: Optional[Any]) -> Optional[str]:
         ctx = getattr(handler, "_trace_context", None)
         if isinstance(ctx, dict) and ctx.get("trace_id"):
             return str(ctx["trace_id"])
+        elif hasattr(ctx, "trace_id") and getattr(ctx, "trace_id"):
+            return str(getattr(ctx, "trace_id"))
 
         if hasattr(handler, "get_trace_id") and callable(handler.get_trace_id):
             res = handler.get_trace_id()

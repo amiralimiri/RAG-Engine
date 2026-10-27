@@ -167,6 +167,21 @@ def configure_logging() -> None:
         ],
     )
 
+    # Dedicated uncolored formatter for disk file output
+    file_renderer: structlog.types.Processor
+    if render_as_json:
+        file_renderer = structlog.processors.JSONRenderer()
+    else:
+        file_renderer = structlog.dev.ConsoleRenderer(colors=False)
+
+    file_formatter = structlog.stdlib.ProcessorFormatter(
+        foreign_pre_chain=[structlog.stdlib.ExtraAdder()] + shared_processors,
+        processors=[
+            structlog.stdlib.ProcessorFormatter.remove_processors_meta,
+            file_renderer,
+        ],
+    )
+
     # Root logger configuration
     root_logger = logging.getLogger()
     root_logger.setLevel(log_level)
@@ -189,17 +204,20 @@ def configure_logging() -> None:
             encoding="utf-8",
         )
         file_handler.setLevel(log_level)
-        file_handler.setFormatter(formatter)
+        file_handler.setFormatter(file_formatter)
         root_logger.addHandler(file_handler)
 
     # Silence noisy external library loggers
     noisy_loggers = [
         "httpx",
+        "httpx2",
         "httpcore",
+        "httpcore2",
         "openai",
         "langchain",
         "langchain_core",
         "langchain_community",
+        "langchain_openai",
         "langsmith",
         "watchfiles",
         "urllib3",

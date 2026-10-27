@@ -302,3 +302,109 @@ def test_recursion_depth_and_circular_safety():
     assert scrubbed["circular_d"]["self"] == "[CIRCULAR]"
     assert scrubbed["circular_l"][2] == "[CIRCULAR]"
 
+
+def test_rotating_file_handler_plain_text_no_ansi(tmp_path, monkeypatch):
+    """Assert RotatingFileHandler writes plain text without ANSI escape sequences."""
+    import re
+    import sys
+    log_file = tmp_path / "app.log"
+    with patch("app.core.logger.get_settings") as mock_settings:
+        mock_settings.return_value = Settings(
+            log_format="console",
+            log_level="INFO",
+            log_to_file=True,
+            log_file_path=str(log_file),
+            app_env="development",
+        )
+        monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
+        configure_logging()
+
+    root = logging.getLogger()
+    file_handlers = [
+        h for h in root.handlers if isinstance(h, logging.handlers.RotatingFileHandler)
+    ]
+    assert len(file_handlers) == 1
+    file_handler = file_handlers[0]
+
+    stdlib_logger = logging.getLogger("test.ansi.check")
+    stdlib_logger.info("Test clean log message", extra={"key": "value"})
+
+    struct_logger = structlog.get_logger("test.ansi.struct")
+    struct_logger.info("Test structlog clean log", code=200)
+
+    file_handler.flush()
+    content = log_file.read_text(encoding="utf-8")
+    assert "Test clean log message" in content
+    assert "Test structlog clean log" in content
+    ansi_regex = re.compile(r"\x1b\[[0-9;]*[a-zA-Z]")
+    assert not ansi_regex.search(content), f"Found raw ANSI codes in log file: {content}"
+
+
+def test_noise_suppression_includes_new_loggers():
+    """Assert httpx2, langchain_openai, and langchain_core log levels are set to WARNING."""
+    configure_logging()
+    for name in ["httpx2", "langchain_openai", "langchain_core"]:
+        assert logging.getLogger(name).getEffectiveLevel() >= logging.WARNING
+
+
+def test_trace_id_present_in_workflow_execution_logs(monkeypatch, capsys):
+    """Assert trace_id is present in log events emitted during workflow execution."""
+    from unittest.mock import MagicMock
+    from app.api.routes import WORKFLOW_ASKS
+
+    dummy_settings = Settings(
+        langfuse_enabled=True,
+        langfuse_public_key="pk-dummy",
+        langfuse_secret_key="sk-dummy",
+        log_format="json",
+        log_to_file=False,
+    )
+    monkeypatch.setattr("app.core.telemetry.get_settings", lambda: dummy_settings)
+    monkeypatch.setattr("app.api.routes.get_settings", lambda: dummy_settings)
+    monkeypatch.setattr("app.core.logger.get_settings", lambda: dummy_settings)
+
+    mock_client = MagicMock()
+    monkeypatch.setattr("app.core.telemetry.get_langfuse_client", lambda: mock_client)
+
+    captured_workflow_logs = []
+
+    def mock_workflow_ask(question, **kwargs):
+        node_logger = logging.getLogger("app.rag.route_question")
+        node_logger.info("Routing question to KB")
+        captured_workflow_logs.append(dict(structlog.contextvars.get_contextvars()))
+        return {
+            "answer": "Answer from KB",
+            "source_used": "kb",
+            "trace": ["route_question"],
+            "citations": [],
+            "current_query": question,
+        }
+
+    monkeypatch.setitem(WORKFLOW_ASKS, "fix_single_llm", mock_workflow_ask)
+
+    with TestClient(app) as client:
+        res = client.post("/api/chat", json={"question": "How to reset VPN?", "workflow": "fix_single_llm"})
+        assert res.status_code == 200
+        res_data = res.json()
+        assert res_data.get("trace_id") is not None
+        response_trace_id = res_data["trace_id"]
+
+    assert len(captured_workflow_logs) == 1
+    assert captured_workflow_logs[0].get("trace_id") == response_trace_id
+
+    captured = capsys.readouterr().out
+    output_lines = []
+    for line in captured.strip().split("\n"):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            output_lines.append(json.loads(line))
+        except Exception:
+            pass
+
+    routing_logs = [l for l in output_lines if l.get("event") == "Routing question to KB"]
+    assert len(routing_logs) >= 1
+    assert routing_logs[0].get("trace_id") == response_trace_id
+
+
