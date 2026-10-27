@@ -134,7 +134,7 @@ Update `templates/index.html` to integrate the modern layout and load all vendor
 ## Ticket 4: Client State, Session Lifecycle & Theme Switcher
 
 - **Title:** Implement localStorage session management, UUID generation, and theme switcher in `static/js/app.js`
-- **Label:** `ready-for-agent`
+- **Label:** `completed`
 - **Blockers:** Ticket 3
 - **Files Modified:**
   - `static/js/app.js`
@@ -143,13 +143,13 @@ Update `templates/index.html` to integrate the modern layout and load all vendor
 Implement the client state and session management module in `static/js/app.js`. Ensure each conversation session is assigned a persistent UUID v4 session ID (`rag_current_session_id`). Persist transcripts in `localStorage` under `rag_session_<id>` and maintain a session catalog in `rag_sessions_index`. Implement the "New Chat" action to generate a fresh session, and wire the sidebar recent chats catalog to allow switching and deleting past conversations. Implement the theme switcher reading from `localStorage.getItem('rag_theme')` with fallback to `window.matchMedia('(prefers-color-scheme: dark)')`.
 
 ### Acceptance Criteria
-- [ ] Session ID initialization: Checks `localStorage.getItem('rag_current_session_id')`; if absent, generates a valid UUID v4 via `crypto.randomUUID()` and persists it.
-- [ ] "New Chat" button creates a new UUID v4, clears active messages from DOM, displays welcome greeting, and refreshes the recent chats sidebar list.
-- [ ] Chat catalog (`rag_sessions_index`) correctly updates when a new message is sent (title extracted from first user prompt, timestamp updated).
-- [ ] Clicking a past session in `#sessionsList` restores that conversation transcript into `#chat`.
-- [ ] Deleting a past session removes it from `localStorage` and DOM; if active, triggers "New Chat".
-- [ ] Theme switcher toggles `document.documentElement.dataset.theme` between `"dark"` and `"light"`, saves preference to `localStorage`, and updates toggle button icon.
-- [ ] System theme auto-detection initializes properly on first load.
+- [x] Session ID initialization: Checks `localStorage.getItem('rag_current_session_id')`; if absent, generates a valid UUID v4 via `crypto.randomUUID()` and persists it.
+- [x] "New Chat" button creates a new UUID v4, clears active messages from DOM, displays welcome greeting, and refreshes the recent chats sidebar list.
+- [x] Chat catalog (`rag_sessions_index`) correctly updates when a new message is sent (title extracted from first user prompt, timestamp updated).
+- [x] Clicking a past session in `#sessionsList` restores that conversation transcript into `#chat`.
+- [x] Deleting a past session removes it from `localStorage` and DOM; if active, triggers "New Chat".
+- [x] Theme switcher toggles `document.documentElement.dataset.theme` between `"dark"` and `"light"`, saves preference to `localStorage`, and updates toggle button icon.
+- [x] System theme auto-detection initializes properly on first load.
 
 ---
 
