@@ -21,7 +21,7 @@ class JudgeModels:
             api_key=settings.llm_api_key.get_secret_value(),          
         )
 
-        if hasattr(settings, "jev_url") and settings.jev_base_url:
+        if hasattr(settings, "jev_base_url") and settings.jev_base_url:
             os.environ["TYPESAFE_BASE_URL"] = settings.jev_base_url
 
         self.jev = TypeSafeModel(
