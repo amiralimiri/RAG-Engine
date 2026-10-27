@@ -6,7 +6,7 @@ Covers:
   - Wire event sequence & JSON payload correctness (step, token, metadata)
   - Token isolation from routers/graders
   - Feature flag: stream_steps=False suppresses step events
-  - Cancellation / disconnection teardown audit (source_used="client_disconnected")
+  - Cancellation / disconnection teardown (flush & cleanup)
   - Mid-stream runtime error frame emission (event: error)
   - Backward compatibility: sync POST /api/chat remains operational
 """
@@ -236,7 +236,6 @@ class TestBoundaryValidation:
         mock_graph = MagicMock()
         mock_graph.astream_events = dummy_events
         monkeypatch.setitem(WORKFLOW_GRAPHS, "fix_single_jev", mock_graph)
-        monkeypatch.setattr("app.api.routes.write_audit", lambda *a, **kw: None)
 
         resp = client.post(
             "/api/chat/stream",
@@ -262,7 +261,6 @@ class TestHeadersAndContentType:
         mock_graph = MagicMock()
         mock_graph.astream_events = dummy_events
         monkeypatch.setitem(WORKFLOW_GRAPHS, "fix_single_jev", mock_graph)
-        monkeypatch.setattr("app.api.routes.write_audit", lambda *a, **kw: None)
 
         resp = client.post(
             "/api/chat/stream",
@@ -299,9 +297,6 @@ class TestWireEventSequence:
         mock_handler = get_mock_handler("trace-seq-001")
         monkeypatch.setattr("app.api.routes.get_langfuse_callback", lambda **kwargs: mock_handler)
         monkeypatch.setattr("app.api.routes.extract_trace_id", lambda handler: "trace-seq-001")
-
-        audit_records: list[dict[str, Any]] = []
-        monkeypatch.setattr("app.api.routes.write_audit", lambda *a, **kw: audit_records.append(kw))
 
         mock_graph = MagicMock()
         mock_graph.astream_events = self._mock_astream_events
@@ -363,11 +358,6 @@ class TestWireEventSequence:
         assert meta["citations"] == [{"title": "guide.md"}]
         assert meta["rewritten_query"] == "rewritten query"
 
-        # Verify audit record persistence
-        assert len(audit_records) >= 1
-        assert audit_records[-1]["source_used"] == "direct"
-        assert audit_records[-1]["trace_id"] == "trace-seq-001"
-
         # Verify callback flush invocation
         mock_handler.flush.assert_called()
 
@@ -376,7 +366,6 @@ class TestWireEventSequence:
         mock_handler = get_mock_handler("trace-insufficient-001")
         monkeypatch.setattr("app.api.routes.get_langfuse_callback", lambda **kwargs: mock_handler)
         monkeypatch.setattr("app.api.routes.extract_trace_id", lambda handler: "trace-insufficient-001")
-        monkeypatch.setattr("app.api.routes.write_audit", lambda *a, **kw: None)
 
         async def mock_insufficient_stream(*args, **kwargs):
             yield {"event": "on_chain_start", "metadata": {"langgraph_node": "route_question"}, "data": {}}
@@ -423,7 +412,6 @@ class TestWireEventSequence:
         mock_handler = get_mock_handler("trace-iso-002")
         monkeypatch.setattr("app.api.routes.get_langfuse_callback", lambda **kwargs: mock_handler)
         monkeypatch.setattr("app.api.routes.extract_trace_id", lambda handler: "trace-iso-002")
-        monkeypatch.setattr("app.api.routes.write_audit", lambda *a, **kw: None)
 
         async def mock_events(*args, **kwargs):
             # Router node emits structured json chunk -> must be ignored
@@ -471,7 +459,6 @@ class TestStreamStepsFeatureFlag:
         mock_handler = get_mock_handler("trace-nostep-003")
         monkeypatch.setattr("app.api.routes.get_langfuse_callback", lambda **kwargs: mock_handler)
         monkeypatch.setattr("app.api.routes.extract_trace_id", lambda handler: "trace-nostep-003")
-        monkeypatch.setattr("app.api.routes.write_audit", lambda *a, **kw: None)
 
         mock_graph = MagicMock()
         mock_graph.astream_events = self._mock_astream_events
@@ -500,16 +487,10 @@ class TestStreamStepsFeatureFlag:
 
 @pytest.mark.asyncio
 class TestClientDisconnection:
-    """Client dropout mid-stream writes audit record with source_used='client_disconnected'."""
+    """Client dropout mid-stream triggers graceful teardown and flush."""
 
-    async def test_disconnect_audit_is_persisted(self, monkeypatch):
-        """Simulating client disconnect mid-stream records client_disconnected in query_audit."""
-        audit_records: list[dict[str, Any]] = []
-        monkeypatch.setattr(
-            "app.api.routes.write_audit",
-            lambda *a, **kw: audit_records.append(kw),
-        )
-
+    async def test_disconnect_triggers_telemetry_flush(self, monkeypatch):
+        """Simulating client disconnect mid-stream invokes callback flush during teardown."""
         mock_handler = get_mock_handler("trace-disc-004")
         monkeypatch.setattr("app.api.routes.get_langfuse_callback", lambda **kwargs: mock_handler)
         monkeypatch.setattr("app.api.routes.extract_trace_id", lambda handler: "trace-disc-004")
@@ -536,15 +517,6 @@ class TestClientDisconnection:
                         # Break early to simulate client connection abort
                         break
 
-        # Check that audit record was cleanly persisted with client_disconnected
-        disconnect_audits = [r for r in audit_records if r.get("source_used") == "client_disconnected"]
-        assert len(disconnect_audits) == 1, f"Expected 1 client_disconnected audit, got {audit_records}"
-        disc_record = disconnect_audits[0]
-        assert disc_record["workflow"] == "fix_single_llm"
-        assert disc_record["question"] == "test disconnect inquiry"
-        assert disc_record["trace_id"] == "trace-disc-004"
-        assert any("Stream aborted by client disconnect" in str(t) for t in disc_record.get("trace", []))
-
         # Callback flush is invoked during disconnect teardown
         mock_handler.flush.assert_called()
 
@@ -562,7 +534,6 @@ class TestMidStreamError:
         mock_handler = get_mock_handler("trace-err-005")
         monkeypatch.setattr("app.api.routes.get_langfuse_callback", lambda **kwargs: mock_handler)
         monkeypatch.setattr("app.api.routes.extract_trace_id", lambda handler: "trace-err-005")
-        monkeypatch.setattr("app.api.routes.write_audit", lambda *a, **kw: None)
 
         async def mock_events_with_error(*args, **kwargs):
             yield {"event": "on_chain_start", "metadata": {"langgraph_node": "route_question"}, "data": {}}
@@ -603,23 +574,6 @@ class TestBackwardCompatibility:
         monkeypatch.setattr("app.api.routes.get_langfuse_callback", lambda **kwargs: mock_handler)
         monkeypatch.setattr("app.api.routes.extract_trace_id", lambda handler: "trace-bc-006")
 
-        audit_records: list[dict[str, Any]] = []
-
-        def mock_write_audit(*args, **kwargs):
-            record = dict(kwargs)
-            if args:
-                if len(args) >= 1:
-                    record["workflow"] = args[0]
-                if len(args) >= 2:
-                    record["question"] = args[1]
-                if len(args) >= 3:
-                    record["source_used"] = args[2]
-                if len(args) >= 4:
-                    record["trace"] = args[3]
-            audit_records.append(record)
-
-        monkeypatch.setattr("app.api.routes.write_audit", mock_write_audit)
-
         def mock_ask(question, **kwargs):
             return {
                 "answer": "Backward compatible synchronous answer.",
@@ -639,5 +593,3 @@ class TestBackwardCompatibility:
         assert data["trace_id"] == "trace-bc-006"
         assert data["source_used"] == "knowledge_base"
         assert data["citations"] == [{"title": "network_guide.pdf"}]
-        assert len(audit_records) == 1
-        assert audit_records[0]["source_used"] == "knowledge_base"

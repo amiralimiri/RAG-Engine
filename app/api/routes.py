@@ -31,7 +31,6 @@ from app.core.telemetry import (
 from app.rag import fix_single_llm, fix_single_jev
 from app.rag.vectorstore import add_documents 
 from app.services.ingestion import load_file, chunk_documents, SUPPORTED
-from app.services.audit import write_audit
 from app.services.evaluation import score_trace_metric
 
 logger = structlog.get_logger(__name__)
@@ -161,11 +160,12 @@ def chat(payload: ChatRequest):
         if trace_id:
             structlog.contextvars.bind_contextvars(trace_id=trace_id)
 
-        write_audit(
-            payload.workflow,
-            payload.question,
-            result["source_used"],
-            result.get("trace", []),
+        logger.info(
+            "chat_query_completed",
+            workflow=payload.workflow,
+            question=payload.question,
+            source_used=result["source_used"],
+            trace=result.get("trace", []),
             trace_id=trace_id,
         )
 
@@ -296,8 +296,9 @@ async def chat_event_generator(
         except Exception:
             yield format_sse("metadata", metadata_dict)
 
-        # Finalize successful audit record
-        write_audit(
+        # Finalize successful query structured log
+        logger.info(
+            "chat_query_completed",
             workflow=workflow,
             question=question,
             source_used=final_source_used,
@@ -306,21 +307,17 @@ async def chat_event_generator(
         )
 
     except (asyncio.CancelledError, GeneratorExit):
-        logger.warning(
-            "Streaming cancelled by client disconnect",
-            trace_id=trace_id,
-            workflow=workflow,
-        )
         disconnect_trace = (
             accumulated_trace
             or (final_output.get("trace") if isinstance(final_output.get("trace"), list) else [])
         )
-        write_audit(
+        logger.warning(
+            "Streaming cancelled by client disconnect",
+            trace_id=trace_id,
             workflow=workflow,
             question=question,
             source_used="client_disconnected",
             trace=disconnect_trace + ["Stream aborted by client disconnect"],
-            trace_id=trace_id,
         )
         raise
 

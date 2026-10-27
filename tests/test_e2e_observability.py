@@ -1,4 +1,3 @@
-import sqlite3
 from unittest.mock import MagicMock
 import pytest
 from fastapi.testclient import TestClient
@@ -15,17 +14,17 @@ def client():
 
 
 def test_lifespan_startup_and_shutdown(monkeypatch):
-    """Test FastAPI TestClient context manager; verify init_db is called on enter and flush_telemetry on exit."""
-    mock_init = MagicMock()
+    """Test FastAPI TestClient context manager; verify configure_logging is called on enter and flush_telemetry on exit."""
+    mock_logging = MagicMock()
     mock_flush = MagicMock()
-    monkeypatch.setattr("app.main.init_db", mock_init)
+    monkeypatch.setattr("app.main.configure_logging", mock_logging)
     monkeypatch.setattr("app.main.flush_telemetry", mock_flush)
 
-    mock_init.assert_not_called()
+    mock_logging.assert_not_called()
     mock_flush.assert_not_called()
 
     with TestClient(app) as test_client:
-        mock_init.assert_called_once()
+        mock_logging.assert_called_once()
         mock_flush.assert_not_called()
         res = test_client.get("/api/health")
         assert res.status_code == 200
@@ -206,42 +205,3 @@ def test_e2e_flow_with_langfuse_keys_unset(client, monkeypatch):
     assert res.json()["trace_id"] is None
     assert res.json()["answer"] == "Fallback response without keys"
 
-
-def test_e2e_flow_persists_trace_id_to_audit_db(client, monkeypatch, tmp_path):
-    """End-to-end chat flow writes the trace_id into SQLite audit table."""
-    db_file = tmp_path / "test_audit.db"
-    settings = get_settings()
-    monkeypatch.setattr(settings, "audit_db_path", str(db_file))
-
-    from app.services.audit import init_db
-    init_db()
-
-    mock_handler = MagicMock()
-    mock_handler.last_trace_id = "trace-e2e-db-999"
-
-    monkeypatch.setattr("app.api.routes.get_langfuse_callback", lambda **kwargs: mock_handler)
-    monkeypatch.setattr("app.api.routes.extract_trace_id", lambda handler: getattr(handler, "last_trace_id", None))
-
-    def mock_ask(question, **kwargs):
-        return {
-            "answer": "Audit check answer",
-            "source_used": "direct",
-            "trace": ["direct_node"],
-            "citations": [],
-            "current_query": question,
-        }
-
-    monkeypatch.setitem(WORKFLOW_ASKS, "fix_single_llm", mock_ask)
-
-    res = client.post("/api/chat", json={"question": "Test question", "workflow": "fix_single_llm"})
-    assert res.status_code == 200
-    assert res.json()["trace_id"] == "trace-e2e-db-999"
-
-    con = sqlite3.connect(str(db_file))
-    cur = con.cursor()
-    cur.execute("SELECT workflow, question, source_used, trace_id FROM query_audit")
-    rows = cur.fetchall()
-    con.close()
-
-    assert len(rows) == 1
-    assert rows[0] == ("fix_single_llm", "Test question", "direct", "trace-e2e-db-999")

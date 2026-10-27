@@ -8,7 +8,6 @@ from app.api.middleware import CorrelationLoggingMiddleware
 from app.core.config import get_settings, BASE_DIR
 from app.core.logger import configure_logging
 from app.core.telemetry import flush_telemetry
-from app.services.audit import init_db
 
 
 settings = get_settings()
@@ -18,7 +17,6 @@ settings = get_settings()
 async def lifespan(app: FastAPI):
     # Startup
     configure_logging()
-    init_db()
     yield
     # Shutdown
     flush_telemetry()

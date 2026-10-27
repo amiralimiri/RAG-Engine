@@ -48,56 +48,6 @@ def test_chat_endpoint_returns_trace_id(client, monkeypatch):
     assert data["answer"] == "Mock IT response"
 
 
-def test_chat_endpoint_stores_trace_in_audit(client, monkeypatch):
-    """Call POST /api/chat, verify write_audit received the matching trace_id."""
-    mock_handler = MagicMock()
-    mock_handler.last_trace_id = "trace-audit-456"
-
-    monkeypatch.setattr(
-        "app.api.routes.get_langfuse_callback",
-        lambda **kwargs: mock_handler,
-    )
-    monkeypatch.setattr(
-        "app.api.routes.extract_trace_id",
-        lambda handler: getattr(handler, "last_trace_id", None),
-    )
-
-    audit_records = []
-
-    def mock_write_audit(workflow, question, source_used, trace, trace_id=None):
-        audit_records.append({
-            "workflow": workflow,
-            "question": question,
-            "source_used": source_used,
-            "trace": trace,
-            "trace_id": trace_id,
-        })
-
-    monkeypatch.setattr("app.api.routes.write_audit", mock_write_audit)
-
-    def mock_ask(question, **kwargs):
-        return {
-            "answer": "Mock answer",
-            "source_used": "direct",
-            "trace": [],
-            "citations": [],
-            "current_query": question,
-        }
-
-    monkeypatch.setitem(WORKFLOW_ASKS, "fix_single_jev", mock_ask)
-
-    payload = {
-        "question": "Password reset procedure?",
-        "workflow": "fix_single_jev",
-    }
-    response = client.post("/api/chat", json=payload)
-    assert response.status_code == 200
-    assert len(audit_records) == 1
-    assert audit_records[0]["trace_id"] == "trace-audit-456"
-    assert audit_records[0]["workflow"] == "fix_single_jev"
-    assert audit_records[0]["question"] == "Password reset procedure?"
-
-
 def test_chat_endpoint_passes_session_and_user_id_to_ask(client, monkeypatch):
     """POST /api/chat passes session_id, user_id, and callback to the respective workflow ask() function."""
     captured_kwargs = {}

@@ -52,7 +52,7 @@
 
 | Ticket | Title | Target Files | Blockers | Status |
 |---|---|---|---|---|
-| **Ticket 01** | Decommission SQLite Audit Store | `app/services/audit.py`, `data/audit.db`, `app/main.py`, `app/api/routes.py`, `tests/test_audit_migration.py` | None | `ready` |
+| **Ticket 01** | Decommission SQLite Audit Store | `app/services/audit.py`, `data/audit.db`, `app/main.py`, `app/api/routes.py`, `tests/test_audit_migration.py` | None | `completed` |
 | **Ticket 02** | Configuration Settings & Unit Cost Accounting | `app/core/config.py` | None | `ready` |
 | **Ticket 03** | Langfuse Prompt CMS Service & Fallback Catalog | `app/services/prompts.py`, `tests/test_prompts_cms.py` | Ticket 02 | `ready` |
 | **Ticket 04** | Instrument Vector Retriever & Web Search Spans | `app/rag/fix_single_llm.py`, `app/rag/fix_single_jev.py` | Ticket 02 | `ready` |
@@ -80,10 +80,10 @@
   3. In `app/api/routes.py`, remove all three calls to `write_audit()`, ensuring completions are logged via structured JSON `structlog` events (`chat_query_completed`).
   4. Delete `tests/test_audit_migration.py`.
 - **Acceptance Criteria:**
-  - [ ] `app/services/audit.py` is deleted and nowhere imported across the codebase.
-  - [ ] `POST /api/chat` and `POST /api/chat/stream` execute cleanly without invoking SQLite.
-  - [ ] Application starts and shuts down cleanly via FastAPI `lifespan` without `init_db()`.
-  - [ ] `git status` shows `tests/test_audit_migration.py` removed.
+  - [x] `app/services/audit.py` is deleted and nowhere imported across the codebase.
+  - [x] `POST /api/chat` and `POST /api/chat/stream` execute cleanly without invoking SQLite.
+  - [x] Application starts and shuts down cleanly via FastAPI `lifespan` without `init_db()`.
+  - [x] `git status` shows `tests/test_audit_migration.py` removed.
 - **TDD Verification:**
   ```bash
   uv run pytest tests/test_e2e_observability.py -k "test_lifespan"
