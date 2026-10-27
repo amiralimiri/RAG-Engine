@@ -53,7 +53,7 @@
 | Ticket | Title | Target Files | Blockers | Status |
 |---|---|---|---|---|
 | **Ticket 01** | Decommission SQLite Audit Store | `app/services/audit.py`, `data/audit.db`, `app/main.py`, `app/api/routes.py`, `tests/test_audit_migration.py` | None | `completed` |
-| **Ticket 02** | Configuration Settings & Unit Cost Accounting | `app/core/config.py` | None | `ready` |
+| **Ticket 02** | Configuration Settings & Unit Cost Accounting | `app/core/config.py` | None | `completed` |
 | **Ticket 03** | Langfuse Prompt CMS Service & Fallback Catalog | `app/services/prompts.py`, `tests/test_prompts_cms.py` | Ticket 02 | `ready` |
 | **Ticket 04** | Instrument Vector Retriever & Web Search Spans | `app/rag/fix_single_llm.py`, `app/rag/fix_single_jev.py` | Ticket 02 | `ready` |
 | **Ticket 05** | JEV Cost Accounting & Prompt Observation Linking | `app/rag/fix_single_jev.py` | Ticket 02, Ticket 03 | `ready` |
@@ -110,9 +110,9 @@
      - `jev_cost_per_1k_input_tokens: float = 0.0008`
      - `jev_cost_per_1k_output_tokens: float = 0.0008`
 - **Acceptance Criteria:**
-  - [ ] `get_settings()` exposes all evaluation and cost settings with verified default values.
-  - [ ] `audit_db_path` attribute is removed from `Settings`.
-  - [ ] Existing environment variable parsing remains backward-compatible via `.env`.
+  - [x] `get_settings()` exposes all evaluation and cost settings with verified default values.
+  - [x] `audit_db_path` attribute is removed from `Settings`.
+  - [x] Existing environment variable parsing remains backward-compatible via `.env`.
 - **TDD Verification:**
   ```bash
   uv run python -c "from app.core.config import get_settings; s = get_settings(); assert s.eval_sample_rate == 1.0; assert s.jev_cost_per_1k_input_tokens == 0.0008"
