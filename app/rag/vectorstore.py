@@ -41,12 +41,12 @@ def get_embedding_dimension(model_name: str | None = None) -> int:
 def get_embeddings():
     global _embeddings
     if _embeddings is None:
-        if not settings.api_key:
+        if not settings.embed_api_key:
             raise RuntimeError("API_KEY is missing")
         _embeddings = OpenAIEmbeddings(
             model=settings.embed_model,
-            base_url=settings.base_url,
-            api_key=settings.api_key,
+            base_url=settings.embed_base_url,
+            api_key=settings.embed_api_key,
         )
     return _embeddings
 

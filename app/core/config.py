@@ -18,14 +18,20 @@ class Settings(BaseSettings):
     app_name: str = "Enterprise IT Support Agentic RAG"
     app_env: str = "development"
     
-    base_url: str = "https://api.gapgpt.app/v1"
-    embed_model: str = "text-embedding-3-large"
+    llm_base_url: str = "https://api.gapgpt.app/v1"
+    llm_api_key: SecretStr 
     llm_model: str = "deepseek-v4-flash"
     
-    jev_url: str =  "https://api.gapgpt.app"
+    embed_base_url: str = "https://api.gapgpt.app/v1"
+    embed_api_key: SecretStr 
+    embed_model: str = "text-embedding-3-large"
+    
+    
+    jev_base_url: str = "https://api.gapgpt.app"
+    jev_api_key: SecretStr 
     jev_model: str = "typesafe/jev-1.13"
     
-    api_key: SecretStr 
+    
     tavily_api_key: SecretStr
     pinecone_api_key: SecretStr
     admin_api_key: SecretStr

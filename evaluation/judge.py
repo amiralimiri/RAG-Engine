@@ -17,16 +17,16 @@ class JudgeModels:
     def _initialize_models(self):
         self.llm = LocalModel(
             model=settings.llm_model, 
-            base_url=settings.base_url,  
-            api_key=settings.api_key.get_secret_value(),          
+            base_url=settings.llm_base_url,  
+            api_key=settings.llm_api_key.get_secret_value(),          
         )
 
-        if hasattr(settings, "jev_url") and settings.jev_url:
-            os.environ["TYPESAFE_BASE_URL"] = settings.jev_url
+        if hasattr(settings, "jev_url") and settings.jev_base_url:
+            os.environ["TYPESAFE_BASE_URL"] = settings.jev_base_url
 
         self.jev = TypeSafeModel(
             model=settings.jev_model, 
-            api_key=settings.api_key.get_secret_value(),          
+            api_key=settings.jev_api_key.get_secret_value(),          
         )
 
 # Global Instance

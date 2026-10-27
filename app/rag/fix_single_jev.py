@@ -24,8 +24,8 @@ def llm():
     if _llm is None:
         _llm = ChatOpenAI(
             model=settings.llm_model,
-            base_url=settings.base_url,
-            api_key=settings.api_key,
+            base_url=settings.llm_base_url,
+            api_key=settings.llm_api_key,
             temperature=0,
         )
     return _llm
@@ -36,8 +36,8 @@ def jev():
     if _jev is None:
         # beta
         _jev = TypeSafeClassifier(
-            api_key=settings.api_key,
-            base_url=settings.jev_url,
+            api_key=settings.jev_api_key,
+            base_url=settings.jev_base_url,
             model=settings.jev_model
         )
     return _jev
