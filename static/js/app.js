@@ -1,6 +1,7 @@
 /* ==========================================================================
    Enterprise IT Support Copilot - Application Logic
    Ticket 4: Client State, Session Lifecycle & Theme Switcher
+   Ticket 5: Markdown Pipeline, Security Sanitization & In-Feed Thinking State
    ========================================================================== */
 
 /* ---------- DOM Element Bindings ---------- */
@@ -158,6 +159,367 @@ function formatRelativeTime(timestamp) {
   if (diffDays < 7) return `${diffDays}d ago`;
   const d = new Date(timestamp);
   return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+/* ==========================================================================
+   Ticket 5: Markdown Pipeline, Syntax Highlighting & Security Sanitization
+   ========================================================================== */
+function findClosest(el, sel) {
+  if (!el) return null;
+  if (typeof el.closest === "function") return el.closest(sel);
+  let cur = el;
+  const isClass = sel.startsWith(".");
+  const name = isClass ? sel.slice(1) : sel;
+  while (cur) {
+    if (isClass && cur.classList && cur.classList.contains(name)) return cur;
+    if (!isClass && cur.tagName && cur.tagName.toLowerCase() === name.toLowerCase())
+      return cur;
+    cur = cur.parentNode;
+  }
+  return null;
+}
+
+function getMarked() {
+  if (typeof marked !== "undefined") return marked;
+  if (typeof window !== "undefined" && window.marked) return window.marked;
+  if (typeof globalThis !== "undefined" && globalThis.marked) return globalThis.marked;
+  return null;
+}
+
+function getDOMPurify() {
+  if (typeof DOMPurify !== "undefined") return DOMPurify;
+  if (typeof window !== "undefined" && window.DOMPurify) return window.DOMPurify;
+  if (typeof globalThis !== "undefined" && globalThis.DOMPurify) return globalThis.DOMPurify;
+  return null;
+}
+
+function getHljs() {
+  if (typeof hljs !== "undefined") return hljs;
+  if (typeof window !== "undefined" && window.hljs) return window.hljs;
+  if (typeof globalThis !== "undefined" && globalThis.hljs) return globalThis.hljs;
+  return null;
+}
+
+let markedConfigured = false;
+
+function initMarked() {
+  const markedObj = getMarked();
+  const hljsObj = getHljs();
+  if (!markedObj) return;
+
+  const renderer = {
+    code(tokenOrCode, maybeLang) {
+      let codeText = "";
+      let rawLang = "";
+      if (typeof tokenOrCode === "object" && tokenOrCode !== null) {
+        codeText = tokenOrCode.text || "";
+        rawLang = tokenOrCode.lang || "";
+      } else {
+        codeText = String(tokenOrCode || "");
+        rawLang = String(maybeLang || "");
+      }
+
+      const lang = (rawLang || "").trim().split(/\s+/)[0] || "text";
+      const validLang =
+        hljsObj && hljsObj.getLanguage && hljsObj.getLanguage(lang)
+          ? lang
+          : "plaintext";
+
+      let highlighted = "";
+      if (hljsObj && typeof hljsObj.highlight === "function") {
+        try {
+          highlighted = hljsObj.highlight(codeText, { language: validLang }).value;
+        } catch (e) {
+          highlighted = escapeHtml(codeText);
+        }
+      } else {
+        highlighted = escapeHtml(codeText);
+      }
+
+      const displayLang = escapeHtml(lang);
+      return (
+        `<div class="code-block-wrapper">` +
+        `<div class="code-block-header">` +
+        `<span class="code-lang">${displayLang}</span>` +
+        `<button class="copy-code-btn" type="button" aria-label="Copy code">` +
+        `<svg class="copy-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">` +
+        `<rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>` +
+        `<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>` +
+        `</svg>` +
+        `<span class="copy-label">Copy</span>` +
+        `</button>` +
+        `</div>` +
+        `<pre><code class="hljs language-${displayLang}">${highlighted}</code></pre>` +
+        `</div>\n`
+      );
+    },
+  };
+
+  if (typeof markedObj.use === "function") {
+    markedObj.use({
+      gfm: true,
+      breaks: true,
+      renderer,
+    });
+  } else if (typeof markedObj.setOptions === "function") {
+    markedObj.setOptions({
+      gfm: true,
+      breaks: true,
+      renderer,
+    });
+  }
+  markedConfigured = true;
+}
+
+const PURIFY_CONFIG = {
+  USE_PROFILES: { html: true, svg: true },
+  ADD_TAGS: ["svg", "path", "rect", "polyline", "line", "circle"],
+  ADD_ATTR: [
+    "target",
+    "rel",
+    "data-code",
+    "data-lang",
+    "viewBox",
+    "fill",
+    "stroke",
+    "stroke-width",
+    "stroke-linecap",
+    "stroke-linejoin",
+    "aria-hidden",
+    "aria-label",
+  ],
+  FORBID_TAGS: ["style", "script", "iframe", "object", "embed"],
+  FORBID_ATTR: ["onerror", "onload", "onclick", "onmouseover"],
+};
+
+function sanitizeHtmlFallback(html) {
+  return String(html || "")
+    .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, "")
+    .replace(
+      /<(style|iframe|object|embed)\b[^<]*(?:(?!<\/\1>)<[^<]*)*<\/\1>/gi,
+      "",
+    )
+    .replace(/\bon\w+\s*=\s*(['"]).*?\1/gi, "")
+    .replace(/\bon\w+\s*=\s*[^>\s]+/gi, "")
+    .replace(/href\s*=\s*(['"])\s*javascript:[^'"]*\1/gi, 'href="#"');
+}
+
+function renderMarkdown(rawText) {
+  if (!rawText) return "";
+
+  const markedObj = getMarked();
+  const purifyObj = getDOMPurify();
+
+  let rawHtml = "";
+  if (markedObj) {
+    if (!markedConfigured) {
+      initMarked();
+    }
+    try {
+      rawHtml =
+        typeof markedObj.parse === "function"
+          ? markedObj.parse(rawText)
+          : markedObj(rawText);
+    } catch (e) {
+      console.warn("marked.parse failed:", e);
+      rawHtml = formatText(rawText);
+    }
+  } else {
+    rawHtml = formatText(rawText);
+  }
+
+  if (purifyObj && typeof purifyObj.sanitize === "function") {
+    return purifyObj.sanitize(rawHtml, PURIFY_CONFIG);
+  }
+
+  return sanitizeHtmlFallback(rawHtml);
+}
+
+/* ---------- Clipboard Copy Utility & Code Block Interactions ---------- */
+async function copyToClipboard(text) {
+  const nav =
+    (typeof window !== "undefined" && window.navigator) ||
+    (typeof navigator !== "undefined" ? navigator : null);
+
+  if (nav && nav.clipboard && typeof nav.clipboard.writeText === "function") {
+    try {
+      await nav.clipboard.writeText(text);
+      return true;
+    } catch (e) {
+      console.warn("navigator.clipboard.writeText failed:", e);
+    }
+  }
+
+  if (typeof document !== "undefined") {
+    try {
+      const textarea = document.createElement("textarea");
+      textarea.value = text;
+      textarea.style.position = "fixed";
+      textarea.style.opacity = "0";
+      textarea.style.left = "-9999px";
+      const target = document.body || document.documentElement;
+      if (target && typeof target.appendChild === "function") {
+        target.appendChild(textarea);
+      }
+      if (typeof textarea.select === "function") {
+        textarea.select();
+      }
+      const success = document.execCommand
+        ? document.execCommand("copy")
+        : true;
+      if (typeof textarea.remove === "function") {
+        textarea.remove();
+      }
+      return success;
+    } catch (e) {
+      console.warn("execCommand fallback copy failed:", e);
+    }
+  }
+  return false;
+}
+
+async function handleCopyCode(btn) {
+  if (!btn) return;
+  const wrapper = findClosest(btn, ".code-block-wrapper");
+  const codeElem = wrapper
+    ? wrapper.querySelector
+      ? wrapper.querySelector("code")
+      : null
+    : null;
+  const rawCode =
+    btn.dataset && btn.dataset.code
+      ? btn.dataset.code
+      : codeElem
+        ? codeElem.textContent
+        : "";
+
+  await copyToClipboard(rawCode);
+
+  if (btn._copiedTimeout) {
+    clearTimeout(btn._copiedTimeout);
+  }
+
+  if (!btn._originalHtml) {
+    btn._originalHtml = btn.innerHTML;
+  }
+
+  btn.classList.add("copied");
+
+  const labelSpan = btn.querySelector
+    ? btn.querySelector(".copy-label")
+    : null;
+  if (labelSpan) {
+    labelSpan.textContent = "Copied!";
+  } else {
+    btn.textContent = "Copied!";
+  }
+
+  const copyIcon = btn.querySelector
+    ? btn.querySelector(".copy-icon")
+    : null;
+  if (copyIcon && typeof document !== "undefined" && document.createElement) {
+    const checkIcon = document.createElement("svg");
+    checkIcon.className = "check-icon";
+    checkIcon.setAttribute("width", "13");
+    checkIcon.setAttribute("height", "13");
+    checkIcon.setAttribute("viewBox", "0 0 24 24");
+    checkIcon.setAttribute("fill", "none");
+    checkIcon.setAttribute("stroke", "currentColor");
+    checkIcon.setAttribute("stroke-width", "2");
+    checkIcon.setAttribute("stroke-linecap", "round");
+    checkIcon.setAttribute("stroke-linejoin", "round");
+    checkIcon.setAttribute("aria-hidden", "true");
+    checkIcon.innerHTML = '<polyline points="20 6 9 17 4 12"></polyline>';
+    if (typeof copyIcon.replaceWith === "function") {
+      copyIcon.replaceWith(checkIcon);
+    } else if (copyIcon.parentNode) {
+      copyIcon.parentNode.replaceChild(checkIcon, copyIcon);
+    }
+  }
+
+  btn._copiedTimeout = setTimeout(() => {
+    btn.classList.remove("copied");
+    if (btn._originalHtml) {
+      btn.innerHTML = btn._originalHtml;
+      delete btn._originalHtml;
+    } else {
+      if (labelSpan) labelSpan.textContent = "Copy";
+    }
+    delete btn._copiedTimeout;
+  }, 2000);
+}
+
+/* ==========================================================================
+   Ticket 5: In-Feed Thinking State Indicator & Timer Lifecycle
+   ========================================================================== */
+let thinkingTimerInterval = null;
+let thinkingStartTime = null;
+
+function showThinking(workflowName) {
+  if (!thinkingBubble) return;
+
+  const activeWf =
+    workflowName ||
+    (workflowSelect ? workflowSelect.value : "") ||
+    "fix_single_llm";
+
+  const wfEl =
+    (thinkingBubble.querySelector
+      ? thinkingBubble.querySelector(".thinking-workflow")
+      : null) || $("thinkingWorkflow");
+  if (wfEl) {
+    wfEl.textContent = activeWf;
+  }
+
+  const timerEl =
+    (thinkingBubble.querySelector
+      ? thinkingBubble.querySelector(".thinking-timer")
+      : null) || $("thinkingTimer");
+  if (timerEl) {
+    timerEl.textContent = "0.0s";
+  }
+
+  thinkingBubble.classList.remove("hidden");
+
+  const targetContainer = chatMessages || chatArea;
+  if (targetContainer) {
+    targetContainer.appendChild(thinkingBubble);
+  }
+
+  if (chatArea) {
+    chatArea.scrollTop = chatArea.scrollHeight;
+  }
+
+  if (thinkingTimerInterval) {
+    clearInterval(thinkingTimerInterval);
+  }
+
+  thinkingStartTime = Date.now();
+  thinkingTimerInterval = setInterval(() => {
+    if (!thinkingStartTime) return;
+    const elapsedSec = ((Date.now() - thinkingStartTime) / 1000).toFixed(1);
+    const liveTimerEl =
+      (thinkingBubble.querySelector
+        ? thinkingBubble.querySelector(".thinking-timer")
+        : null) || $("thinkingTimer");
+    if (liveTimerEl) {
+      liveTimerEl.textContent = `${elapsedSec}s`;
+    }
+  }, 100);
+}
+
+function hideThinking() {
+  if (thinkingTimerInterval) {
+    clearInterval(thinkingTimerInterval);
+    thinkingTimerInterval = null;
+  }
+  thinkingStartTime = null;
+
+  if (!thinkingBubble) return;
+  thinkingBubble.classList.add("hidden");
+  if (thinkingBubble.parentNode) {
+    thinkingBubble.parentNode.removeChild(thinkingBubble);
+  }
 }
 
 /* ==========================================================================
@@ -434,7 +796,9 @@ function addMessage(role, text, source = "", citations = [], workflow = "") {
   ].join("");
 
   const avatarLabel = role === "user" ? "You" : "AI";
-  wrap.innerHTML = `<div class="avatar">${avatarLabel}</div><div class="bubble">${formatText(text)}${metaHtml}${citeHtml}</div>`;
+  const bodyHtml =
+    role === "assistant" ? renderMarkdown(text) : formatText(text);
+  wrap.innerHTML = `<div class="avatar">${avatarLabel}</div><div class="bubble">${bodyHtml}${metaHtml}${citeHtml}</div>`;
 
   if (
     thinkingBubble &&
@@ -503,6 +867,7 @@ function renderSessionTranscript(sessionData) {
 }
 
 function startNewChat() {
+  hideThinking();
   const newSessionId = generateUUID();
   currentSessionId = newSessionId;
   storage.setItem(STORAGE_KEY_CURRENT_SESSION, currentSessionId);
@@ -527,6 +892,7 @@ function startNewChat() {
 
 function switchSession(sessionId) {
   if (!sessionId) return;
+  hideThinking();
   if (sessionId === currentSessionId) {
     closeSidebar();
     return;
@@ -717,15 +1083,20 @@ async function askAgent(q) {
   saveSessionData(currentSessionId, sessionData);
   updateSessionIndexMetadata(currentSessionId, sessionData);
 
-  // 3. Update status displays
+  // 3. Update status displays & activate agentic thinking state
   renderTrace(["Running workflow..."]);
   if (sourceUsed) sourceUsed.textContent = "Running";
-  if (workflowUsed)
-    workflowUsed.textContent = workflowSelect ? workflowSelect.value || "default" : "default";
+  const activeWf = workflowSelect
+    ? workflowSelect.value || "fix_single_llm"
+    : sessionData.workflow || "fix_single_llm";
+  if (workflowUsed) workflowUsed.textContent = activeWf;
 
   const btn = sendBtn || (form ? form.querySelector("button") : null);
   if (btn) btn.disabled = true;
+  if (question) question.disabled = true;
   if (workflowSelect) workflowSelect.disabled = true;
+
+  showThinking(activeWf);
 
   try {
     const body = {
@@ -744,17 +1115,20 @@ async function askAgent(q) {
     const data = await readJsonSafe(res);
     if (!res.ok) throw new Error(data.detail || "Request failed");
 
+    // Hide thinking indicator before injecting assistant bubble
+    hideThinking();
+
     // 4. Render assistant response into DOM
     addMessage(
       "assistant",
       data.answer,
       data.source_used,
       data.citations || [],
-      data.workflow || "",
+      data.workflow || activeWf,
     );
     renderTrace(data.trace || []);
     if (sourceUsed) sourceUsed.textContent = data.source_used;
-    if (workflowUsed) workflowUsed.textContent = data.workflow || "—";
+    if (workflowUsed) workflowUsed.textContent = data.workflow || activeWf;
 
     // 5. Persist assistant message to session
     const responseNow = Date.now();
@@ -765,7 +1139,7 @@ async function askAgent(q) {
       source_used: data.source_used,
       trace_id: data.trace_id || null,
       trace: data.trace || [],
-      workflow: data.workflow || "",
+      workflow: data.workflow || activeWf,
       citations: data.citations || [],
       timestamp: responseNow,
       feedback: { score: null, comment: null },
@@ -773,6 +1147,7 @@ async function askAgent(q) {
     saveSessionData(currentSessionId, sessionData);
     updateSessionIndexMetadata(currentSessionId, sessionData);
   } catch (e) {
+    hideThinking();
     addMessage("assistant", `Error: ${e.message}`);
     renderTrace(["Request failed"]);
     if (sourceUsed) sourceUsed.textContent = "Error";
@@ -794,7 +1169,12 @@ async function askAgent(q) {
     saveSessionData(currentSessionId, sessionData);
     updateSessionIndexMetadata(currentSessionId, sessionData);
   } finally {
+    hideThinking();
     if (btn) btn.disabled = false;
+    if (question) {
+      question.disabled = false;
+      question.focus();
+    }
     if (workflowSelect) workflowSelect.disabled = false;
   }
 }
@@ -920,6 +1300,18 @@ if (uploadBtn) {
   };
 }
 
+// Delegated event listener for one-click code copy buttons
+if (typeof document !== "undefined" && document.addEventListener) {
+  document.addEventListener("click", (e) => {
+    const target = e.target;
+    const btn = findClosest(target, ".copy-code-btn");
+    if (btn) {
+      if (typeof e.preventDefault === "function") e.preventDefault();
+      handleCopyCode(btn);
+    }
+  });
+}
+
 /* ==========================================================================
    Initialization Bootstrap
    ========================================================================== */
@@ -927,6 +1319,7 @@ initTheme();
 initSessions();
 initMobileSidebar();
 loadWorkflows();
+hideThinking();
 
 /* Export for Node/test environments if available */
 if (typeof module !== "undefined" && module.exports) {
@@ -944,5 +1337,15 @@ if (typeof module !== "undefined" && module.exports) {
     deleteSession,
     clearAllHistory,
     formatRelativeTime,
+    // Ticket 5 exports
+    renderMarkdown,
+    initMarked,
+    copyToClipboard,
+    handleCopyCode,
+    showThinking,
+    hideThinking,
+    askAgent,
+    addMessage,
+    getThinkingInterval: () => thinkingTimerInterval,
   };
 }

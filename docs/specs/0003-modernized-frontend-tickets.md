@@ -156,22 +156,24 @@ Implement the client state and session management module in `static/js/app.js`. 
 ## Ticket 5: Markdown Pipeline, Security Sanitization & In-Feed Thinking State
 
 - **Title:** Implement DOMPurify sanitization, Marked code highlighting, copy button, and thinking animation
-- **Label:** `ready-for-agent`
+- **Label:** `completed`
 - **Blockers:** Ticket 4
 - **Files Modified:**
   - `static/js/app.js`
+  - `tests/test_ticket5_js.js`
+  - `tests/test_frontend_markdown_pipeline.py`
 
 ### Description
 Implement the rich text rendering and security pipeline in `static/js/app.js`. Configure `marked` with custom code block rendering to attach header bars with detected language tags and "Copy Code" buttons. Pass all parsed Markdown through `DOMPurify.sanitize()` using strict profiles to prevent prompt injection XSS. Implement the in-feed animated agent "Thinking & Retrieving" placeholder showing elapsed seconds ticker and active workflow badge while `POST /api/chat` is processing.
 
 ### Acceptance Criteria
-- [ ] `renderMarkdown(text)` safely parses Markdown and runs output through `DOMPurify.sanitize()`.
-- [ ] Code blocks render inside `.code-block-wrapper` with language chip and `.copy-code-btn`.
-- [ ] Clicking "Copy Code" copies text to clipboard and toggles button text to "Copied!" for 2000ms.
-- [ ] Attempted XSS payloads (`<script>`, `<img onerror=...>`, `javascript:...`) are stripped or sanitized.
-- [ ] Before `POST /api/chat` executes, `#thinkingBubble` is inserted into `#chat` showing radar animation, workflow badge, and an active elapsed timer ticking every 100ms.
-- [ ] Composer input and send button are disabled while thinking.
-- [ ] Upon API response or error, `#thinkingBubble` is cleanly removed from `#chat`.
+- [x] `renderMarkdown(text)` safely parses Markdown and runs output through `DOMPurify.sanitize()`.
+- [x] Code blocks render inside `.code-block-wrapper` with language chip and `.copy-code-btn`.
+- [x] Clicking "Copy Code" copies text to clipboard and toggles button text to "Copied!" for 2000ms.
+- [x] Attempted XSS payloads (`<script>`, `<img onerror=...>`, `javascript:...`) are stripped or sanitized.
+- [x] Before `POST /api/chat` executes, `#thinkingBubble` is inserted into `#chat` showing radar animation, workflow badge, and an active elapsed timer ticking every 100ms.
+- [x] Composer input and send button are disabled while thinking.
+- [x] Upon API response or error, `#thinkingBubble` is cleanly removed from `#chat`.
 
 ---
 
@@ -237,7 +239,7 @@ Create an automated test suite in `tests/test_frontend_integration.py` using pyt
 | **Ticket 1** | Vendored Dependencies | `static/vendor/*.{js,css}` | None | `completed` |
 | **Ticket 2** | Design Tokens & Layout CSS | `static/css/style.css` | Ticket 1 | `completed` |
 | **Ticket 3** | HTML5 Semantic Shell | `templates/index.html` | Ticket 2 | `completed` |
-| **Ticket 4** | Client State & Session Lifecycle | `static/js/app.js` | Ticket 3 | `ready-for-agent` |
-| **Ticket 5** | Markdown Pipeline & Security | `static/js/app.js` | Ticket 4 | `ready-for-agent` |
+| **Ticket 4** | Client State & Session Lifecycle | `static/js/app.js` | Ticket 3 | `completed` |
+| **Ticket 5** | Markdown Pipeline & Security | `static/js/app.js` | Ticket 4 | `completed` |
 | **Ticket 6** | Observability Accordion & Feedback | `static/js/app.js` | Ticket 5 | `ready-for-agent` |
 | **Ticket 7** | Automated Integration Tests | `tests/test_frontend_integration.py` | Ticket 6 | `ready-for-agent` |
