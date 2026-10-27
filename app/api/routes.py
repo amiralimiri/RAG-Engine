@@ -114,6 +114,7 @@ def chat(payload: ChatRequest):
             payload.question,
             session_id=payload.session_id,
             user_id=payload.user_id,
+            metadata={"trace_id": trace_id} if trace_id else None,
             callback=handler,
         )
         trace_id = extract_trace_id(handler) or trace_id or (result.get("trace_id") if isinstance(result, dict) else None)

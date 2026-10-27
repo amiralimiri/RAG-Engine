@@ -14,6 +14,8 @@ SAFE_KEY_EXEMPTIONS = {
     "session_id",
     "prompt_tokens",
     "completion_tokens",
+    "input_tokens",
+    "output_tokens",
     "total_tokens",
     "author",
     "authors",

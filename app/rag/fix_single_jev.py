@@ -76,8 +76,9 @@ def _record_jev_generation(
         client = get_langfuse_client()
         if not client:
             return
+        resolved_trace_id = trace_id or structlog.contextvars.get_contextvars().get("trace_id")
+        trace_context = {"trace_id": resolved_trace_id} if resolved_trace_id else None
         usage = _estimate_jev_tokens(input_text, output_text)
-        trace_context = {"trace_id": trace_id} if trace_id else None
         if hasattr(client, "start_observation"):
             obs_kwargs: dict[str, Any] = {
                 "name": name,
@@ -101,7 +102,7 @@ def _record_jev_generation(
                 "metadata": {"classifier": "typesafe_jev"},
             }
             if trace_id:
-                gen_kwargs["trace_id"] = trace_id
+                gen_kwargs["trace_id"] = resolved_trace_id
             client.generation(**gen_kwargs)
     except Exception as exc:
         logger.debug("Failed to record JEV generation span: %s", exc)

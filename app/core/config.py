@@ -44,7 +44,7 @@ class Settings(BaseSettings):
     # Logging
     log_level: str = "INFO"
     log_format: Literal["auto", "json", "console"] = "auto"
-    log_to_file: bool = False
+    log_to_file: bool = True
     log_file_path: str = str(BASE_DIR / "logs" / "app.log")
     log_max_bytes: int = 20_971_520  # 20 MB
     log_backup_count: int = 5
