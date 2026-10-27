@@ -212,7 +212,7 @@ Implement per-message observability components and user feedback interactions in
 ## Ticket 7: Automated Backend & Static Integration Test Suite
 
 - **Title:** Implement automated integration tests for static assets, endpoint contracts, and HTML shell
-- **Label:** `ready-for-agent`
+- **Label:** `completed`
 - **Blockers:** Ticket 6
 - **Files Created:**
   - `tests/test_frontend_integration.py`
@@ -221,9 +221,9 @@ Implement per-message observability components and user feedback interactions in
 Create an automated test suite in `tests/test_frontend_integration.py` using pytest and FastAPI's `TestClient`. Verify that the HTML template renders with the required semantic elements, all vendored static assets (`marked.min.js`, `purify.min.js`, `highlight.min.js`, `highlight.theme.css`) and application files (`style.css`, `app.js`) are served with HTTP 200 and correct MIME types, and all backend API endpoints (`/api/workflows`, `/api/chat`, `/api/feedback`) adhere to the frontend data contracts.
 
 ### Acceptance Criteria
-- [ ] `tests/test_frontend_integration.py` tests pass with `pytest`.
-- [ ] `GET /` returns HTTP 200 with HTML content containing required elements (`#chat`, `#chatForm`, `#themeToggle`, `#newChatBtn`, `#sessionsList`).
-- [ ] Static asset route tests verify HTTP 200 for:
+- [x] `tests/test_frontend_integration.py` tests pass with `pytest`.
+- [x] `GET /` returns HTTP 200 with HTML content containing required elements (`#chat`, `#chatForm`, `#themeToggle`, `#newChatBtn`, `#sessionsList`).
+- [x] Static asset route tests verify HTTP 200 for:
   - `/static/vendor/marked.min.js`
   - `/static/vendor/purify.min.js`
   - `/static/vendor/highlight.min.js`
@@ -244,4 +244,4 @@ Create an automated test suite in `tests/test_frontend_integration.py` using pyt
 | **Ticket 4** | Client State & Session Lifecycle | `static/js/app.js` | Ticket 3 | `completed` |
 | **Ticket 5** | Markdown Pipeline & Security | `static/js/app.js` | Ticket 4 | `completed` |
 | **Ticket 6** | Observability Accordion & Feedback | `static/js/app.js` | Ticket 5 | `completed` |
-| **Ticket 7** | Automated Integration Tests | `tests/test_frontend_integration.py` | Ticket 6 | `ready-for-agent` |
+| **Ticket 7** | Automated Integration Tests | `tests/test_frontend_integration.py` | Ticket 6 | `completed` |
