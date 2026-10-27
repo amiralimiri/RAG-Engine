@@ -2,6 +2,7 @@
    Enterprise IT Support Copilot - Application Logic
    Ticket 4: Client State, Session Lifecycle & Theme Switcher
    Ticket 5: Markdown Pipeline, Security Sanitization & In-Feed Thinking State
+   Ticket 6: Observability Reasoning Accordion, Telemetry Feedback & Toast Notifications
    ========================================================================== */
 
 /* ---------- DOM Element Bindings ---------- */
@@ -25,6 +26,7 @@ const themeToggleBtn = $("themeToggleBtn");
 const newChatBtn = $("newChatBtn");
 const recentChatsList = $("recentChatsList");
 const clearHistoryBtn = $("clearHistoryBtn");
+const toastContainer = $("toastContainer");
 const sidebar = $("sidebar");
 const sidebarBackdrop = $("sidebarBackdrop");
 const sidebarToggleBtn = $("sidebarToggleBtn");
@@ -523,6 +525,371 @@ function hideThinking() {
 }
 
 /* ==========================================================================
+   Ticket 6: Floating Toast Notifications
+   ========================================================================== */
+function showToast(message, type = "info", duration = 3000) {
+  if (typeof document === "undefined") return null;
+
+  let container =
+    toastContainer ||
+    $("toastContainer") ||
+    (typeof document.getElementById === "function"
+      ? document.getElementById("toastContainer")
+      : null);
+
+  if (!container && typeof document.querySelector === "function") {
+    container = document.querySelector("#toastContainer");
+  }
+
+  if (
+    !container &&
+    document.body &&
+    typeof document.createElement === "function"
+  ) {
+    container = document.createElement("div");
+    container.id = "toastContainer";
+    container.className = "toast-container";
+    container.setAttribute("aria-live", "polite");
+    container.setAttribute("aria-atomic", "true");
+    document.body.appendChild(container);
+  }
+
+  if (!container) return null;
+
+  const validTypes = ["success", "info", "error"];
+  const toastType = validTypes.includes(type) ? type : "info";
+
+  const toast = document.createElement("div");
+  let toastClass = "toast-info";
+  if (toastType === "success") {
+    toastClass = "toast-success";
+  } else if (toastType === "error") {
+    toastClass = "toast-error";
+  }
+  toast.className = `toast ${toastClass}`;
+  toast.setAttribute("role", "status");
+
+  let iconText = "ℹ";
+  if (toastType === "success") iconText = "✓";
+  else if (toastType === "error") iconText = "✕";
+
+  toast.innerHTML = `<span class="toast-icon">${iconText}</span><span class="toast-message">${escapeHtml(message)}</span>`;
+
+  if (typeof container.appendChild === "function") {
+    container.appendChild(toast);
+  }
+
+  let dismissed = false;
+  const dismiss = () => {
+    if (dismissed) return;
+    dismissed = true;
+    if (toast.classList && typeof toast.classList.add === "function") {
+      toast.classList.add("toast-fade-out");
+    }
+    setTimeout(() => {
+      if (
+        toast.parentNode &&
+        typeof toast.parentNode.removeChild === "function"
+      ) {
+        toast.parentNode.removeChild(toast);
+      } else if (typeof toast.remove === "function") {
+        toast.remove();
+      }
+    }, 260);
+  };
+
+  if (typeof toast.addEventListener === "function") {
+    toast.addEventListener("click", dismiss);
+  }
+
+  if (duration && duration > 0) {
+    setTimeout(dismiss, duration);
+  }
+
+  return toast;
+}
+
+/* ==========================================================================
+   Ticket 6: Observability Reasoning Accordion & Source Badges
+   ========================================================================== */
+function getSourceBadgeClass(source) {
+  const s = String(source || "")
+    .toLowerCase()
+    .trim();
+  if (s.includes("vector") || s.includes("knowledge") || s.includes("store")) {
+    return "badge-vectorstore";
+  }
+  if (s.includes("web") || s.includes("search")) {
+    return "badge-web_search";
+  }
+  return `badge-${s.replace(/[^a-z0-9_-]/g, "_") || "default"}`;
+}
+
+async function handleCopyTraceId(traceChip) {
+  if (!traceChip) return;
+  const traceId =
+    (traceChip.dataset && traceChip.dataset.traceId) ||
+    (typeof traceChip.getAttribute === "function"
+      ? traceChip.getAttribute("data-trace-id")
+      : "") ||
+    "";
+
+  if (!traceId) return;
+
+  await copyToClipboard(traceId);
+  showToast("Trace ID copied for Langfuse debugging", "info");
+}
+
+/* ==========================================================================
+   Ticket 6: Telemetry Feedback & Comment Micro-Popover
+   ========================================================================== */
+function updateMessageFeedback(traceId, feedbackData) {
+  if (!currentSessionId) return;
+  const sessionData = getSessionData(currentSessionId);
+  if (!sessionData || !Array.isArray(sessionData.messages)) return;
+
+  let msg = null;
+  if (traceId) {
+    msg = sessionData.messages.find(
+      (m) => m.role === "assistant" && m.trace_id === traceId,
+    );
+  }
+  if (!msg) {
+    msg = [...sessionData.messages]
+      .reverse()
+      .find((m) => m.role === "assistant");
+  }
+
+  if (msg) {
+    if (!msg.feedback) {
+      msg.feedback = { score: null, comment: null };
+    }
+    if (feedbackData.score !== undefined) {
+      msg.feedback.score = feedbackData.score;
+    }
+    if (feedbackData.comment !== undefined) {
+      msg.feedback.comment = feedbackData.comment;
+    }
+    sessionData.updatedAt = Date.now();
+    saveSessionData(currentSessionId, sessionData);
+    updateSessionIndexMetadata(currentSessionId, sessionData);
+  }
+}
+
+async function submitFeedback(
+  traceId,
+  score,
+  comment = null,
+  feedbackBar = null,
+) {
+  const numericScore = typeof score === "number" ? score : parseFloat(score);
+  if (isNaN(numericScore) || numericScore < 0.0 || numericScore > 1.0) {
+    showToast("Invalid feedback score", "error");
+    return false;
+  }
+
+  if (!traceId) {
+    showToast("No trace ID available for this response", "error");
+    return false;
+  }
+
+  let thumbsUp = null;
+  let thumbsDown = null;
+  let statusMsg = null;
+
+  if (feedbackBar) {
+    thumbsUp = feedbackBar.querySelector
+      ? feedbackBar.querySelector(".thumbs-up")
+      : null;
+    thumbsDown = feedbackBar.querySelector
+      ? feedbackBar.querySelector(".thumbs-down")
+      : null;
+    statusMsg = feedbackBar.querySelector
+      ? feedbackBar.querySelector(".feedback-status-msg")
+      : null;
+
+    // Optimistic locking: disable both thumbs buttons to prevent duplicate votes
+    if (thumbsUp) thumbsUp.disabled = true;
+    if (thumbsDown) thumbsDown.disabled = true;
+
+    if (numericScore >= 0.5) {
+      if (thumbsUp && thumbsUp.classList) thumbsUp.classList.add("selected");
+      if (thumbsDown && thumbsDown.classList)
+        thumbsDown.classList.remove("selected");
+    } else {
+      if (thumbsDown && thumbsDown.classList)
+        thumbsDown.classList.add("selected");
+      if (thumbsUp && thumbsUp.classList) thumbsUp.classList.remove("selected");
+    }
+
+    if (statusMsg) {
+      statusMsg.textContent = comment
+        ? "Submitting note..."
+        : "Submitting feedback...";
+    }
+  }
+
+  try {
+    const payload = {
+      trace_id: traceId,
+      score: numericScore,
+      name: "user_feedback",
+      comment: comment || null,
+    };
+
+    const res = await fetch("/api/feedback", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+
+    const data = await readJsonSafe(res);
+    if (!res.ok) {
+      throw new Error(data.detail || `HTTP ${res.status}`);
+    }
+
+    if (statusMsg) {
+      statusMsg.textContent = comment
+        ? "Feedback & note submitted!"
+        : "Thanks for your feedback!";
+    }
+
+    showToast("Feedback submitted successfully!", "success");
+    updateMessageFeedback(traceId, { score: numericScore, comment: comment });
+    return true;
+  } catch (err) {
+    console.error("Feedback submission error:", err);
+    if (feedbackBar) {
+      // Gracefully unlock buttons on error
+      if (thumbsUp) {
+        thumbsUp.disabled = false;
+        if (thumbsUp.classList) thumbsUp.classList.remove("selected");
+      }
+      if (thumbsDown) {
+        thumbsDown.disabled = false;
+        if (thumbsDown.classList) thumbsDown.classList.remove("selected");
+      }
+      if (statusMsg) {
+        statusMsg.textContent = "";
+      }
+    }
+    showToast(`Failed to submit feedback: ${err.message}`, "error");
+    return false;
+  }
+}
+
+function closeAllCommentPopovers() {
+  if (typeof document === "undefined" || !document.querySelectorAll) return;
+  const popovers = document.querySelectorAll(".comment-popover");
+  popovers.forEach((p) => {
+    if (p.parentNode && typeof p.parentNode.removeChild === "function") {
+      p.parentNode.removeChild(p);
+    } else if (typeof p.remove === "function") {
+      p.remove();
+    }
+  });
+}
+
+function toggleCommentPopover(feedbackBar, traceId) {
+  if (!feedbackBar || typeof document === "undefined") return;
+
+  const existing = feedbackBar.querySelector
+    ? feedbackBar.querySelector(".comment-popover")
+    : null;
+  if (existing) {
+    if (
+      existing.parentNode &&
+      typeof existing.parentNode.removeChild === "function"
+    ) {
+      existing.parentNode.removeChild(existing);
+    } else if (typeof existing.remove === "function") {
+      existing.remove();
+    }
+    return;
+  }
+
+  closeAllCommentPopovers();
+
+  const popover = document.createElement("div");
+  popover.className = "comment-popover feedback-popover";
+  popover.innerHTML =
+    `<textarea placeholder="Add details or context (optional)..." aria-label="Feedback note"></textarea>` +
+    `<div class="popover-actions">` +
+    `<button type="button" class="popover-btn popover-cancel">Cancel</button>` +
+    `<button type="button" class="popover-btn popover-submit">Submit</button>` +
+    `</div>`;
+
+  if (typeof feedbackBar.appendChild === "function") {
+    feedbackBar.appendChild(popover);
+  }
+
+  const textarea = popover.querySelector
+    ? popover.querySelector("textarea")
+    : null;
+  if (textarea && typeof textarea.focus === "function") {
+    textarea.focus();
+  }
+
+  const cancelBtn = popover.querySelector
+    ? popover.querySelector(".popover-cancel")
+    : null;
+  if (cancelBtn && typeof cancelBtn.addEventListener === "function") {
+    cancelBtn.addEventListener("click", (e) => {
+      if (e && typeof e.stopPropagation === "function") e.stopPropagation();
+      if (
+        popover.parentNode &&
+        typeof popover.parentNode.removeChild === "function"
+      ) {
+        popover.parentNode.removeChild(popover);
+      } else if (typeof popover.remove === "function") {
+        popover.remove();
+      }
+    });
+  }
+
+  const submitBtn = popover.querySelector
+    ? popover.querySelector(".popover-submit")
+    : null;
+  if (submitBtn && typeof submitBtn.addEventListener === "function") {
+    submitBtn.addEventListener("click", async (e) => {
+      if (e && typeof e.stopPropagation === "function") e.stopPropagation();
+      const note = textarea ? textarea.value.trim() : "";
+      if (
+        popover.parentNode &&
+        typeof popover.parentNode.removeChild === "function"
+      ) {
+        popover.parentNode.removeChild(popover);
+      } else if (typeof popover.remove === "function") {
+        popover.remove();
+      }
+
+      let score = 1.0;
+      const upBtn = feedbackBar.querySelector
+        ? feedbackBar.querySelector(".thumbs-up")
+        : null;
+      const downBtn = feedbackBar.querySelector
+        ? feedbackBar.querySelector(".thumbs-down")
+        : null;
+      if (
+        downBtn &&
+        downBtn.classList &&
+        downBtn.classList.contains("selected")
+      ) {
+        score = 0.0;
+      } else if (
+        upBtn &&
+        upBtn.classList &&
+        upBtn.classList.contains("selected")
+      ) {
+        score = 1.0;
+      }
+
+      await submitFeedback(traceId, score, note || null, feedbackBar);
+    });
+  }
+}
+
+/* ==========================================================================
    Theme Management
    ========================================================================== */
 function getSystemTheme() {
@@ -767,7 +1134,16 @@ function clearMessageFeed() {
   }
 }
 
-function addMessage(role, text, source = "", citations = [], workflow = "") {
+function addMessage(
+  role,
+  text,
+  source = "",
+  citations = [],
+  workflow = "",
+  traceId = "",
+  traceSteps = [],
+  feedback = null,
+) {
   if (welcomeCard) {
     welcomeCard.classList.add("hidden");
   }
@@ -786,19 +1162,99 @@ function addMessage(role, text, source = "", citations = [], workflow = "") {
           .join("<br>")}</div>`
       : "";
 
-  const metaHtml = [
-    source
-      ? `<div class="answer-source">Source: ${escapeHtml(source)}</div>`
-      : "",
-    workflow
-      ? `<div class="workflow-tag">Workflow: ${escapeHtml(workflow)}</div>`
-      : "",
-  ].join("");
+  let accordionHtml = "";
+  let feedbackHtml = "";
+
+  if (role === "assistant") {
+    const sourceClass = getSourceBadgeClass(source);
+    const displaySource = source || "vectorstore";
+    const displayWorkflow =
+      workflow ||
+      (workflowSelect ? workflowSelect.value : "") ||
+      "fix_single_llm";
+    const safeTraceId = traceId || "";
+
+    const traceIdChipHtml = safeTraceId
+      ? `<div class="trace-id-chip" data-trace-id="${escapeHtml(safeTraceId)}" role="button" tabindex="0" title="Click to copy Trace ID">` +
+        `<code>${escapeHtml(safeTraceId)}</code>` +
+        `<button class="copy-trace-btn" type="button" aria-label="Copy Trace ID">⎘</button>` +
+        `</div>`
+      : `<span class="audit-value">—</span>`;
+
+    const steps =
+      Array.isArray(traceSteps) && traceSteps.length > 0
+        ? traceSteps
+        : ["direct"];
+
+    const stepsListHtml = steps
+      .map(
+        (step) =>
+          `<li class="step-item step-chip"><span class="step-dot"></span><span class="step-text">${escapeHtml(step)}</span></li>`,
+      )
+      .join("");
+
+    accordionHtml =
+      `<details class="reasoning-accordion">` +
+      `<summary class="reasoning-summary">` +
+      `<div class="summary-left">` +
+      `<span class="reasoning-icon">⚡</span>` +
+      `<span class="summary-title">Reasoning &amp; Audit Steps</span>` +
+      `<span class="source-badge ${sourceClass}">${escapeHtml(displaySource)}</span>` +
+      `<span class="workflow-chip">${escapeHtml(displayWorkflow)}</span>` +
+      `</div>` +
+      `<span class="accordion-arrow">›</span>` +
+      `</summary>` +
+      `<div class="reasoning-content">` +
+      `<div class="audit-row">` +
+      `<span class="audit-label">Workflow:</span>` +
+      `<span class="audit-value workflow-chip">${escapeHtml(displayWorkflow)}</span>` +
+      `</div>` +
+      `<div class="audit-row">` +
+      `<span class="audit-label">Langfuse Trace ID:</span>` +
+      `${traceIdChipHtml}` +
+      `</div>` +
+      `<div class="audit-steps-section">` +
+      `<div class="audit-label">Execution Trace:</div>` +
+      `<ol class="step-list">` +
+      `${stepsListHtml}` +
+      `</ol>` +
+      `</div>` +
+      `</div>` +
+      `</details>`;
+
+    // Feedback Bar
+    const upSelected =
+      feedback && feedback.score !== null && Number(feedback.score) >= 0.5;
+    const downSelected =
+      feedback && feedback.score !== null && Number(feedback.score) < 0.5;
+    const isLocked = Boolean(upSelected || downSelected);
+
+    let initialStatus = "";
+    if (feedback && feedback.score !== null) {
+      initialStatus = feedback.comment
+        ? "Feedback & note recorded"
+        : "Feedback recorded";
+    }
+
+    feedbackHtml =
+      `<div class="feedback-bar" data-trace-id="${escapeHtml(safeTraceId)}">` +
+      `<button class="feedback-btn thumbs-up${upSelected ? " selected" : ""}" title="Helpful answer" data-score="1.0" type="button"${isLocked ? " disabled" : ""}>` +
+      `👍 <span>Helpful</span>` +
+      `</button>` +
+      `<button class="feedback-btn thumbs-down${downSelected ? " selected" : ""}" title="Not helpful" data-score="0.0" type="button"${isLocked ? " disabled" : ""}>` +
+      `👎 <span>Unhelpful</span>` +
+      `</button>` +
+      `<button class="feedback-btn add-note-btn" title="Add feedback note" type="button">` +
+      `💬 <span>Add Note</span>` +
+      `</button>` +
+      `<div class="feedback-status-msg">${escapeHtml(initialStatus)}</div>` +
+      `</div>`;
+  }
 
   const avatarLabel = role === "user" ? "You" : "AI";
   const bodyHtml =
     role === "assistant" ? renderMarkdown(text) : formatText(text);
-  wrap.innerHTML = `<div class="avatar">${avatarLabel}</div><div class="bubble">${bodyHtml}${metaHtml}${citeHtml}</div>`;
+  wrap.innerHTML = `<div class="avatar">${avatarLabel}</div><div class="bubble">${bodyHtml}${citeHtml}${accordionHtml}${feedbackHtml}</div>`;
 
   if (
     thinkingBubble &&
@@ -840,6 +1296,9 @@ function renderSessionTranscript(sessionData) {
         msg.source_used || "",
         msg.citations || [],
         msg.workflow || "",
+        msg.trace_id || "",
+        msg.trace || [],
+        msg.feedback || null,
       );
     });
 
@@ -1125,6 +1584,9 @@ async function askAgent(q) {
       data.source_used,
       data.citations || [],
       data.workflow || activeWf,
+      data.trace_id || "",
+      data.trace || [],
+      null,
     );
     renderTrace(data.trace || []);
     if (sourceUsed) sourceUsed.textContent = data.source_used;
@@ -1148,7 +1610,16 @@ async function askAgent(q) {
     updateSessionIndexMetadata(currentSessionId, sessionData);
   } catch (e) {
     hideThinking();
-    addMessage("assistant", `Error: ${e.message}`);
+    addMessage(
+      "assistant",
+      `Error: ${e.message}`,
+      "error",
+      [],
+      workflowSelect ? workflowSelect.value || "" : "",
+      "",
+      ["Request failed"],
+      null,
+    );
     renderTrace(["Request failed"]);
     if (sourceUsed) sourceUsed.textContent = "Error";
     if (workflowUsed) workflowUsed.textContent = "Error";
@@ -1300,14 +1771,83 @@ if (uploadBtn) {
   };
 }
 
-// Delegated event listener for one-click code copy buttons
+// Delegated event listener for one-click code copy buttons, trace ID copying, and feedback
 if (typeof document !== "undefined" && document.addEventListener) {
   document.addEventListener("click", (e) => {
     const target = e.target;
+
+    // 1. One-click code copy button
     const btn = findClosest(target, ".copy-code-btn");
     if (btn) {
       if (typeof e.preventDefault === "function") e.preventDefault();
       handleCopyCode(btn);
+      return;
+    }
+
+    // 2. Interactive trace_id chip click-to-copy
+    const traceChip = findClosest(target, ".trace-id-chip");
+    if (traceChip) {
+      if (typeof e.preventDefault === "function") e.preventDefault();
+      handleCopyTraceId(traceChip);
+      return;
+    }
+
+    // 3. Feedback buttons (thumbs up / thumbs down / add-note)
+    const feedbackBtn = findClosest(target, ".feedback-btn");
+    if (feedbackBtn) {
+      const feedbackBar = findClosest(feedbackBtn, ".feedback-bar");
+      if (!feedbackBar) return;
+      const traceId =
+        (feedbackBar.dataset && feedbackBar.dataset.traceId) ||
+        (typeof feedbackBar.getAttribute === "function"
+          ? feedbackBar.getAttribute("data-trace-id")
+          : "") ||
+        "";
+
+      if (feedbackBtn.classList && feedbackBtn.classList.contains("thumbs-up")) {
+        if (feedbackBtn.disabled) return;
+        if (typeof e.preventDefault === "function") e.preventDefault();
+        submitFeedback(traceId, 1.0, null, feedbackBar);
+        return;
+      }
+
+      if (
+        feedbackBtn.classList &&
+        feedbackBtn.classList.contains("thumbs-down")
+      ) {
+        if (feedbackBtn.disabled) return;
+        if (typeof e.preventDefault === "function") e.preventDefault();
+        submitFeedback(traceId, 0.0, null, feedbackBar);
+        return;
+      }
+
+      if (
+        feedbackBtn.classList &&
+        feedbackBtn.classList.contains("add-note-btn")
+      ) {
+        if (typeof e.preventDefault === "function") e.preventDefault();
+        toggleCommentPopover(feedbackBar, traceId);
+        return;
+      }
+    }
+
+    // 4. Click outside comment popovers closes them
+    if (
+      !findClosest(target, ".comment-popover") &&
+      !findClosest(target, ".add-note-btn")
+    ) {
+      closeAllCommentPopovers();
+    }
+  });
+
+  // Keyboard accessibility for Trace ID chip (Enter / Space)
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === " ") {
+      const traceChip = findClosest(e.target, ".trace-id-chip");
+      if (traceChip) {
+        if (typeof e.preventDefault === "function") e.preventDefault();
+        handleCopyTraceId(traceChip);
+      }
     }
   });
 }
@@ -1346,6 +1886,15 @@ if (typeof module !== "undefined" && module.exports) {
     hideThinking,
     askAgent,
     addMessage,
+    renderSessionTranscript,
     getThinkingInterval: () => thinkingTimerInterval,
+    // Ticket 6 exports
+    showToast,
+    submitFeedback,
+    updateMessageFeedback,
+    getSourceBadgeClass,
+    handleCopyTraceId,
+    toggleCommentPopover,
+    closeAllCommentPopovers,
   };
 }

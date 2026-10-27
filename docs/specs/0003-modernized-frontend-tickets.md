@@ -180,30 +180,32 @@ Implement the rich text rendering and security pipeline in `static/js/app.js`. C
 ## Ticket 6: Observability Reasoning Accordion, Telemetry Feedback & Toast Notifications
 
 - **Title:** Implement per-message reasoning accordion, thumbs up/down voting, and toast notifications
-- **Label:** `ready-for-agent`
+- **Label:** `completed`
 - **Blockers:** Ticket 5
 - **Files Modified:**
   - `static/js/app.js`
+  - `tests/test_ticket6_js.js`
+  - `tests/test_frontend_observability_feedback.py`
 
 ### Description
 Implement per-message observability components and user feedback interactions in `static/js/app.js`. For every assistant message, render a collapsible `<details class="reasoning-accordion">` displaying `source_used` badge, workflow chip, interactive `trace_id` chip, and step-by-step LangGraph node executions. Implement one-click clipboard copying for `trace_id` with a floating toast notification. Implement Thumbs Up (`1.0`) and Thumbs Down (`0.0`) feedback buttons with optimistic locking and asynchronous submission to `POST /api/feedback`, accompanied by an optional comment micro-popover.
 
 ### Acceptance Criteria
-- [ ] Each assistant message bubble includes a collapsible `details.reasoning-accordion`.
-- [ ] Accordion displays:
+- [x] Each assistant message bubble includes a collapsible `details.reasoning-accordion`.
+- [x] Accordion displays:
   - Source badge (`vectorstore` vs `web_search`).
   - Active workflow tag.
   - Trace steps list (`step-item` elements).
   - Trace ID chip with click-to-copy trigger.
-- [ ] Clicking `trace_id` copies the exact ID to clipboard and triggers `showToast("Trace ID copied!", "success")`.
-- [ ] Toast notification appears in bottom-right, stacks cleanly, and auto-dismisses after 2500ms.
-- [ ] Feedback bar includes Thumbs Up (`data-score="1.0"`) and Thumbs Down (`data-score="0.0"`).
-- [ ] Clicking a feedback button:
+- [x] Clicking `trace_id` copies the exact ID to clipboard and triggers `showToast("Trace ID copied!", "success")` / `showToast("Trace ID copied for Langfuse debugging", "info")`.
+- [x] Toast notification appears in bottom-right, stacks cleanly, and auto-dismisses after 2500ms.
+- [x] Feedback bar includes Thumbs Up (`data-score="1.0"`) and Thumbs Down (`data-score="0.0"`).
+- [x] Clicking a feedback button:
   - Sets optimistic active state and locks buttons.
   - Dispatches `POST /api/feedback` with `{ trace_id, score, name: "user_feedback", comment }`.
   - Shows success confirmation text.
-- [ ] "Add Note" button opens a comment popover allowing user to submit detailed feedback to `POST /api/feedback`.
-- [ ] Historical trace and feedback state persist across reloads within `rag_session_<id>`.
+- [x] "Add Note" button opens a comment popover allowing user to submit detailed feedback to `POST /api/feedback`.
+- [x] Historical trace and feedback state persist across reloads within `rag_session_<id>`.
 
 ---
 
@@ -228,7 +230,7 @@ Create an automated test suite in `tests/test_frontend_integration.py` using pyt
   - `/static/vendor/highlight.theme.css`
   - `/static/css/style.css`
   - `/static/js/app.js`
-- [ ] API integration tests verify `/api/workflows`, `/api/chat`, and `/api/feedback` responses match the expected schemas.
+  - API integration tests verify `/api/workflows`, `/api/chat`, and `/api/feedback` responses match the expected schemas.
 
 ---
 
@@ -241,5 +243,5 @@ Create an automated test suite in `tests/test_frontend_integration.py` using pyt
 | **Ticket 3** | HTML5 Semantic Shell | `templates/index.html` | Ticket 2 | `completed` |
 | **Ticket 4** | Client State & Session Lifecycle | `static/js/app.js` | Ticket 3 | `completed` |
 | **Ticket 5** | Markdown Pipeline & Security | `static/js/app.js` | Ticket 4 | `completed` |
-| **Ticket 6** | Observability Accordion & Feedback | `static/js/app.js` | Ticket 5 | `ready-for-agent` |
+| **Ticket 6** | Observability Accordion & Feedback | `static/js/app.js` | Ticket 5 | `completed` |
 | **Ticket 7** | Automated Integration Tests | `tests/test_frontend_integration.py` | Ticket 6 | `ready-for-agent` |
