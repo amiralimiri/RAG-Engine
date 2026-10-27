@@ -3,6 +3,7 @@
    Ticket 4: Client State, Session Lifecycle & Theme Switcher
    Ticket 5: Markdown Pipeline, Security Sanitization & In-Feed Thinking State
    Ticket 6: Observability Reasoning Accordion, Telemetry Feedback & Toast Notifications
+   Ticket 5 (0004): Zero-Dependency Client SSE Stream Parser (readEventStream & streamChat)
    ========================================================================== */
 
 /* ---------- DOM Element Bindings ---------- */
@@ -1622,6 +1623,199 @@ async function askAgent(q) {
 }
 
 /* ==========================================================================
+   Response Streaming Engine (ADR 0004 / Ticket 5)
+   Zero-dependency ReadableStream SSE Parser & Wire Protocol Implementation
+   ========================================================================== */
+
+let renderPending = false;
+let accumulatedMarkdown = "";
+
+/**
+ * Safely parses a single raw SSE frame text chunk into { event, data }.
+ * Extracts 'event:' and 'data:' fields, discards comments (starting with ':'),
+ * joins multiple data lines with '\n', and safely JSON-parses the payload.
+ *
+ * @param {string} rawFrame - Raw SSE text block
+ * @returns {{ event: string, data: any } | null}
+ */
+function parseSSEFrame(rawFrame) {
+  if (!rawFrame || !rawFrame.trim()) return null;
+
+  const lines = rawFrame.split(/\r?\n/);
+  let eventType = "message";
+  const dataLines = [];
+
+  for (const line of lines) {
+    if (!line || line.startsWith(":")) {
+      // SSE comment or keepalive marker per W3C specification
+      continue;
+    }
+    if (line.startsWith("event:")) {
+      eventType = line.slice(6).trim();
+    } else if (line.startsWith("data:")) {
+      let val = line.slice(5);
+      if (val.startsWith(" ")) {
+        val = val.slice(1);
+      }
+      dataLines.push(val);
+    }
+  }
+
+  if (dataLines.length === 0) {
+    return null;
+  }
+
+  const dataStr = dataLines.join("\n");
+  try {
+    const data = JSON.parse(dataStr);
+    return { event: eventType, data };
+  } catch (err) {
+    console.warn("Failed to parse SSE JSON chunk:", dataStr, err);
+    return null;
+  }
+}
+
+/**
+ * Async generator reading an SSE ReadableStream using native TextDecoder.
+ * Buffers chunks across arbitrary TCP packet boundaries (splitting on \n\n or \r\n\r\n),
+ * handles multi-byte UTF-8 fragments, and yields deserialized { event, data } frames.
+ * Reader lock is guaranteed to be released in a finally block.
+ *
+ * @param {Response} response - Fetch Response with readable body
+ * @yields {{ event: string, data: any }}
+ */
+async function* readEventStream(response) {
+  if (
+    !response ||
+    !response.body ||
+    typeof response.body.getReader !== "function"
+  ) {
+    throw new Error("Invalid response: readable body stream is required");
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder("utf-8");
+  let buffer = "";
+
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) {
+        buffer += decoder.decode();
+        break;
+      }
+
+      buffer += decoder.decode(value, { stream: true });
+
+      // Split on standard SSE double-newline message boundaries
+      const parts = buffer.split(/\r?\n\r?\n/);
+      buffer = parts.pop() || ""; // Retain incomplete frame in buffer
+
+      for (const part of parts) {
+        const frame = parseSSEFrame(part);
+        if (frame) {
+          yield frame;
+        }
+      }
+    }
+
+    // Process any trailing un-delimited frame at the end of the stream
+    if (buffer.trim()) {
+      const frame = parseSSEFrame(buffer);
+      if (frame) {
+        yield frame;
+      }
+      buffer = "";
+    }
+  } finally {
+    try {
+      reader.releaseLock();
+    } catch (e) {
+      console.warn("Failed to release reader lock:", e);
+    }
+  }
+}
+
+/**
+ * Initiates an SSE streaming chat session with POST /api/chat/stream,
+ * validates pre-stream HTTP status codes, handles AbortController cancellation,
+ * and delegates to readEventStream().
+ *
+ * @param {Object} payload - ChatRequest payload ({ question, workflow, session_id, ... })
+ * @param {Object} [options] - Options (signal, endpoint, headers)
+ * @yields {{ event: string, data: any }}
+ */
+async function* streamChat(payload, options = {}) {
+  const endpoint = (options && options.endpoint) || "/api/chat/stream";
+  const signal = options && options.signal;
+  const headers = Object.assign(
+    { "Content-Type": "application/json" },
+    (options && options.headers) || {},
+  );
+
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(payload),
+    signal,
+  });
+
+  if (!response.ok) {
+    const errorPayload = await readJsonSafe(response);
+    const detail =
+      (errorPayload && (errorPayload.detail || errorPayload.message)) ||
+      `HTTP ${response.status}: ${response.statusText}`;
+    const err = new Error(detail);
+    err.status = response.status;
+    err.payload = errorPayload;
+    throw err;
+  }
+
+  yield* readEventStream(response);
+}
+
+/**
+ * Hook for Ticket 6 progressive RAF-throttled Markdown rendering.
+ * Batches incoming tokens and schedules DOM updates bounded by display refresh rate.
+ *
+ * @param {HTMLElement} contentEl - Target DOM container for message body
+ * @param {string} [markdownText] - Optional markdown content override
+ */
+function scheduleProgressiveRender(contentEl, markdownText) {
+  if (markdownText !== undefined) {
+    accumulatedMarkdown = markdownText;
+  }
+
+  if (renderPending) return;
+  renderPending = true;
+
+  const raf =
+    typeof window !== "undefined" &&
+    typeof window.requestAnimationFrame === "function"
+      ? window.requestAnimationFrame
+      : (cb) => setTimeout(cb, 16);
+
+  raf(() => {
+    if (contentEl) {
+      if (typeof marked !== "undefined" && typeof DOMPurify !== "undefined") {
+        contentEl.innerHTML = DOMPurify.sanitize(
+          marked.parse(accumulatedMarkdown),
+        );
+      } else if (typeof renderMarkdown === "function") {
+        contentEl.innerHTML = renderMarkdown(accumulatedMarkdown);
+      } else {
+        contentEl.textContent = accumulatedMarkdown;
+      }
+    }
+
+    if (chatArea) {
+      chatArea.scrollTop = chatArea.scrollHeight;
+    }
+    renderPending = false;
+  });
+}
+
+/* ==========================================================================
    Composer Events & Document Ingestion
    ========================================================================== */
 if (form) {
@@ -1869,5 +2063,15 @@ if (typeof module !== "undefined" && module.exports) {
     closeAllCommentPopovers,
     removeElement,
     sanitizeHtml,
+    // Ticket 5 Response Streaming exports (ADR 0004)
+    parseSSEFrame,
+    readEventStream,
+    streamChat,
+    scheduleProgressiveRender,
+    getAccumulatedMarkdown: () => accumulatedMarkdown,
+    setAccumulatedMarkdown: (val) => {
+      accumulatedMarkdown = val;
+    },
+    isRenderPending: () => renderPending,
   };
 }

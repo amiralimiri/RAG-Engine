@@ -55,7 +55,7 @@
 | **Ticket 2** | Async Graph Generation Nodes | `app/rag/fix_single_llm.py`<br>`app/rag/fix_single_jev.py` | Ticket 1 | `completed` |
 | **Ticket 3** | Backend Streaming Route & Telemetry Teardown | `app/api/routes.py` | Ticket 1, Ticket 2 | `completed` |
 | **Ticket 4** | Backend Automated Streaming Tests | `tests/test_chat_stream.py` | Ticket 3 | `completed` |
-| **Ticket 5** | Zero-Dependency Client SSE Parser | `static/js/app.js` | Ticket 3 | `ready-for-agent` |
+| **Ticket 5** | Zero-Dependency Client SSE Parser | `static/js/app.js` | Ticket 3 | `completed` |
 | **Ticket 6** | Progressive UI State Machine & Interrupted Persistence | `static/js/app.js` | Ticket 5 | `ready-for-agent` |
 | **Ticket 7** | End-to-End Integration Tests & Verification | `tests/test_frontend_streaming.py` | Ticket 4, Ticket 6 | `ready-for-agent` |
 
@@ -167,7 +167,7 @@ Create a comprehensive test suite using `httpx.AsyncClient` that validates the S
 ## Ticket 5: Zero-Dependency Client SSE Parser
 
 - **Title:** Implement vanilla JS `ReadableStream` parser in `static/js/app.js`
-- **Label:** `ready-for-agent`
+- **Label:** `completed`
 - **Blockers:** Ticket 3
 - **Files Modified:**
   - `static/js/app.js`
@@ -176,12 +176,12 @@ Create a comprehensive test suite using `httpx.AsyncClient` that validates the S
 Implement a robust, zero-dependency streaming reader in `static/js/app.js` that consumes `fetch()` responses using `ReadableStream` and `TextDecoder`. The parser must handle arbitrary TCP chunk fragmentation, buffer partial lines across read boundaries, split on SSE frame delimiters (`\n\n`), parse `event:` and `data:` fields, and yield deserialized event payloads.
 
 ### Acceptance Criteria
-- [ ] `readEventStream(response)` async generator function is implemented in `static/js/app.js`.
-- [ ] Uses native `response.body.getReader()` and `TextDecoder("utf-8")`.
-- [ ] Properly retains partial lines in an internal buffer when chunk boundaries slice across lines or double newlines.
-- [ ] Yields `{ event, data }` objects where `data` is parsed JSON.
-- [ ] Gracefully catches and logs malformed JSON chunks without crashing the stream iteration.
-- [ ] Guarantees reader lock release (`reader.releaseLock()`) inside a `finally` block.
+- [x] `readEventStream(response)` async generator function is implemented in `static/js/app.js`.
+- [x] Uses native `response.body.getReader()` and `TextDecoder("utf-8")`.
+- [x] Properly retains partial lines in an internal buffer when chunk boundaries slice across lines or double newlines.
+- [x] Yields `{ event, data }` objects where `data` is parsed JSON.
+- [x] Gracefully catches and logs malformed JSON chunks without crashing the stream iteration.
+- [x] Guarantees reader lock release (`reader.releaseLock()`) inside a `finally` block.
 
 ---
 
