@@ -54,7 +54,7 @@
 | **Ticket 1** | Schemas & Wire Models | `app/api/schemas.py` | None | `completed` |
 | **Ticket 2** | Async Graph Generation Nodes | `app/rag/fix_single_llm.py`<br>`app/rag/fix_single_jev.py` | Ticket 1 | `completed` |
 | **Ticket 3** | Backend Streaming Route & Telemetry Teardown | `app/api/routes.py` | Ticket 1, Ticket 2 | `completed` |
-| **Ticket 4** | Backend Automated Streaming Tests | `tests/test_chat_stream.py` | Ticket 3 | `ready-for-agent` |
+| **Ticket 4** | Backend Automated Streaming Tests | `tests/test_chat_stream.py` | Ticket 3 | `completed` |
 | **Ticket 5** | Zero-Dependency Client SSE Parser | `static/js/app.js` | Ticket 3 | `ready-for-agent` |
 | **Ticket 6** | Progressive UI State Machine & Interrupted Persistence | `static/js/app.js` | Ticket 5 | `ready-for-agent` |
 | **Ticket 7** | End-to-End Integration Tests & Verification | `tests/test_frontend_streaming.py` | Ticket 4, Ticket 6 | `ready-for-agent` |
@@ -146,7 +146,7 @@ Implement the SSE streaming endpoint `POST /api/chat/stream`. Consume LangGraph'
 ## Ticket 4: Backend Automated Streaming Tests
 
 - **Title:** Implement backend streaming test suite in `tests/test_chat_stream.py`
-- **Label:** `ready-for-agent`
+- **Label:** `completed`
 - **Blockers:** Ticket 3
 - **Files Created:**
   - `tests/test_chat_stream.py`
@@ -155,12 +155,12 @@ Implement the SSE streaming endpoint `POST /api/chat/stream`. Consume LangGraph'
 Create a comprehensive test suite using `httpx.AsyncClient` that validates the SSE wire protocol, verifies event taxonomy and payload structures, asserts token isolation from routers/graders, tests client cancellation handling, and verifies that the synchronous `POST /api/chat` remains backward compatible.
 
 ### Acceptance Criteria
-- [ ] `tests/test_chat_stream.py` executes successfully with `pytest`.
-- [ ] Test scenario 1: Validates that `POST /api/chat/stream` emits `step`, `token`, and `metadata` events formatted as valid JSON data blocks.
-- [ ] Test scenario 2: Asserts token isolation—verifies that no JSON router output (`{"route": ...}`) appears as a stream token.
-- [ ] Test scenario 3: Client disconnection test—verifies that aborting the stream early writes a `client_disconnected` audit log.
-- [ ] Test scenario 4: Pre-stream error test—verifies that an invalid workflow name immediately returns HTTP 400.
-- [ ] Test scenario 5: Backward compatibility test—verifies that synchronous `POST /api/chat` functions identically to pre-streaming behavior.
+- [x] `tests/test_chat_stream.py` executes successfully with `pytest`.
+- [x] Test scenario 1: Validates that `POST /api/chat/stream` emits `step`, `token`, and `metadata` events formatted as valid JSON data blocks.
+- [x] Test scenario 2: Asserts token isolation—verifies that no JSON router output (`{"route": ...}`) appears as a stream token.
+- [x] Test scenario 3: Client disconnection test—verifies that aborting the stream early writes a `client_disconnected` audit log.
+- [x] Test scenario 4: Pre-stream error test—verifies that an invalid workflow name immediately returns HTTP 400.
+- [x] Test scenario 5: Backward compatibility test—verifies that synchronous `POST /api/chat` functions identically to pre-streaming behavior.
 
 ---
 

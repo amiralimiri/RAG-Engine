@@ -298,7 +298,7 @@ async def chat_event_generator(
             trace_id=resolved_tid,
         )
 
-    except asyncio.CancelledError:
+    except (asyncio.CancelledError, GeneratorExit):
         logger.warning(
             "Streaming cancelled by client disconnect",
             trace_id=trace_id,
