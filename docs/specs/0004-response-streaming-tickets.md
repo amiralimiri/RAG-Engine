@@ -53,7 +53,7 @@
 |---|---|---|---|---|
 | **Ticket 1** | Schemas & Wire Models | `app/api/schemas.py` | None | `completed` |
 | **Ticket 2** | Async Graph Generation Nodes | `app/rag/fix_single_llm.py`<br>`app/rag/fix_single_jev.py` | Ticket 1 | `completed` |
-| **Ticket 3** | Backend Streaming Route & Telemetry Teardown | `app/api/routes.py` | Ticket 1, Ticket 2 | `ready-for-agent` |
+| **Ticket 3** | Backend Streaming Route & Telemetry Teardown | `app/api/routes.py` | Ticket 1, Ticket 2 | `completed` |
 | **Ticket 4** | Backend Automated Streaming Tests | `tests/test_chat_stream.py` | Ticket 3 | `ready-for-agent` |
 | **Ticket 5** | Zero-Dependency Client SSE Parser | `static/js/app.js` | Ticket 3 | `ready-for-agent` |
 | **Ticket 6** | Progressive UI State Machine & Interrupted Persistence | `static/js/app.js` | Ticket 5 | `ready-for-agent` |
@@ -116,7 +116,7 @@ Convert response synthesis nodes (`generate_from_kb`, `generate_from_web`, `dire
 ## Ticket 3: Backend Streaming Route & Telemetry Teardown
 
 - **Title:** Implement `POST /api/chat/stream` with `StreamingResponse`, `astream_events` filtering, and cancellation cleanup
-- **Label:** `ready-for-agent`
+- **Label:** `completed`
 - **Blockers:** Ticket 1, Ticket 2
 - **Files Modified:**
   - `app/api/routes.py`
@@ -125,21 +125,21 @@ Convert response synthesis nodes (`generate_from_kb`, `generate_from_web`, `dire
 Implement the SSE streaming endpoint `POST /api/chat/stream`. Consume LangGraph's `agent_graph.astream_events(initial_state, version="v2")`. Filter emitted events so that only whitelisted generation nodes (`generate_from_kb`, `generate_from_web`, `direct_answer`) emit `event: token` frames. Emit `event: step` with friendly labels from `STEP_LABELS`. Wrap the generator in an `asyncio.CancelledError` handler to record an audit record with `source_used: "client_disconnected"` and flush the Langfuse trace if the client disconnects mid-stream.
 
 ### Acceptance Criteria
-- [ ] `POST /api/chat/stream` is registered on FastAPI's router returning `media_type="text/event-stream"`.
-- [ ] Streaming headers include:
+- [x] `POST /api/chat/stream` is registered on FastAPI's router returning `media_type="text/event-stream"`.
+- [x] Streaming headers include:
   - `Cache-Control: no-cache`
   - `Connection: keep-alive`
   - `X-Accel-Buffering: no`
-- [ ] Event filtering ensures:
+- [x] Event filtering ensures:
   - `step` events are emitted on `on_chain_start` for known node names mapped via `STEP_LABELS`.
   - `token` events are emitted **only** from `on_chat_model_stream` events originating from whitelisted generation nodes.
   - Intermediate router and grader JSON deltas are never emitted as tokens.
   - `metadata` event is emitted upon completion with `trace_id`, `source_used`, `citations`, and `trace`.
-- [ ] Intercepting `asyncio.CancelledError`:
+- [x] Intercepting `asyncio.CancelledError`:
   - Logs a warning with the associated `trace_id`.
   - Writes an audit row to `query_audit` with `source_used = "client_disconnected"`.
   - Calls `handler.flush()` on the Langfuse callback handler if present.
-- [ ] Pre-stream errors raise standard HTTP status codes (e.g. 400 for unknown workflow); mid-stream runtime errors emit `event: error`.
+- [x] Pre-stream errors raise standard HTTP status codes (e.g. 400 for unknown workflow); mid-stream runtime errors emit `event: error`.
 
 ---
 
