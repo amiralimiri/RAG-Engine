@@ -80,8 +80,7 @@ Establish the local vendor asset pipeline to support zero-build, air-gapped, and
 ## Ticket 2: Design System & CSS Token Architecture
 
 - **Title:** Implement tokenized modern CSS design system and responsive layout in `static/css/style.css`
-- **Label:** `ready-for-agent`
-- **Blockers:** Ticket 1
+- **Label:** `completed`
 - **Files Modified:**
   - `static/css/style.css`
 
@@ -89,16 +88,16 @@ Establish the local vendor asset pipeline to support zero-build, air-gapped, and
 Rewrite `static/css/style.css` to implement a modern, responsive, and tokenized design system. Define CSS custom properties for dark (`:root`, `[data-theme="dark"]`) and light (`[data-theme="light"]`) themes covering backgrounds, borders, typography, accent highlights, badge statuses, and code blocks. Implement modern layout grids with a collapsible off-canvas navigation drawer for viewports under `1024px`, conversational bubble geometry, code block wrappers with header bars, collapsible reasoning accordions, telemetry buttons, and floating toast notifications.
 
 ### Acceptance Criteria
-- [ ] CSS custom properties defined for both `[data-theme="dark"]` and `[data-theme="light"]`.
-- [ ] Responsive grid structure:
+- [x] CSS custom properties defined for both `[data-theme="dark"]` and `[data-theme="light"]`.
+- [x] Responsive grid structure:
   - Desktop (≥1024px): 280px left sidebar + flex center chat pane.
   - Mobile (<1024px): 100% viewport chat pane with off-canvas sidebar drawer (`.sidebar.open`).
-- [ ] User and assistant message bubble styling with avatars, clear visual hierarchy, and smooth typography.
-- [ ] Styling for code block wrapper with header bar (`.code-block-header`, `.code-lang`, `.copy-code-btn`).
-- [ ] Collapsible reasoning accordion styling (`details.reasoning-accordion`, summary styling, badges, trace steps list).
-- [ ] Thumbs up/down feedback bar styling with hover effects, disabled state, and selected state.
-- [ ] Micro-popover styling for comment input.
-- [ ] Pulsing agent "Thinking" radar animation and toast notification animations.
+- [x] User and assistant message bubble styling with avatars, clear visual hierarchy, and smooth typography.
+- [x] Styling for code block wrapper with header bar (`.code-block-header`, `.code-lang`, `.copy-code-btn`).
+- [x] Collapsible reasoning accordion styling (`details.reasoning-accordion`, summary styling, badges, trace steps list).
+- [x] Thumbs up/down feedback bar styling with hover effects, disabled state, and selected state.
+- [x] Micro-popover styling for comment input.
+- [x] Pulsing agent "Thinking" radar animation and toast notification animations.
 
 ---
 
@@ -233,8 +232,8 @@ Create an automated test suite in `tests/test_frontend_integration.py` using pyt
 
 | Ticket | Scope / Layer | Primary Files | Blockers | Target Status |
 |---|---|---|---|---|
-| **Ticket 1** | Vendored Dependencies | `static/vendor/*.{js,css}` | None | `ready-for-agent` |
-| **Ticket 2** | Design Tokens & Layout CSS | `static/css/style.css` | Ticket 1 | `ready-for-agent` |
+| **Ticket 1** | Vendored Dependencies | `static/vendor/*.{js,css}` | None | `completed` |
+| **Ticket 2** | Design Tokens & Layout CSS | `static/css/style.css` | Ticket 1 | `completed` |
 | **Ticket 3** | HTML5 Semantic Shell | `templates/index.html` | Ticket 2 | `ready-for-agent` |
 | **Ticket 4** | Client State & Session Lifecycle | `static/js/app.js` | Ticket 3 | `ready-for-agent` |
 | **Ticket 5** | Markdown Pipeline & Security | `static/js/app.js` | Ticket 4 | `ready-for-agent` |
