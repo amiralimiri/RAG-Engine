@@ -7,7 +7,7 @@ from typing import Any, Callable
 from starlette.concurrency import run_in_threadpool
 from fastapi import APIRouter, UploadFile, File, HTTPException, Header, BackgroundTasks
 import structlog
-from pydantic import BaseModel, Field
+from app.api.schemas import ChatRequest, ChatResponse, FeedbackRequest
 from app.core.config import get_settings
 from app.core.telemetry import get_langfuse_callback, extract_trace_id, get_langfuse_client
 from app.rag import fix_single_llm, fix_single_jev
@@ -28,19 +28,7 @@ router = APIRouter(prefix="/api")
 settings = get_settings()
 
 
-class ChatRequest(BaseModel):
-    question: str = Field(min_length=2, max_length=3000)
-    workflow: str = "fix_single_jev"
-    session_id: str | None = None
-    user_id: str | None = None
-    trace_id: str | None = None
 
-
-class FeedbackRequest(BaseModel):
-    trace_id: str = Field(..., min_length=1, description="Langfuse Trace ID")
-    score: float = Field(..., ge=0.0, le=1.0, description="Score normalized from 0.0 to 1.0")
-    name: str = Field(default="user_feedback", max_length=100)
-    comment: str | None = Field(default=None, max_length=1000)
 
 
 def capture_context(func: Callable[..., Any]) -> Callable[..., Any]:

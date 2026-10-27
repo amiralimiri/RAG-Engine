@@ -51,7 +51,7 @@
 
 | Ticket | Title | Target Files | Prerequisites | Status |
 |---|---|---|---|---|
-| **Ticket 1** | Schemas & Wire Models | `app/api/schemas.py` | None | `ready-for-agent` |
+| **Ticket 1** | Schemas & Wire Models | `app/api/schemas.py` | None | `completed` |
 | **Ticket 2** | Async Graph Generation Nodes | `app/rag/fix_single_llm.py`<br>`app/rag/fix_single_jev.py` | Ticket 1 | `ready-for-agent` |
 | **Ticket 3** | Backend Streaming Route & Telemetry Teardown | `app/api/routes.py` | Ticket 1, Ticket 2 | `ready-for-agent` |
 | **Ticket 4** | Backend Automated Streaming Tests | `tests/test_chat_stream.py` | Ticket 3 | `ready-for-agent` |
@@ -64,7 +64,7 @@
 ## Ticket 1: Schemas & Wire Models
 
 - **Title:** Centralize Pydantic Schemas and SSE Wire Event Models in `app/api/schemas.py`
-- **Label:** `ready-for-agent`
+- **Label:** `completed`
 - **Blockers:** None
 - **Files Created:**
   - `app/api/schemas.py`
@@ -75,7 +75,7 @@
 Extract and centralize request, response, and streaming wire models into `app/api/schemas.py`. Update `ChatRequest` to include `stream_steps: bool = True` while maintaining backward compatibility with `POST /api/chat`. Define strict Pydantic schemas for the 4 SSE event types: `step`, `token`, `metadata`, and `error`.
 
 ### Acceptance Criteria
-- [ ] `app/api/schemas.py` is created and exports:
+- [x] `app/api/schemas.py` is created and exports:
   - `ChatRequest` (including `question`, `workflow`, `session_id`, `user_id`, `trace_id`, and `stream_steps: bool = True`).
   - `ChatResponse` (standard synchronous response contract).
   - `FeedbackRequest` (telemetry scoring payload).
@@ -83,8 +83,8 @@ Extract and centralize request, response, and streaming wire models into `app/ap
   - `StreamTokenEvent` (`delta: str`).
   - `StreamMetadataEvent` (`trace_id: str | None`, `workflow: str`, `source_used: str`, `citations: list`, `trace: list`, `rewritten_query: str | None`).
   - `StreamErrorEvent` (`message: str`, `code: int = 500`).
-- [ ] `app/api/routes.py` imports `ChatRequest` and `FeedbackRequest` from `app.api.schemas` with zero regressions on existing `/api/chat` and `/api/feedback` routes.
-- [ ] Automated validation test passes for schema serialization and deserialization.
+- [x] `app/api/routes.py` imports `ChatRequest` and `FeedbackRequest` from `app.api.schemas` with zero regressions on existing `/api/chat` and `/api/feedback` routes.
+- [x] Automated validation test passes for schema serialization and deserialization.
 
 ---
 
