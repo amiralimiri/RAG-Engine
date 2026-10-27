@@ -56,7 +56,7 @@
 | **Ticket 3** | Backend Streaming Route & Telemetry Teardown | `app/api/routes.py` | Ticket 1, Ticket 2 | `completed` |
 | **Ticket 4** | Backend Automated Streaming Tests | `tests/test_chat_stream.py` | Ticket 3 | `completed` |
 | **Ticket 5** | Zero-Dependency Client SSE Parser | `static/js/app.js` | Ticket 3 | `completed` |
-| **Ticket 6** | Progressive UI State Machine & Interrupted Persistence | `static/js/app.js` | Ticket 5 | `ready-for-agent` |
+| **Ticket 6** | Progressive UI State Machine & Interrupted Persistence | `static/js/app.js` | Ticket 5 | `completed` |
 | **Ticket 7** | End-to-End Integration Tests & Verification | `tests/test_frontend_streaming.py` | Ticket 4, Ticket 6 | `ready-for-agent` |
 
 ---
@@ -188,30 +188,34 @@ Implement a robust, zero-dependency streaming reader in `static/js/app.js` that 
 ## Ticket 6: Progressive UI State Machine & Interrupted Persistence
 
 - **Title:** Implement in-feed thinking transition, RAF progressive rendering, and interrupted session recovery in `static/js/app.js`
-- **Label:** `ready-for-agent`
+- **Label:** `completed`
 - **Blockers:** Ticket 5
 - **Files Modified:**
   - `static/js/app.js`
+  - `static/css/style.css`
+  - `templates/index.html`
+- **Files Created:**
+  - `tests/test_ticket6_streaming_ui_js.js`
 
 ### Description
 Refactor the message submission lifecycle in `static/js/app.js` to use `POST /api/chat/stream`. Maintain the animated `thinkingBubble` during `step` events, updating its label live. On the first `token` chunk, remove the thinking bubble and mount the streaming assistant bubble. Schedule DOM updates through `requestAnimationFrame` and sanitize with `DOMPurify`. Defer `highlight.js` syntax highlighting and reasoning accordion attachment until the `metadata` event arrives. If the stream aborts or errors prematurely, persist the partial transcript to `localStorage` flagged as `[Interrupted / Incomplete]`.
 
 ### Acceptance Criteria
-- [ ] Message dispatch calls `fetch("/api/chat/stream", ...)` and iterates over `readEventStream(res)`.
-- [ ] Dynamic Thinking State:
+- [x] Message dispatch calls `fetch("/api/chat/stream", ...)` and iterates over `readEventStream(res)`.
+- [x] Dynamic Thinking State:
   - `step` events update the label inside `thinkingBubble` in real time.
   - Arrival of the first `token` chunk calls `hideThinking()` and mounts the assistant message element in the DOM.
-- [ ] Progressive Rendering:
+- [x] Progressive Rendering:
   - Token deltas are accumulated in an in-memory string.
   - Markdown compilation (`marked.parse`) and sanitization (`DOMPurify.sanitize`) are throttled using `requestAnimationFrame`.
   - Chat container auto-scrolls smoothly to follow the stream.
-- [ ] Stream Completion (`metadata` event):
+- [x] Stream Completion (`metadata` event):
   - Finalizes Markdown and executes `hljs.highlightElement()` on all code blocks.
   - Renders and appends the collapsible "Reasoning & Audit Steps" accordion.
   - Binds Langfuse trace ID chip and thumbs up/down feedback buttons.
   - Persists completed message to `localStorage` (`rag_session_<session_id>`).
   - Re-enables input field and send button.
-- [ ] Stream Interruption Handling:
+- [x] Stream Interruption Handling:
   - If a network error occurs or stream is aborted before `metadata`, partial tokens are preserved in the DOM with a warning banner.
   - The partial message is persisted to `localStorage` with `source_used: "interrupted"` and `[Interrupted / Incomplete]` appended.
 

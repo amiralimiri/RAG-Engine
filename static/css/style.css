@@ -1053,6 +1053,27 @@ details[open] summary .accordion-arrow {
   color: var(--badge-web-text);
 }
 
+.source-badge.badge-interrupted {
+  background-color: rgba(239, 68, 68, 0.2);
+  color: #f87171;
+}
+
+/* Interrupted / Incomplete Stream Warning Badge */
+.interrupted-badge,
+.warning-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+  padding: 4px 10px;
+  font-size: 11.5px;
+  font-weight: 600;
+  border-radius: var(--radius-sm);
+  background-color: rgba(239, 68, 68, 0.15);
+  color: #ef4444;
+  border: 1px solid rgba(239, 68, 68, 0.3);
+}
+
 /* Workflow Chip */
 .workflow-chip,
 .workflow-tag {

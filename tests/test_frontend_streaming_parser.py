@@ -77,3 +77,25 @@ def test_node_ticket5_streaming_js_verification_suite():
 
     assert result.returncode == 0, f"Node test suite failed with code {result.returncode}:\n{result.stderr}"
     assert "ALL 11 TICKET 5 STREAMING PARSER VERIFICATION CHECKS PASSED" in result.stdout
+
+
+def test_node_ticket6_streaming_ui_js_verification_suite():
+    """Execute tests/test_ticket6_streaming_ui_js.js via Node.js to verify UI lifecycle & state machine."""
+    test_file = BASE_DIR / "tests" / "test_ticket6_streaming_ui_js.js"
+    assert test_file.is_file(), "tests/test_ticket6_streaming_ui_js.js must exist"
+
+    result = subprocess.run(
+        ["node", str(test_file)],
+        cwd=str(BASE_DIR),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    print(result.stdout)
+    if result.stderr:
+        print("STDERR:", result.stderr)
+
+    assert result.returncode == 0, f"Node test suite failed with code {result.returncode}:\n{result.stderr}"
+    assert "ALL 8 TICKET 6 STREAMING UI VERIFICATION CHECKS PASSED" in result.stdout
+
