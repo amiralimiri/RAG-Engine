@@ -52,7 +52,7 @@
 | Ticket | Title | Target Files | Prerequisites | Status |
 |---|---|---|---|---|
 | **Ticket 1** | Schemas & Wire Models | `app/api/schemas.py` | None | `completed` |
-| **Ticket 2** | Async Graph Generation Nodes | `app/rag/fix_single_llm.py`<br>`app/rag/fix_single_jev.py` | Ticket 1 | `ready-for-agent` |
+| **Ticket 2** | Async Graph Generation Nodes | `app/rag/fix_single_llm.py`<br>`app/rag/fix_single_jev.py` | Ticket 1 | `completed` |
 | **Ticket 3** | Backend Streaming Route & Telemetry Teardown | `app/api/routes.py` | Ticket 1, Ticket 2 | `ready-for-agent` |
 | **Ticket 4** | Backend Automated Streaming Tests | `tests/test_chat_stream.py` | Ticket 3 | `ready-for-agent` |
 | **Ticket 5** | Zero-Dependency Client SSE Parser | `static/js/app.js` | Ticket 3 | `ready-for-agent` |
@@ -91,7 +91,7 @@ Extract and centralize request, response, and streaming wire models into `app/ap
 ## Ticket 2: Async Graph Generation Nodes
 
 - **Title:** Convert LangGraph generation nodes to asynchronous invocation in `fix_single_llm.py` and `fix_single_jev.py`
-- **Label:** `ready-for-agent`
+- **Label:** `completed`
 - **Blockers:** Ticket 1
 - **Files Modified:**
   - `app/rag/fix_single_llm.py`
@@ -101,15 +101,15 @@ Extract and centralize request, response, and streaming wire models into `app/ap
 Convert response synthesis nodes (`generate_from_kb`, `generate_from_web`, `direct_answer`) to `async def` and replace synchronous `llm().invoke()` with `await llm().ainvoke()`. This allows LangGraph's event loop to stream token events smoothly without thread blocking while leaving intermediate classification and grading nodes intact.
 
 ### Acceptance Criteria
-- [ ] In `app/rag/fix_single_llm.py`:
+- [x] In `app/rag/fix_single_llm.py`:
   - `generate_from_kb`, `generate_from_web`, and `direct_answer` are defined as `async def` and invoke `await llm().ainvoke(...)`.
   - The compiled graph (`agent_graph`) compiles and passes validation.
   - Synchronous `ask()` continues to run via `agent_graph.invoke()` without breaking synchronous callers.
-- [ ] In `app/rag/fix_single_jev.py`:
+- [x] In `app/rag/fix_single_jev.py`:
   - `generate_from_kb`, `generate_from_web`, and `direct_answer` are defined as `async def` and invoke `await llm().ainvoke(...)`.
   - The compiled graph (`agent_graph`) compiles and passes validation.
   - Synchronous `ask()` remains functional without regressions.
-- [ ] Intermediate nodes (`route_question`, `grade_kb`, `grade_web`, `rewrite_query`) remain unchanged and output structured dictionaries.
+- [x] Intermediate nodes (`route_question`, `grade_kb`, `grade_web`, `rewrite_query`) remain unchanged and output structured dictionaries.
 
 ---
 

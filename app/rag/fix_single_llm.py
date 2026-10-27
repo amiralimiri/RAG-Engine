@@ -1,3 +1,6 @@
+import asyncio
+import concurrent.futures
+import contextvars
 import logging
 from typing import Any, Literal, cast
 from langchain_openai import ChatOpenAI
@@ -240,15 +243,20 @@ Return only the new query.
     }
 
 
-def generate_from_kb(state: AgentState):
+GENERATION_NODES = {"generate_from_kb", "generate_from_web", "direct_answer"}
+
+
+async def generate_from_kb(state: AgentState):
     structlog.contextvars.bind_contextvars(step="generate_from_kb")
     context = "\n\n".join(f"[Source: {d.metadata.get('source','unknown')}]\n{d.page_content}" for d in state["kb_docs"])
-    answer = llm().invoke(f"""
+    prompt = f"""
 You are an enterprise IT support copilot. Answer ONLY from the private company KB below.
 Be concise, actionable, and safe. If steps are present, present them clearly.
 Do not invent policy details. Mention that the answer is based on the company's private knowledge base.
 Question: {state['question']}\n\nPrivate KB:\n{context}
-""").content
+"""
+    response = await llm().ainvoke(prompt)
+    answer = response.content if hasattr(response, "content") else str(response)
     citations = []
     seen = set()
     for d in state["kb_docs"]:
@@ -259,19 +267,22 @@ Question: {state['question']}\n\nPrivate KB:\n{context}
     return {"answer": answer, "source_used": "private_kb", "citations": citations, "trace": ["Answer generation → PRIVATE KB"] }
 
 
-def generate_from_web(state: AgentState):
+async def generate_from_web(state: AgentState):
     structlog.contextvars.bind_contextvars(step="generate_from_web")
-    answer = llm().invoke(f"""
+    prompt = f"""
 You are an enterprise IT support copilot. The private company KB was insufficient.
 Answer ONLY from the web evidence below. Clearly say this is external web information and may need IT validation before changing company-managed systems.
 Question: {state['question']}\n\nWeb evidence:\n{state['web_results']}
-""").content
+"""
+    response = await llm().ainvoke(prompt)
+    answer = response.content if hasattr(response, "content") else str(response)
     return {"answer": answer, "source_used": "web_search", "trace": ["Answer generation → WEB SEARCH"] }
 
 
-def direct_answer(state: AgentState):
+async def direct_answer(state: AgentState):
     structlog.contextvars.bind_contextvars(step="direct_answer")
-    answer = llm().invoke(f"Respond briefly and naturally to: {state['question']}").content
+    response = await llm().ainvoke(f"Respond briefly and naturally to: {state['question']}")
+    answer = response.content if hasattr(response, "content") else str(response)
     return {"answer": answer, "source_used": "direct", "trace": ["Direct response → no retrieval"] }
 
 
@@ -317,7 +328,24 @@ def build_graph():
     graph.add_edge("generate_from_web", END)
     graph.add_edge("direct_answer", END)
     graph.add_edge("insufficient", END)
-    return graph.compile()
+    compiled = graph.compile()
+
+    _ainvoke = compiled.ainvoke
+
+    def _safe_invoke(input: Any, config: Any | None = None, **kwargs: Any) -> Any:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+
+        if loop and loop.is_running():
+            ctx = contextvars.copy_context()
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                return pool.submit(ctx.run, lambda: asyncio.run(_ainvoke(input, config=config, **kwargs))).result()
+        return asyncio.run(_ainvoke(input, config=config, **kwargs))
+
+    compiled.invoke = _safe_invoke  # type: ignore[assignment]
+    return compiled
 
 
 agent_graph = build_graph()

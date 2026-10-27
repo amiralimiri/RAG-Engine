@@ -1,3 +1,4 @@
+import inspect
 import io
 import json
 import logging
@@ -196,7 +197,8 @@ def test_background_task_context_preservation():
     assert captured[0]["context"]["trace_id"] == "trace-bg-888"
 
 
-def test_langgraph_step_contextvars():
+@pytest.mark.asyncio
+async def test_langgraph_step_contextvars(monkeypatch):
     """Verify workflow nodes bind step to contextvars."""
     state = {
         "question": "test question",
@@ -212,12 +214,25 @@ def test_langgraph_step_contextvars():
         "citations": [],
     }
 
+    from unittest.mock import AsyncMock, MagicMock
+    mock_llm = MagicMock()
+    mock_llm.ainvoke = AsyncMock(return_value=MagicMock(content="answer"))
+    mock_llm.invoke = MagicMock(return_value=MagicMock(content="answer"))
+
+    from app.rag import fix_single_llm, fix_single_jev
+    monkeypatch.setattr(fix_single_llm, "llm", lambda: mock_llm)
+    monkeypatch.setattr(fix_single_jev, "llm", lambda: mock_llm)
+
     structlog.contextvars.clear_contextvars()
-    llm_direct_answer(state)
+    res = llm_direct_answer(state)
+    if inspect.iscoroutine(res):
+        await res
     assert structlog.contextvars.get_contextvars().get("step") == "direct_answer"
 
     structlog.contextvars.clear_contextvars()
-    jev_direct_answer(state)
+    res = jev_direct_answer(state)
+    if inspect.iscoroutine(res):
+        await res
     assert structlog.contextvars.get_contextvars().get("step") == "direct_answer"
 
 
