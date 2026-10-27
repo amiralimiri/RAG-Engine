@@ -1,7 +1,7 @@
 # ADR 0001: Langfuse Observability, Tracing, and Evaluation Integration
 
 ## Status
-Accepted
+Superseded by ADR 0005
 
 ## Context
 The enterprise IT support copilot codebase implements agentic RAG using LangGraph. The system currently maintains multiple parallel graph workflows:
