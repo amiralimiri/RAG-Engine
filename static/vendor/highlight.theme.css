@@ -1,0 +1,192 @@
+/* ==========================================================================
+   Highlight.js Adaptive Theme (Light & Dark)
+   Enterprise IT Support Agentic RAG UI
+   Zero-build, offline, variables-driven syntax theme
+   ========================================================================== */
+
+:root,
+[data-theme="dark"] {
+  --hljs-bg: var(--code-bg, #090d14);
+  --hljs-text: var(--text-primary, #f1f5f9);
+  --hljs-comment: #94a3b8;
+  --hljs-keyword: #f472b6;
+  --hljs-function: #60a5fa;
+  --hljs-title: #38bdf8;
+  --hljs-string: #34d399;
+  --hljs-number: #fbbf24;
+  --hljs-literal: #fb923c;
+  --hljs-built-in: #a78bfa;
+  --hljs-attr: #38bdf8;
+  --hljs-variable: #f87171;
+  --hljs-operator: #cbd5e1;
+  --hljs-punctuation: #64748b;
+  --hljs-tag: #f472b6;
+  --hljs-meta: #94a3b8;
+  --hljs-addition: #34d399;
+  --hljs-deletion: #f87171;
+}
+
+[data-theme="light"] {
+  --hljs-bg: var(--code-bg, #f1f5f9);
+  --hljs-text: var(--text-primary, #0f172a);
+  --hljs-comment: #64748b;
+  --hljs-keyword: #db2777;
+  --hljs-function: #2563eb;
+  --hljs-title: #0284c7;
+  --hljs-string: #059669;
+  --hljs-number: #d97706;
+  --hljs-literal: #ea580c;
+  --hljs-built-in: #7c3aed;
+  --hljs-attr: #0284c7;
+  --hljs-variable: #dc2626;
+  --hljs-operator: #475569;
+  --hljs-punctuation: #94a3b8;
+  --hljs-tag: #db2777;
+  --hljs-meta: #64748b;
+  --hljs-addition: #059669;
+  --hljs-deletion: #dc2626;
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    --hljs-bg: var(--code-bg, #f1f5f9);
+    --hljs-text: var(--text-primary, #0f172a);
+    --hljs-comment: #64748b;
+    --hljs-keyword: #db2777;
+    --hljs-function: #2563eb;
+    --hljs-title: #0284c7;
+    --hljs-string: #059669;
+    --hljs-number: #d97706;
+    --hljs-literal: #ea580c;
+    --hljs-built-in: #7c3aed;
+    --hljs-attr: #0284c7;
+    --hljs-variable: #dc2626;
+    --hljs-operator: #475569;
+    --hljs-punctuation: #94a3b8;
+    --hljs-tag: #db2777;
+    --hljs-meta: #64748b;
+    --hljs-addition: #059669;
+    --hljs-deletion: #dc2626;
+  }
+}
+
+/* ==========================================================================
+   Base Code Elements
+   ========================================================================== */
+
+pre code.hljs {
+  display: block;
+  overflow-x: auto;
+  padding: 1rem;
+  background: var(--hljs-bg);
+  color: var(--hljs-text);
+  border-radius: 8px;
+}
+
+code.hljs {
+  padding: 0.2em 0.4em;
+  background: var(--hljs-bg);
+  color: var(--hljs-text);
+}
+
+.hljs {
+  background: var(--hljs-bg);
+  color: var(--hljs-text);
+}
+
+/* ==========================================================================
+   Syntax Tokens
+   ========================================================================== */
+
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-subst {
+  color: var(--hljs-keyword);
+  font-weight: 600;
+}
+
+.hljs-string,
+.hljs-doctag {
+  color: var(--hljs-string);
+}
+
+.hljs-comment,
+.hljs-quote {
+  color: var(--hljs-comment);
+  font-style: italic;
+}
+
+.hljs-function,
+.hljs-title,
+.hljs-title.function_,
+.hljs-section {
+  color: var(--hljs-function);
+  font-weight: 600;
+}
+
+.hljs-title.class_,
+.hljs-class .hljs-title,
+.hljs-type {
+  color: var(--hljs-title);
+  font-weight: 600;
+}
+
+.hljs-number,
+.hljs-link {
+  color: var(--hljs-number);
+}
+
+.hljs-literal,
+.hljs-symbol,
+.hljs-bullet {
+  color: var(--hljs-literal);
+}
+
+.hljs-built_in {
+  color: var(--hljs-built-in);
+}
+
+.hljs-attr,
+.hljs-attribute,
+.hljs-property {
+  color: var(--hljs-attr);
+}
+
+.hljs-variable,
+.hljs-template-variable,
+.hljs-params {
+  color: var(--hljs-variable);
+}
+
+.hljs-operator,
+.hljs-punctuation {
+  color: var(--hljs-operator);
+}
+
+.hljs-tag,
+.hljs-name {
+  color: var(--hljs-tag);
+}
+
+.hljs-meta,
+.hljs-meta .hljs-keyword {
+  color: var(--hljs-meta);
+}
+
+.hljs-addition {
+  color: var(--hljs-addition);
+  background-color: rgba(52, 211, 153, 0.15);
+}
+
+.hljs-deletion {
+  color: var(--hljs-deletion);
+  background-color: rgba(248, 113, 113, 0.15);
+}
+
+.hljs-emphasis {
+  font-style: italic;
+}
+
+.hljs-strong {
+  font-weight: bold;
+}

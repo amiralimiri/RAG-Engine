@@ -68,12 +68,12 @@
 Establish the local vendor asset pipeline to support zero-build, air-gapped, and offline execution without reliance on external public CDN script tags. Download/vendor pre-minified releases of Marked.js, DOMPurify, and Highlight.js into `static/vendor/`. Provide an adaptive CSS stylesheet (`highlight.theme.css`) designed to work smoothly with both light and dark UI themes.
 
 ### Acceptance Criteria
-- [ ] `static/vendor/` directory is created.
-- [ ] `static/vendor/marked.min.js` is present and exports the global `marked` library.
-- [ ] `static/vendor/purify.min.js` is present and exports the global `DOMPurify` library.
-- [ ] `static/vendor/highlight.min.js` is present and exports the global `hljs` library.
-- [ ] `static/vendor/highlight.theme.css` provides syntax highlighting tokens for `.hljs-keyword`, `.hljs-string`, `.hljs-comment`, `.hljs-function`, etc., adhering to CSS variables.
-- [ ] FastAPI static file mount serves all 4 files with appropriate MIME types (`application/javascript` or `text/javascript`, `text/css`).
+- [x] `static/vendor/` directory is created.
+- [x] `static/vendor/marked.min.js` is present and exports the global `marked` library.
+- [x] `static/vendor/purify.min.js` is present and exports the global `DOMPurify` library.
+- [x] `static/vendor/highlight.min.js` is present and exports the global `hljs` library.
+- [x] `static/vendor/highlight.theme.css` provides syntax highlighting tokens for `.hljs-keyword`, `.hljs-string`, `.hljs-comment`, `.hljs-function`, etc., adhering to CSS variables.
+- [x] FastAPI static file mount serves all 4 files with appropriate MIME types (`application/javascript` or `text/javascript`, `text/css`).
 
 ---
 
