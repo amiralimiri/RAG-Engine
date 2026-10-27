@@ -104,7 +104,7 @@ Rewrite `static/css/style.css` to implement a modern, responsive, and tokenized 
 ## Ticket 3: Semantic HTML5 Shell & Responsive Layout
 
 - **Title:** Overhaul `templates/index.html` with semantic HTML5 layout and theme controls
-- **Label:** `ready-for-agent`
+- **Label:** `completed`
 - **Blockers:** Ticket 2
 - **Files Modified:**
   - `templates/index.html`
@@ -113,19 +113,21 @@ Rewrite `static/css/style.css` to implement a modern, responsive, and tokenized 
 Update `templates/index.html` to integrate the modern layout and load all vendored assets in the correct order. Replace the old fixed 3-column structure with a sleek dual-pane layout featuring a responsive topbar (brand badge, agent status indicator, mobile hamburger toggle, theme switch button), a feature-rich sidebar (workflow card, "New Chat" button, recent chats container `#sessionsList`, document upload trigger), a centralized conversational canvas with welcome greeting, and a sticky composer bar with workflow switcher, example question pills, auto-expanding textarea, and send button.
 
 ### Acceptance Criteria
-- [ ] Includes vendored scripts (`marked.min.js`, `purify.min.js`, `highlight.min.js`), stylesheets (`highlight.theme.css`, `style.css`), and `app.js` in correct execution order.
-- [ ] Topbar includes:
-  - Mobile hamburger toggle (`#hamburgerBtn`).
+- [x] Includes vendored scripts (`marked.min.js`, `purify.min.js`, `highlight.min.js`), stylesheets (`highlight.theme.css`, `style.css`), and `app.js` in correct execution order.
+- [x] Topbar includes:
+  - Mobile hamburger toggle (`#sidebarToggleBtn` / `#hamburgerBtn`).
   - Brand title and active status dot.
-  - Theme toggle button (`#themeToggle`) with sun/moon SVG iconography.
-- [ ] Sidebar includes:
+  - Theme toggle button (`#themeToggleBtn` / `#themeToggle`) with sun/moon SVG iconography.
+  - Workflow backend selector (`#workflowSelect`) and document ingestion trigger (`#openIngestModalBtn`).
+- [x] Sidebar includes:
   - "New Chat" primary button (`#newChatBtn`).
-  - Recent chats container (`#sessionsList`).
+  - Recent chats container (`#sessionsList` / `#recentChatsList`) and clear history action (`#clearHistoryBtn`).
   - Document upload trigger button (`#openUpload`).
-- [ ] Chat area (`#chat`) with initial welcome card.
-- [ ] Composer area (`#chatForm`) with `#workflowSelect`, example query pills (`.example`), `#question` textarea, and `#sendBtn`.
-- [ ] Toast notification container (`#toastContainer`).
-- [ ] Document ingestion modal (`#uploadModal`) maintained and styled to match theme.
+  - Mobile backdrop overlay (`#sidebarBackdrop`).
+- [x] Chat area (`#chat` / `#chatMessages`) with initial welcome card (`#welcomeCard`) and animated thinking placeholder markup (`#thinkingBubble`).
+- [x] Composer area (`#chatForm`) with `#workflowSelect`, example query pills (`.example`), `#messageInput` / `#question` expanding textarea, `#sendBtn`, and keyboard hint footer.
+- [x] Toast notification container (`#toastContainer`).
+- [x] Document ingestion modal (`#uploadModal` / `#ingestModal`) maintained and styled to match theme.
 
 ---
 
@@ -234,7 +236,7 @@ Create an automated test suite in `tests/test_frontend_integration.py` using pyt
 |---|---|---|---|---|
 | **Ticket 1** | Vendored Dependencies | `static/vendor/*.{js,css}` | None | `completed` |
 | **Ticket 2** | Design Tokens & Layout CSS | `static/css/style.css` | Ticket 1 | `completed` |
-| **Ticket 3** | HTML5 Semantic Shell | `templates/index.html` | Ticket 2 | `ready-for-agent` |
+| **Ticket 3** | HTML5 Semantic Shell | `templates/index.html` | Ticket 2 | `completed` |
 | **Ticket 4** | Client State & Session Lifecycle | `static/js/app.js` | Ticket 3 | `ready-for-agent` |
 | **Ticket 5** | Markdown Pipeline & Security | `static/js/app.js` | Ticket 4 | `ready-for-agent` |
 | **Ticket 6** | Observability Accordion & Feedback | `static/js/app.js` | Ticket 5 | `ready-for-agent` |

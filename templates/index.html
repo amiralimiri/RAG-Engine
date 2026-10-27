@@ -1,120 +1,403 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="dark">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>{{ app_name }}</title>
+    <title>{{ app_name }} - Enterprise IT Support Copilot</title>
+
+    <!-- Anti-FOUC Theme Initialization Script -->
+    <script>
+      (function () {
+        try {
+          const storedTheme = localStorage.getItem("rag_theme");
+          if (storedTheme === "light" || storedTheme === "dark") {
+            document.documentElement.setAttribute("data-theme", storedTheme);
+          } else if (
+            window.matchMedia &&
+            window.matchMedia("(prefers-color-scheme: light)").matches
+          ) {
+            document.documentElement.setAttribute("data-theme", "light");
+          } else {
+            document.documentElement.setAttribute("data-theme", "dark");
+          }
+        } catch (e) {
+          document.documentElement.setAttribute("data-theme", "dark");
+        }
+
+        // Backward compatibility shim for legacy element queries
+        const origGetElementById = Document.prototype.getElementById;
+        Document.prototype.getElementById = function (id) {
+          if (id === "question") {
+            return (
+              origGetElementById.call(this, "messageInput") ||
+              origGetElementById.call(this, "question")
+            );
+          }
+          return origGetElementById.call(this, id);
+        };
+      })();
+    </script>
+
+    <!-- Highlight Theme & Core Token Design System Stylesheet -->
+    <link rel="stylesheet" href="/static/vendor/highlight.theme.css" />
     <link rel="stylesheet" href="/static/css/style.css" />
   </head>
   <body>
     <div class="shell">
-      <aside class="sidebar">
-        <div>
-          <div class="brand-badge">FDE Project</div>
+      <!-- Mobile Backdrop Overlay -->
+      <div id="sidebarBackdrop" class="sidebar-backdrop" aria-hidden="true"></div>
+
+      <!-- Collapsible Sidebar Navigation Drawer -->
+      <aside id="sidebar" class="sidebar">
+        <div class="sidebar-header">
+          <div class="brand-badge">Enterprise Copilot</div>
           <h1>IT Support<br />Agentic RAG</h1>
           <p class="muted">
-            Private company knowledge first. External web only when evidence is
-            weak.
+            Private company knowledge first. External web fallback when evidence
+            is weak.
           </p>
         </div>
 
+        <div class="sidebar-actions">
+          <button
+            id="newChatBtn"
+            class="primary-btn new-chat-btn"
+            type="button"
+            aria-label="Start new conversation"
+          >
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <line x1="12" y1="5" x2="12" y2="19"></line>
+              <line x1="5" y1="12" x2="19" y2="12"></line>
+            </svg>
+            <span>New Chat</span>
+          </button>
+          <button id="openUpload" class="secondary-btn" type="button">
+            + Ingest Document
+          </button>
+        </div>
+
+        <!-- Recent Chats Session Catalog -->
+        <div id="sessionsList" class="sessions-section">
+          <div class="sessions-header">
+            <span>Recent Chats</span>
+            <button
+              id="clearHistoryBtn"
+              class="clear-history-btn"
+              type="button"
+              title="Clear all chat history"
+              aria-label="Clear chat history"
+            >
+              Clear
+            </button>
+          </div>
+          <ul
+            id="recentChatsList"
+            class="sessions-list"
+            aria-label="Recent conversations"
+          >
+            <!-- Session items populated dynamically by static/js/app.js -->
+          </ul>
+        </div>
+
+        <!-- Workflow Summary Card -->
         <div class="workflow-card">
           <h3>LangGraph Workflow</h3>
           <div class="flow-step">1. Route question</div>
           <div class="flow-step">2. Retrieve private KB</div>
           <div class="flow-step">3. Grade evidence</div>
           <div class="flow-step">4. Web fallback if weak</div>
-          <div class="flow-step">5. Rewrite & retry</div>
+          <div class="flow-step">5. Rewrite &amp; retry</div>
           <div class="flow-step">6. Grounded answer</div>
         </div>
-
-        <button id="openUpload" class="secondary-btn">
-          + Add Company Document
-        </button>
       </aside>
 
+      <!-- Main Conversational Workspace -->
       <main class="main">
+        <!-- Top Navigation Bar -->
         <header class="topbar">
-          <div>
-            <span class="status-dot"></span>
-            <span>Enterprise Knowledge Copilot</span>
+          <div class="topbar-left">
+            <button
+              id="sidebarToggleBtn"
+              class="hamburger-btn"
+              type="button"
+              aria-label="Toggle navigation drawer"
+              title="Toggle navigation"
+            >
+              <span id="hamburgerBtn" class="hamburger-icon-wrap" aria-hidden="true">
+                <svg
+                  width="20"
+                  height="20"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <line x1="3" y1="12" x2="21" y2="12"></line>
+                  <line x1="3" y1="6" x2="21" y2="6"></line>
+                  <line x1="3" y1="18" x2="21" y2="18"></line>
+                </svg>
+              </span>
+            </button>
+            <div class="brand-info">
+              <span class="status-dot" aria-label="Agent Online"></span>
+              <span class="brand-title">Enterprise Knowledge Copilot</span>
+            </div>
+            <span class="pill">Agentic RAG</span>
           </div>
-          <span class="pill">Agentic RAG</span>
+
+          <div class="topbar-right">
+            <div class="workflow-selector">
+              <label for="workflowSelect">Workflow</label>
+              <select
+                id="workflowSelect"
+                aria-label="Workflow backend selector"
+              ></select>
+            </div>
+
+            <button
+              id="openIngestModalBtn"
+              class="secondary-btn topbar-ingest-btn"
+              type="button"
+              title="Ingest document into knowledge base"
+            >
+              <svg
+                width="15"
+                height="15"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                <polyline points="17 8 12 3 7 8"></polyline>
+                <line x1="12" y1="3" x2="12" y2="15"></line>
+              </svg>
+              <span>Ingest Doc</span>
+            </button>
+
+            <button
+              id="themeToggleBtn"
+              class="theme-toggle-btn"
+              type="button"
+              aria-label="Toggle dark/light theme"
+              title="Toggle color theme"
+            >
+              <span id="themeToggle" class="theme-icon-wrap" aria-hidden="true">
+                <!-- Sun Icon for dark theme (switch to light) -->
+                <svg
+                  class="sun-icon"
+                  width="18"
+                  height="18"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <circle cx="12" cy="12" r="5"></circle>
+                  <line x1="12" y1="1" x2="12" y2="3"></line>
+                  <line x1="12" y1="21" x2="12" y2="23"></line>
+                  <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+                  <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+                  <line x1="1" y1="12" x2="3" y2="12"></line>
+                  <line x1="21" y1="12" x2="23" y2="12"></line>
+                  <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+                  <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+                </svg>
+                <!-- Moon Icon for light theme (switch to dark) -->
+                <svg
+                  class="moon-icon"
+                  width="18"
+                  height="18"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  style="display: none;"
+                >
+                  <path
+                    d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"
+                  ></path>
+                </svg>
+              </span>
+            </button>
+          </div>
         </header>
 
-        <section id="chat" class="chat-area">
-          <div class="message assistant">
-            <div class="avatar">AI</div>
-            <div class="bubble">
-              <strong>How can I help with IT support?</strong>
+        <!-- Conversational Canvas -->
+        <section id="chat" class="chat-area" aria-label="Conversation messages">
+          <div id="chatMessages" class="chat-container">
+            <!-- Initial Welcome Greeting -->
+            <div id="welcomeCard" class="welcome-card">
+              <h2>How can I help with IT support?</h2>
               <p>
-                Try: “How do I connect to the company VPN?” or ask a question
-                that may require current external vendor information.
+                Private company knowledge first. External web fallback only when
+                evidence is weak. Try an example question below or enter your
+                own prompt.
               </p>
+            </div>
+
+            <!-- In-Feed Agent Thinking Placeholder (shown during active workflow) -->
+            <div
+              id="thinkingBubble"
+              class="message assistant thinking-bubble hidden"
+              aria-live="polite"
+            >
+              <div class="avatar">AI</div>
+              <div class="bubble thinking-content">
+                <div class="radar-pulse"></div>
+                <div class="thinking-text-wrap">
+                  <span class="thinking-title">Executing Agentic Workflow</span>
+                  <span class="thinking-meta">
+                    <span class="thinking-workflow" id="thinkingWorkflow"
+                      >Workflow</span
+                    >
+                    <span class="thinking-timer" id="thinkingTimer">0.0s</span>
+                  </span>
+                </div>
+              </div>
             </div>
           </div>
         </section>
 
+        <!-- Anchored Composer Area -->
         <section class="composer-wrap">
-          <div class="workflow-selector">
-            <label for="workflowSelect">Workflow</label>
-            <select id="workflowSelect" aria-label="Workflow"></select>
+          <div class="composer-container">
+            <!-- Example Prompts Horizontal Scroll -->
+            <div class="examples" aria-label="Example IT questions">
+              <button type="button" class="example">
+                How do I connect to the company VPN?
+              </button>
+              <button type="button" class="example">
+                What is our password reset policy?
+              </button>
+              <button type="button" class="example">
+                What is the latest Microsoft Teams outage guidance?
+              </button>
+            </div>
+
+            <!-- Composer Form -->
+            <form
+              id="chatForm"
+              class="composer"
+              role="search"
+              aria-label="Ask IT Support Copilot"
+            >
+              <textarea
+                id="messageInput"
+                name="question"
+                rows="1"
+                placeholder="Ask an IT support question... (Shift+Enter for newline)"
+                required
+                aria-label="Ask an IT support question"
+              ></textarea>
+              <button
+                id="sendBtn"
+                type="submit"
+                class="send-btn"
+                aria-label="Send query"
+              >
+                <span>Ask Agent</span>
+                <svg
+                  width="15"
+                  height="15"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  style="margin-left: 6px;"
+                  aria-hidden="true"
+                >
+                  <line x1="22" y1="2" x2="11" y2="13"></line>
+                  <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+                </svg>
+              </button>
+            </form>
+
+            <!-- Keyboard Hint Footer -->
+            <div class="composer-hints" aria-hidden="true">
+              <span
+                ><kbd>Enter</kbd> to send, <kbd>Shift + Enter</kbd> for new line
+                &bull; Grounded private KB with web fallback</span
+              >
+            </div>
           </div>
-          <div class="examples">
-            <button class="example">
-              How do I connect to the company VPN?
-            </button>
-            <button class="example">What is our password reset policy?</button>
-            <button class="example">
-              What is the latest Microsoft Teams outage guidance?
-            </button>
-          </div>
-          <form id="chatForm" class="composer">
-            <textarea
-              id="question"
-              rows="2"
-              placeholder="Ask an IT support question..."
-              required
-            ></textarea>
-            <button type="submit" class="send-btn">Ask Agent</button>
-          </form>
         </section>
       </main>
 
-      <aside class="trace-panel">
-        <h2>Agent Trace</h2>
-        <p class="muted">Watch LangGraph decisions while the request runs.</p>
-        <div id="trace" class="trace-list">
-          <div class="empty">No request yet.</div>
-        </div>
-        <div class="source-box">
-          <span>Final Source</span>
-          <strong id="sourceUsed">—</strong>
-        </div>
-        <div class="source-box">
-          <span>Workflow</span>
-          <strong id="workflowUsed">—</strong>
-        </div>
-      </aside>
+      <!-- Backward-compatibility elements for legacy trace/audit bindings -->
+      <div id="trace" style="display: none;" aria-hidden="true"></div>
+      <div id="sourceUsed" style="display: none;" aria-hidden="true"></div>
+      <div id="workflowUsed" style="display: none;" aria-hidden="true"></div>
     </div>
 
-    <div id="uploadModal" class="modal hidden">
-      <div class="modal-card">
+    <!-- Document Ingestion Modal Dialog -->
+    <div
+      id="uploadModal"
+      class="modal hidden"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="modalTitle"
+    >
+      <div id="ingestModal" class="modal-card">
         <div class="modal-head">
-          <h2>Ingest Company Document</h2>
-          <button id="closeUpload">×</button>
+          <h2 id="modalTitle">Ingest Company Document</h2>
+          <button id="closeUpload" type="button" aria-label="Close modal">
+            &times;
+          </button>
         </div>
         <p class="muted">
           Upload PDF, TXT, Markdown, or DOCX. The document is chunked, embedded,
           and indexed into Pinecone.
         </p>
-        <input id="adminKey" type="password" placeholder="Admin API key" />
+        <input
+          id="adminKey"
+          type="password"
+          placeholder="Admin API key"
+          autocomplete="current-password"
+        />
         <input id="fileInput" type="file" accept=".pdf,.txt,.md,.docx" />
-        <button id="uploadBtn" class="send-btn full">Index Document</button>
-        <div id="uploadStatus" class="upload-status"></div>
+        <button id="uploadBtn" type="button" class="send-btn full">
+          Index Document
+        </button>
+        <div id="uploadStatus" class="upload-status" aria-live="polite"></div>
       </div>
     </div>
 
+    <!-- Floating Toast Notification Container -->
+    <div
+      id="toastContainer"
+      class="toast-container"
+      aria-live="polite"
+      aria-atomic="true"
+    ></div>
+
+    <!-- Vendored Dependencies in strict execution order -->
+    <script src="/static/vendor/marked.min.js"></script>
+    <script src="/static/vendor/purify.min.js"></script>
+    <script src="/static/vendor/highlight.min.js"></script>
+
+    <!-- Application Script -->
     <script src="/static/js/app.js"></script>
   </body>
 </html>
