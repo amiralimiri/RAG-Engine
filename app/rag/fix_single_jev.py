@@ -1,6 +1,5 @@
 import asyncio
-import concurrent.futures
-import contextvars
+from app.core.concurrency import wrap_safe_invoke
 import logging
 from typing import Any, Literal, cast
 from langchain_openai import ChatOpenAI
@@ -564,7 +563,7 @@ Question: {state['question']}\n\nPrivate KB:\n{context}
         if src not in seen:
             seen.add(src)
             citations.append({"title": src.split("/")[-1], "url": "", "type": "private_kb"})
-    return {"answer": answer, "source_used": "private_kb", "citations": citations, "trace": ["Answer generation → PRIVATE KB"] }
+    return {"answer": answer, "source_used": "vectorstore", "citations": citations, "trace": ["Answer generation → PRIVATE KB"] }
 
 
 ########################## Node 8 — Generate from Web Search ##########################
@@ -637,23 +636,7 @@ def build_graph():
     graph.add_edge("direct_answer", END)
     graph.add_edge("insufficient", END)
     compiled = graph.compile()
-
-    _ainvoke = compiled.ainvoke
-
-    def _safe_invoke(input: Any, config: Any | None = None, **kwargs: Any) -> Any:
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            loop = None
-
-        if loop and loop.is_running():
-            ctx = contextvars.copy_context()
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                return pool.submit(ctx.run, lambda: asyncio.run(_ainvoke(input, config=config, **kwargs))).result()
-        return asyncio.run(_ainvoke(input, config=config, **kwargs))
-
-    compiled.invoke = _safe_invoke  # type: ignore[assignment]
-    return compiled
+    return wrap_safe_invoke(compiled)
 
 
 agent_graph = build_graph()

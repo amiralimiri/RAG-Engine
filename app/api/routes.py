@@ -269,6 +269,13 @@ async def chat_event_generator(
                                 accumulated_trace.append(t)
                     final_output.update(node_output)
 
+        # Fallback for non-streaming terminal nodes (e.g. 'insufficient') that set static answer
+        if tokens_delivered == 0 and final_output.get("answer"):
+            static_answer = str(final_output["answer"])
+            if static_answer:
+                tokens_delivered += 1
+                yield format_sse("token", StreamTokenEvent(delta=static_answer))
+
         # 4. Terminal Metadata Event
         resolved_tid = extract_trace_id(callback) or trace_id
         final_trace = accumulated_trace or final_output.get("trace", [])
@@ -304,11 +311,15 @@ async def chat_event_generator(
             trace_id=trace_id,
             workflow=workflow,
         )
+        disconnect_trace = (
+            accumulated_trace
+            or (final_output.get("trace") if isinstance(final_output.get("trace"), list) else [])
+        )
         write_audit(
             workflow=workflow,
             question=question,
             source_used="client_disconnected",
-            trace=(accumulated_trace or final_output.get("trace", [])) + ["Stream aborted by client disconnect"],
+            trace=disconnect_trace + ["Stream aborted by client disconnect"],
             trace_id=trace_id,
         )
         raise
@@ -393,7 +404,7 @@ async def chat_stream(payload: ChatRequest):
             session_id=payload.session_id,
             user_id=payload.user_id,
         ),
-        media_type="text/event-stream",
+        media_type="text/event-stream; charset=utf-8",
         headers={
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",

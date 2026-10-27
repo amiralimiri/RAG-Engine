@@ -271,6 +271,7 @@ class TestHeadersAndContentType:
         assert resp.status_code == 200
         ct = resp.headers.get("content-type", "").lower()
         assert "text/event-stream" in ct
+        assert "charset=utf-8" in ct
         assert "no-cache" in resp.headers.get("cache-control", "").lower()
         assert resp.headers.get("x-accel-buffering") == "no"
 
@@ -369,6 +370,53 @@ class TestWireEventSequence:
 
         # Verify callback flush invocation
         mock_handler.flush.assert_called()
+
+    async def test_non_streaming_fallback_node_emits_static_token(self, monkeypatch):
+        """When reaching insufficient fallback node with static answer, an event: token is synthesized."""
+        mock_handler = get_mock_handler("trace-insufficient-001")
+        monkeypatch.setattr("app.api.routes.get_langfuse_callback", lambda **kwargs: mock_handler)
+        monkeypatch.setattr("app.api.routes.extract_trace_id", lambda handler: "trace-insufficient-001")
+        monkeypatch.setattr("app.api.routes.write_audit", lambda *a, **kw: None)
+
+        async def mock_insufficient_stream(*args, **kwargs):
+            yield {"event": "on_chain_start", "metadata": {"langgraph_node": "route_question"}, "data": {}}
+            yield {"event": "on_chain_start", "metadata": {"langgraph_node": "insufficient"}, "data": {}}
+            yield {
+                "event": "on_chain_end",
+                "metadata": {"langgraph_node": "insufficient"},
+                "data": {
+                    "output": {
+                        "answer": "I couldn't find enough reliable evidence in the company knowledge base.",
+                        "source_used": "insufficient_evidence",
+                        "trace": ["Stopped → insufficient reliable evidence"],
+                    }
+                },
+            }
+
+        mock_graph = MagicMock()
+        mock_graph.astream_events = mock_insufficient_stream
+        monkeypatch.setitem(WORKFLOW_GRAPHS, "fix_single_llm", mock_graph)
+
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as ac:
+            async with ac.stream(
+                "POST",
+                "/api/chat/stream",
+                json={"question": "obscure query", "workflow": "fix_single_llm", "stream_steps": True},
+            ) as resp:
+                assert resp.status_code == 200
+                assert "charset=utf-8" in resp.headers.get("content-type", "").lower()
+                lines = [line async for line in resp.aiter_lines()]
+
+        parsed = parse_sse_lines(lines)
+        tokens = [p["data"]["delta"] for p in parsed if p["event"] == "token"]
+        assert len(tokens) == 1
+        assert "I couldn't find enough reliable evidence" in tokens[0]
+
+        metas = [p["data"] for p in parsed if p["event"] == "metadata"]
+        assert len(metas) == 1
+        assert metas[0]["source_used"] == "insufficient_evidence"
 
     async def test_token_isolation_from_routers_and_graders(self, monkeypatch):
         """Asserts token isolation: router/grader JSON output is never leaked as token deltas."""
