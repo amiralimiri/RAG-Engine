@@ -128,7 +128,7 @@ def test_html_shell_critical_dom_container_ids(client):
         "newChatBtn",
         "sessionsList",
         # Supporting core workspace elements
-        "messageInput",
+        "question",
         "sendBtn",
         "welcomeCard",
         "sidebar",
@@ -140,6 +140,12 @@ def test_html_shell_critical_dom_container_ids(client):
     for elem_id in critical_ids:
         expected_attr = f'id="{elem_id}"'
         assert expected_attr in html, f"Missing critical DOM container element: {expected_attr}"
+
+    # Verify absence of obsolete legacy stub containers and prototype monkey-patch
+    assert 'id="messageInput"' not in html, "Obsolete #messageInput should be replaced with #question"
+    assert 'Document.prototype.getElementById' not in html, "Monkey-patch should be removed"
+    assert 'id="sourceUsed"' not in html, "Obsolete #sourceUsed stub should be removed"
+    assert 'id="workflowUsed"' not in html, "Obsolete #workflowUsed stub should be removed"
 
 
 def test_html_shell_script_loading_order_before_body_close(client):

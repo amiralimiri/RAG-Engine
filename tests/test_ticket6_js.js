@@ -275,7 +275,7 @@ const docElements = {
   thinkingBubble: new MockElement("div", "thinkingBubble"),
   toastContainer: new MockElement("div", "toastContainer"),
   chatForm: new MockElement("form", "chatForm"),
-  messageInput: new MockElement("textarea", "messageInput"),
+  question: new MockElement("textarea", "question"),
   sendBtn: new MockElement("button", "sendBtn"),
   trace: new MockElement("div", "trace"),
   sourceUsed: new MockElement("div", "sourceUsed"),
@@ -459,7 +459,7 @@ async function runTicket6Tests() {
       toastElem.innerHTML.includes("Trace ID copied"),
     "Toast message must confirm Trace ID copy action",
   );
-  assert.ok(toastElem.classList.contains("toast-info"), "Toast should use info level");
+  assert.ok(toastElem.classList.contains("toast-success"), "Toast should use success level");
   console.log("  Passed: Trace ID copied to clipboard with toast confirmation");
 
   // --------------------------------------------------------------------------
@@ -541,26 +541,43 @@ async function runTicket6Tests() {
   app.toggleCommentPopover(feedbackBar, "trace-test-uuid-1234");
   assert.strictEqual(feedbackBar.querySelector(".comment-popover"), null, "Toggling again removes popover");
 
-  // Open and submit with comment
+  // Open popover without rating and attempt submit -> must reject with toast
   app.toggleCommentPopover(feedbackBar, "trace-test-uuid-1234");
   const activePopover = feedbackBar.querySelector(".comment-popover");
   const activeTextarea = activePopover.querySelector("textarea");
   activeTextarea.value = "Great explanation of VPN protocols!";
 
   fetchCalls = [];
+  docElements.toastContainer.children = [];
+
+  const activeSubmitBtn = activePopover.querySelector(".popover-submit");
+  await activeSubmitBtn.dispatchEvent({ type: "click", stopPropagation: () => {} });
+
+  assert.strictEqual(fetchCalls.length, 0, "Unvoted note submission must NOT dispatch /api/feedback");
+  assert.ok(feedbackBar.querySelector(".comment-popover"), "Popover must remain open on unvoted submission attempt");
+  const unvotedToast = docElements.toastContainer.children[docElements.toastContainer.children.length - 1];
+  assert.ok(unvotedToast, "Warning/error toast must be shown for unvoted note submission");
+  assert.ok(
+    unvotedToast.innerHTML.includes("Please select Thumbs Up or Thumbs Down before submitting a note."),
+    "Toast message must guide user to rate first",
+  );
+
+  // Now select Thumbs Up and submit note
+  thumbsUp.classList.add("selected");
   mockFetchResponse = {
     ok: true,
     status: 200,
     json: async () => ({ status: "accepted" }),
   };
 
-  const activeSubmitBtn = activePopover.querySelector(".popover-submit");
   await activeSubmitBtn.dispatchEvent({ type: "click", stopPropagation: () => {} });
 
-  assert.strictEqual(fetchCalls.length, 1, "Submitting popover dispatches /api/feedback");
+  assert.strictEqual(fetchCalls.length, 1, "Submitting popover after voting dispatches /api/feedback");
   const commentPayload = JSON.parse(fetchCalls[0].opts.body);
+  assert.strictEqual(commentPayload.score, 1.0);
   assert.strictEqual(commentPayload.comment, "Great explanation of VPN protocols!");
-  console.log("  Passed: Micro-popover allows attaching optional comment notes");
+  assert.strictEqual(feedbackBar.querySelector(".comment-popover"), null, "Popover must close after successful submission");
+  console.log("  Passed: Micro-popover rejects unvoted submissions and submits notes after voting");
 
   // --------------------------------------------------------------------------
   // Test 8: Session Persistence of Feedback Across Reload

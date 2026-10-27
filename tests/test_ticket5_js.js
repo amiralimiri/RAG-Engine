@@ -225,7 +225,7 @@ const docElements = {
   thinkingWorkflow: new MockElement("span", "thinkingWorkflow"),
   thinkingTimer: new MockElement("span", "thinkingTimer"),
   chatForm: new MockElement("form", "chatForm"),
-  messageInput: new MockElement("textarea", "messageInput"),
+  question: new MockElement("textarea", "question"),
   sendBtn: new MockElement("button", "sendBtn"),
   trace: new MockElement("div", "trace"),
   sourceUsed: new MockElement("div", "sourceUsed"),
@@ -554,7 +554,7 @@ async function runTests() {
     // Verify while fetch is active: inputs must be disabled and thinking active
     assert(docElements.sendBtn.disabled, "Send button must be disabled during active request");
     assert(
-      docElements.messageInput.disabled,
+      docElements.question.disabled,
       "Message textarea must be disabled during active request",
     );
     assert(
@@ -581,7 +581,7 @@ async function runTests() {
   };
 
   docElements.workflowSelect.value = "fix_single_jev";
-  docElements.messageInput.value = "How do I print hello in Python?";
+  docElements.question.value = "How do I print hello in Python?";
   await askAgent("How do I print hello in Python?");
 
   assert(fetchCalled, "POST /api/chat should be dispatched");
@@ -602,7 +602,7 @@ async function runTests() {
     "Send button must be re-enabled after response",
   );
   assert(
-    !docElements.messageInput.disabled,
+    !docElements.question.disabled,
     "Message textarea must be re-enabled after response",
   );
   assert(
@@ -647,7 +647,7 @@ async function runTests() {
     "Send button must be re-enabled after error",
   );
   assert(
-    !docElements.messageInput.disabled,
+    !docElements.question.disabled,
     "Message input must be re-enabled after error",
   );
   assert(
@@ -661,8 +661,42 @@ async function runTests() {
   );
   console.log("  Passed: askAgent gracefully recovers and cleans up thinking state on error");
 
+  // TEST 8: Citation URL Protocol Validation & DOMPurify Composite Sanitization
+  console.log("Test 8: Citation URL Protocol Validation & Sanitization");
+  docElements.chatMessages.children = [];
+  addMessage(
+    "assistant",
+    "Here are the references.",
+    "web_search",
+    [
+      { title: "Safe HTTPS Link", url: "https://kb.example.com/vpn" },
+      { title: "Safe HTTP Link", url: "http://legacy.example.com/vpn" },
+      { title: "Malicious Javascript Link", url: "javascript:alert(1)" },
+      { title: "Malicious Data URI", url: "data:text/html,<script>alert(1)</script>" },
+    ],
+  );
+  const citationBubble = docElements.chatMessages.children[0];
+  assert(citationBubble, "Assistant bubble with citations must be created");
+  assert(
+    citationBubble.innerHTML.includes('href="https://kb.example.com/vpn"'),
+    "HTTPS citation URLs must be preserved",
+  );
+  assert(
+    citationBubble.innerHTML.includes('href="http://legacy.example.com/vpn"'),
+    "HTTP citation URLs must be preserved",
+  );
+  assert(
+    !citationBubble.innerHTML.includes('href="javascript:alert(1)"'),
+    "Malicious javascript: URLs must NOT be rendered",
+  );
+  assert(
+    !citationBubble.innerHTML.includes('href="data:text/html'),
+    "Malicious data: URIs must NOT be rendered",
+  );
+  console.log("  Passed: Citation URLs strictly validate protocols (http/https only)");
+
   console.log("\n==========================================");
-  console.log(" ALL 7 TICKET 5 VERIFICATION CHECKS PASSED ");
+  console.log(" ALL 8 TICKET 5 VERIFICATION CHECKS PASSED ");
   console.log("==========================================");
 }
 

@@ -121,7 +121,7 @@ const docElements = {
   welcomeCard: new MockElement("div", "welcomeCard"),
   thinkingBubble: new MockElement("div", "thinkingBubble"),
   chatForm: new MockElement("form", "chatForm"),
-  messageInput: new MockElement("textarea", "messageInput"),
+  question: new MockElement("textarea", "question"),
   sendBtn: new MockElement("button", "sendBtn"),
   trace: new MockElement("div", "trace"),
   sourceUsed: new MockElement("div", "sourceUsed"),

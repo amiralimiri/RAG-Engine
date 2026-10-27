@@ -16,12 +16,9 @@ const chatMessages = $("chatMessages") || chatArea;
 const welcomeCard = $("welcomeCard");
 const thinkingBubble = $("thinkingBubble");
 const form = $("chatForm");
-const question = $("messageInput") || $("question");
+const question = $("question");
 const sendBtn = $("sendBtn");
-const trace = $("trace");
-const sourceUsed = $("sourceUsed");
 const workflowSelect = $("workflowSelect");
-const workflowUsed = $("workflowUsed");
 const themeToggleBtn = $("themeToggleBtn");
 const newChatBtn = $("newChatBtn");
 const recentChatsList = $("recentChatsList");
@@ -36,6 +33,16 @@ const openUpload = $("openUpload");
 const openIngestModalBtn = $("openIngestModalBtn");
 const closeUpload = $("closeUpload");
 const uploadBtn = $("uploadBtn");
+
+/* ---------- Helper Utilities ---------- */
+function removeElement(node) {
+  if (!node) return;
+  if (node.parentNode && typeof node.parentNode.removeChild === "function") {
+    node.parentNode.removeChild(node);
+  } else if (typeof node.remove === "function") {
+    node.remove();
+  }
+}
 
 /* ---------- Storage Key Constants ---------- */
 const STORAGE_KEY_THEME = "rag_theme";
@@ -275,12 +282,25 @@ function initMarked() {
 
 const PURIFY_CONFIG = {
   USE_PROFILES: { html: true, svg: true },
-  ADD_TAGS: ["svg", "path", "rect", "polyline", "line", "circle"],
+  ALLOW_DATA_ATTR: true,
+  ADD_TAGS: [
+    "svg",
+    "path",
+    "rect",
+    "polyline",
+    "line",
+    "circle",
+    "details",
+    "summary",
+  ],
   ADD_ATTR: [
     "target",
     "rel",
     "data-code",
     "data-lang",
+    "data-trace-id",
+    "data-score",
+    "data-session-id",
     "viewBox",
     "fill",
     "stroke",
@@ -289,6 +309,9 @@ const PURIFY_CONFIG = {
     "stroke-linejoin",
     "aria-hidden",
     "aria-label",
+    "tabindex",
+    "role",
+    "open",
   ],
   FORBID_TAGS: ["style", "script", "iframe", "object", "embed"],
   FORBID_ATTR: ["onerror", "onload", "onclick", "onmouseover"],
@@ -306,12 +329,19 @@ function sanitizeHtmlFallback(html) {
     .replace(/href\s*=\s*(['"])\s*javascript:[^'"]*\1/gi, 'href="#"');
 }
 
+function sanitizeHtml(rawHtml) {
+  if (!rawHtml) return "";
+  const purifyObj = getDOMPurify();
+  if (purifyObj && typeof purifyObj.sanitize === "function") {
+    return purifyObj.sanitize(rawHtml, PURIFY_CONFIG);
+  }
+  return sanitizeHtmlFallback(rawHtml);
+}
+
 function renderMarkdown(rawText) {
   if (!rawText) return "";
 
   const markedObj = getMarked();
-  const purifyObj = getDOMPurify();
-
   let rawHtml = "";
   if (markedObj) {
     if (!markedConfigured) {
@@ -330,11 +360,7 @@ function renderMarkdown(rawText) {
     rawHtml = formatText(rawText);
   }
 
-  if (purifyObj && typeof purifyObj.sanitize === "function") {
-    return purifyObj.sanitize(rawHtml, PURIFY_CONFIG);
-  }
-
-  return sanitizeHtmlFallback(rawHtml);
+  return sanitizeHtml(rawHtml);
 }
 
 /* ---------- Clipboard Copy Utility & Code Block Interactions ---------- */
@@ -519,15 +545,13 @@ function hideThinking() {
 
   if (!thinkingBubble) return;
   thinkingBubble.classList.add("hidden");
-  if (thinkingBubble.parentNode) {
-    thinkingBubble.parentNode.removeChild(thinkingBubble);
-  }
+  removeElement(thinkingBubble);
 }
 
 /* ==========================================================================
    Ticket 6: Floating Toast Notifications
    ========================================================================== */
-function showToast(message, type = "info", duration = 3000) {
+function showToast(message, type = "info", duration = 2500) {
   if (typeof document === "undefined") return null;
 
   let container =
@@ -573,7 +597,9 @@ function showToast(message, type = "info", duration = 3000) {
   if (toastType === "success") iconText = "✓";
   else if (toastType === "error") iconText = "✕";
 
-  toast.innerHTML = `<span class="toast-icon">${iconText}</span><span class="toast-message">${escapeHtml(message)}</span>`;
+  toast.innerHTML = sanitizeHtml(
+    `<span class="toast-icon">${iconText}</span><span class="toast-message">${escapeHtml(message)}</span>`,
+  );
 
   if (typeof container.appendChild === "function") {
     container.appendChild(toast);
@@ -587,14 +613,7 @@ function showToast(message, type = "info", duration = 3000) {
       toast.classList.add("toast-fade-out");
     }
     setTimeout(() => {
-      if (
-        toast.parentNode &&
-        typeof toast.parentNode.removeChild === "function"
-      ) {
-        toast.parentNode.removeChild(toast);
-      } else if (typeof toast.remove === "function") {
-        toast.remove();
-      }
+      removeElement(toast);
     }, 260);
   };
 
@@ -637,7 +656,7 @@ async function handleCopyTraceId(traceChip) {
   if (!traceId) return;
 
   await copyToClipboard(traceId);
-  showToast("Trace ID copied for Langfuse debugging", "info");
+  showToast("Trace ID copied for Langfuse debugging", "success");
 }
 
 /* ==========================================================================
@@ -781,13 +800,7 @@ async function submitFeedback(
 function closeAllCommentPopovers() {
   if (typeof document === "undefined" || !document.querySelectorAll) return;
   const popovers = document.querySelectorAll(".comment-popover");
-  popovers.forEach((p) => {
-    if (p.parentNode && typeof p.parentNode.removeChild === "function") {
-      p.parentNode.removeChild(p);
-    } else if (typeof p.remove === "function") {
-      p.remove();
-    }
-  });
+  popovers.forEach((p) => removeElement(p));
 }
 
 function toggleCommentPopover(feedbackBar, traceId) {
@@ -797,14 +810,7 @@ function toggleCommentPopover(feedbackBar, traceId) {
     ? feedbackBar.querySelector(".comment-popover")
     : null;
   if (existing) {
-    if (
-      existing.parentNode &&
-      typeof existing.parentNode.removeChild === "function"
-    ) {
-      existing.parentNode.removeChild(existing);
-    } else if (typeof existing.remove === "function") {
-      existing.remove();
-    }
+    removeElement(existing);
     return;
   }
 
@@ -812,12 +818,13 @@ function toggleCommentPopover(feedbackBar, traceId) {
 
   const popover = document.createElement("div");
   popover.className = "comment-popover feedback-popover";
-  popover.innerHTML =
+  popover.innerHTML = sanitizeHtml(
     `<textarea placeholder="Add details or context (optional)..." aria-label="Feedback note"></textarea>` +
-    `<div class="popover-actions">` +
-    `<button type="button" class="popover-btn popover-cancel">Cancel</button>` +
-    `<button type="button" class="popover-btn popover-submit">Submit</button>` +
-    `</div>`;
+      `<div class="popover-actions">` +
+      `<button type="button" class="popover-btn popover-cancel">Cancel</button>` +
+      `<button type="button" class="popover-btn popover-submit">Submit</button>` +
+      `</div>`,
+  );
 
   if (typeof feedbackBar.appendChild === "function") {
     feedbackBar.appendChild(popover);
@@ -836,14 +843,7 @@ function toggleCommentPopover(feedbackBar, traceId) {
   if (cancelBtn && typeof cancelBtn.addEventListener === "function") {
     cancelBtn.addEventListener("click", (e) => {
       if (e && typeof e.stopPropagation === "function") e.stopPropagation();
-      if (
-        popover.parentNode &&
-        typeof popover.parentNode.removeChild === "function"
-      ) {
-        popover.parentNode.removeChild(popover);
-      } else if (typeof popover.remove === "function") {
-        popover.remove();
-      }
+      removeElement(popover);
     });
   }
 
@@ -854,16 +854,8 @@ function toggleCommentPopover(feedbackBar, traceId) {
     submitBtn.addEventListener("click", async (e) => {
       if (e && typeof e.stopPropagation === "function") e.stopPropagation();
       const note = textarea ? textarea.value.trim() : "";
-      if (
-        popover.parentNode &&
-        typeof popover.parentNode.removeChild === "function"
-      ) {
-        popover.parentNode.removeChild(popover);
-      } else if (typeof popover.remove === "function") {
-        popover.remove();
-      }
 
-      let score = 1.0;
+      let score = null;
       const upBtn = feedbackBar.querySelector
         ? feedbackBar.querySelector(".thumbs-up")
         : null;
@@ -884,6 +876,15 @@ function toggleCommentPopover(feedbackBar, traceId) {
         score = 1.0;
       }
 
+      if (score === null) {
+        showToast(
+          "Please select Thumbs Up or Thumbs Down before submitting a note.",
+          "error",
+        );
+        return;
+      }
+
+      removeElement(popover);
       await submitFeedback(traceId, score, note || null, feedbackBar);
     });
   }
@@ -1154,11 +1155,24 @@ function addMessage(
   const citeHtml =
     citations && citations.length
       ? `<div class="citations"><strong>Sources</strong><br>${citations
-          .map((c) =>
-            c.url
-              ? `<a href="${escapeHtml(c.url)}" target="_blank" rel="noopener">${escapeHtml(c.title)}</a>`
-              : escapeHtml(c.title),
-          )
+          .map((c) => {
+            const rawUrl =
+              typeof c === "object" && c ? String(c.url || "").trim() : "";
+            const title =
+              typeof c === "object" && c
+                ? String(c.title || rawUrl || "Source")
+                : String(c || "Source");
+            const safeTitle = escapeHtml(title);
+            if (
+              rawUrl &&
+              (rawUrl.startsWith("http://") || rawUrl.startsWith("https://"))
+            ) {
+              return `<a href="${escapeHtml(rawUrl)}" target="_blank" rel="noopener noreferrer">${safeTitle}</a>`;
+            } else if (rawUrl) {
+              return `<a href="#">${safeTitle}</a>`;
+            }
+            return safeTitle;
+          })
           .join("<br>")}</div>`
       : "";
 
@@ -1254,7 +1268,8 @@ function addMessage(
   const avatarLabel = role === "user" ? "You" : "AI";
   const bodyHtml =
     role === "assistant" ? renderMarkdown(text) : formatText(text);
-  wrap.innerHTML = `<div class="avatar">${avatarLabel}</div><div class="bubble">${bodyHtml}${citeHtml}${accordionHtml}${feedbackHtml}</div>`;
+  const compositeHtml = `<div class="avatar">${avatarLabel}</div><div class="bubble">${bodyHtml}${citeHtml}${accordionHtml}${feedbackHtml}</div>`;
+  wrap.innerHTML = sanitizeHtml(compositeHtml);
 
   if (
     thinkingBubble &&
@@ -1269,15 +1284,6 @@ function addMessage(
   if (chatArea) {
     chatArea.scrollTop = chatArea.scrollHeight;
   }
-}
-
-function renderTrace(items = []) {
-  if (!trace) return;
-  trace.innerHTML = items && items.length
-    ? items
-        .map((x) => `<div class="trace-item">${escapeHtml(x)}</div>`)
-        .join("")
-    : '<div class="empty">No trace.</div>';
 }
 
 function renderSessionTranscript(sessionData) {
@@ -1301,27 +1307,8 @@ function renderSessionTranscript(sessionData) {
         msg.feedback || null,
       );
     });
-
-    // Update status bar with last assistant response if available
-    const lastAssistant = [...sessionData.messages]
-      .reverse()
-      .find((m) => m.role === "assistant");
-    if (lastAssistant) {
-      renderTrace(lastAssistant.trace || []);
-      if (sourceUsed)
-        sourceUsed.textContent = lastAssistant.source_used || "—";
-      if (workflowUsed)
-        workflowUsed.textContent =
-          lastAssistant.workflow || sessionData.workflow || "—";
-    }
   } else {
     if (welcomeCard) welcomeCard.classList.remove("hidden");
-    renderTrace([]);
-    if (sourceUsed) sourceUsed.textContent = "—";
-    if (workflowUsed)
-      workflowUsed.textContent = workflowSelect
-        ? workflowSelect.value || "—"
-        : "—";
   }
 }
 
@@ -1332,13 +1319,6 @@ function startNewChat() {
   storage.setItem(STORAGE_KEY_CURRENT_SESSION, currentSessionId);
 
   clearMessageFeed();
-  renderTrace([]);
-  if (sourceUsed) sourceUsed.textContent = "—";
-  if (workflowUsed)
-    workflowUsed.textContent = workflowSelect
-      ? workflowSelect.value || "—"
-      : "—";
-
   renderRecentChatsList();
   closeSidebar();
 
@@ -1542,13 +1522,10 @@ async function askAgent(q) {
   saveSessionData(currentSessionId, sessionData);
   updateSessionIndexMetadata(currentSessionId, sessionData);
 
-  // 3. Update status displays & activate agentic thinking state
-  renderTrace(["Running workflow..."]);
-  if (sourceUsed) sourceUsed.textContent = "Running";
+  // 3. Activate agentic thinking state
   const activeWf = workflowSelect
     ? workflowSelect.value || "fix_single_llm"
     : sessionData.workflow || "fix_single_llm";
-  if (workflowUsed) workflowUsed.textContent = activeWf;
 
   const btn = sendBtn || (form ? form.querySelector("button") : null);
   if (btn) btn.disabled = true;
@@ -1588,9 +1565,6 @@ async function askAgent(q) {
       data.trace || [],
       null,
     );
-    renderTrace(data.trace || []);
-    if (sourceUsed) sourceUsed.textContent = data.source_used;
-    if (workflowUsed) workflowUsed.textContent = data.workflow || activeWf;
 
     // 5. Persist assistant message to session
     const responseNow = Date.now();
@@ -1620,9 +1594,6 @@ async function askAgent(q) {
       ["Request failed"],
       null,
     );
-    renderTrace(["Request failed"]);
-    if (sourceUsed) sourceUsed.textContent = "Error";
-    if (workflowUsed) workflowUsed.textContent = "Error";
 
     const errorNow = Date.now();
     sessionData.updatedAt = errorNow;
@@ -1896,5 +1867,7 @@ if (typeof module !== "undefined" && module.exports) {
     handleCopyTraceId,
     toggleCommentPopover,
     closeAllCommentPopovers,
+    removeElement,
+    sanitizeHtml,
   };
 }

@@ -128,3 +128,19 @@ def test_style_css_contains_ticket5_classes():
     assert "@keyframes radar-ping" in content
     assert ".thinking-workflow" in content
     assert ".thinking-timer" in content
+
+
+def test_app_js_citation_protocol_validation_and_sanitization():
+    """Verify that static/js/app.js enforces protocol validation on citation URLs and DOMPurify sanitization."""
+    app_js_path = BASE_DIR / "static" / "js" / "app.js"
+    assert app_js_path.is_file()
+    content = app_js_path.read_text(encoding="utf-8")
+
+    # Protocol validation for citation URLs
+    assert 'startsWith("http://")' in content or "startsWith('http://')" in content
+    assert 'startsWith("https://")' in content or "startsWith('https://')" in content
+
+    # Comprehensive sanitization and element removal helpers
+    assert "function sanitizeHtml(" in content
+    assert "function removeElement(" in content
+    assert "sanitizeHtml(compositeHtml)" in content

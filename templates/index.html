@@ -23,18 +23,6 @@
         } catch (e) {
           document.documentElement.setAttribute("data-theme", "dark");
         }
-
-        // Backward compatibility shim for legacy element queries
-        const origGetElementById = Document.prototype.getElementById;
-        Document.prototype.getElementById = function (id) {
-          if (id === "question") {
-            return (
-              origGetElementById.call(this, "messageInput") ||
-              origGetElementById.call(this, "question")
-            );
-          }
-          return origGetElementById.call(this, id);
-        };
       })();
     </script>
 
@@ -302,7 +290,7 @@
               aria-label="Ask IT Support Copilot"
             >
               <textarea
-                id="messageInput"
+                id="question"
                 name="question"
                 rows="1"
                 placeholder="Ask an IT support question... (Shift+Enter for newline)"
@@ -344,11 +332,6 @@
           </div>
         </section>
       </main>
-
-      <!-- Backward-compatibility elements for legacy trace/audit bindings -->
-      <div id="trace" style="display: none;" aria-hidden="true"></div>
-      <div id="sourceUsed" style="display: none;" aria-hidden="true"></div>
-      <div id="workflowUsed" style="display: none;" aria-hidden="true"></div>
     </div>
 
     <!-- Document Ingestion Modal Dialog -->
