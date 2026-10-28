@@ -2,6 +2,7 @@ import asyncio
 from app.core.concurrency import wrap_safe_invoke
 import logging
 from typing import Any, Literal, cast
+from langchain_core.runnables import RunnableConfig
 from langchain_openai import ChatOpenAI
 from langchain_tavily import TavilySearch
 from langgraph.graph import StateGraph, START, END
@@ -172,9 +173,9 @@ def route_after_router(state: AgentState) -> Literal["retrieve_kb", "direct_answ
 
 ########################## Node 2 — Retrieve from the Private KB ##########################
 
-def retrieve_kb(state: AgentState):
+def retrieve_kb(state: AgentState, config: RunnableConfig | None = None):
     structlog.contextvars.bind_contextvars(step="retrieve_kb")
-    docs = get_retriever().invoke(state["current_query"])
+    docs = get_retriever().invoke(state["current_query"], config=config)
     return {"kb_docs": docs, "trace": [f"Private KB retrieval → {len(docs)} chunks"] }
 
 
@@ -330,9 +331,9 @@ def after_kb(state: AgentState) -> Literal["generate_from_kb", "search_web"]:
 
 ########################## Node 4 — Tavily Web Search Fallback ##########################
 
-def search_web(state: AgentState):
+def search_web(state: AgentState, config: RunnableConfig | None = None):
     structlog.contextvars.bind_contextvars(step="search_web")
-    result = web_search_tool().invoke({"query": state["current_query"]})
+    result = web_search_tool().invoke({"query": state["current_query"]}, config=config)
     lines, citations = [], []
     if isinstance(result, dict):
         if result.get("answer"):

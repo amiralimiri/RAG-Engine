@@ -18,6 +18,7 @@ class FallbackPrompt:
     name: str
     template: str
     version: int = 0
+    is_fallback: bool = True
 
     def compile(self, **kwargs: Any) -> str:
         """Replace mustache {{variable}} placeholders with kwargs."""

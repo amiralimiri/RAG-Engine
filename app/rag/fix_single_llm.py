@@ -2,6 +2,7 @@ import asyncio
 from app.core.concurrency import wrap_safe_invoke
 import logging
 from typing import Any, Literal, cast
+from langchain_core.runnables import RunnableConfig
 from langchain_openai import ChatOpenAI
 from langchain_tavily import TavilySearch
 from langgraph.graph import StateGraph, START, END
@@ -10,6 +11,7 @@ from app.core.config import get_settings
 from app.core.telemetry import extract_trace_id
 from app.rag.state import AgentState, RouteDecision, EvidenceGrade
 from app.rag.vectorstore import get_retriever
+from app.services.prompts import get_workflow_prompt
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -46,14 +48,8 @@ def web_search_tool():
 def route_question(state: AgentState):
     structlog.contextvars.bind_contextvars(step="route_question")
     router = llm().with_structured_output(RouteDecision, method="json_mode")
-    prompt = f"""
-You route messages for an enterprise IT support assistant.
-Use kb for questions about company IT policies, VPN, password reset, MFA, laptop setup,
-software access, security, email, devices, troubleshooting, or technology support.
-Use direct only for greetings, thanks, or casual chat that needs no company knowledge.
-Question: {state['question']}
-Return valid JSON like {{"route":"kb"}}.
-"""
+    prompt_obj = get_workflow_prompt("rag:router:llm")
+    prompt = prompt_obj.compile(question=state["question"])
     decision = cast(RouteDecision, router.invoke(prompt))
     return {"current_query": state['question'], "source_used": decision.route, "trace": [f"Router → {decision.route.upper()}"] }
 
@@ -62,9 +58,9 @@ def route_after_router(state: AgentState) -> Literal["retrieve_kb", "direct_answ
     return "retrieve_kb" if state["source_used"] == "kb" else "direct_answer"
 
 
-def retrieve_kb(state: AgentState):
+def retrieve_kb(state: AgentState, config: RunnableConfig | None = None):
     structlog.contextvars.bind_contextvars(step="retrieve_kb")
-    docs = get_retriever().invoke(state["current_query"])
+    docs = get_retriever().invoke(state["current_query"], config=config)
     return {"kb_docs": docs, "trace": [f"Private KB retrieval → {len(docs)} chunks"] }
 
 
@@ -87,33 +83,12 @@ def grade_kb_2(state: AgentState):
     structlog.contextvars.bind_contextvars(step="grade_kb")
     grader = llm().with_structured_output(EvidenceGrade, method="json_mode")
     context = "\n\n".join(f"Source: {d.metadata.get('source','unknown')}\n{d.page_content}" for d in state["kb_docs"])
-    prompt = f"""
-You grade evidence for an enterprise IT support assistant.
-
-Original user question:
-{state['question']}
-
-Query used for retrieval:
-{state['current_query']}
-
-Private company KB evidence:
-{context}
-
-Evaluate whether the evidence is sufficient to answer
-the ORIGINAL user question confidently and specifically.
-
-The retrieval query is only a search aid.
-Do not grade the evidence as good merely because it
-is relevant to the retrieval query.
-
-Return good only if the evidence supports a sufficiently
-specific answer to the original question.
-Otherwise return weak.
-
-Return valid JSON:
-{{"grade": "good"}} or {{"grade": "weak"}}.
-"""
-
+    prompt_obj = get_workflow_prompt("rag:grade_kb:llm")
+    prompt = prompt_obj.compile(
+        question=state["question"],
+        current_query=state["current_query"],
+        context=context,
+    )
     grade = cast(EvidenceGrade, grader.invoke(prompt))
     return {"kb_grade": grade.grade, "trace": [f"KB evidence grade → {grade.grade.upper()}"] }
 
@@ -122,9 +97,9 @@ def after_kb(state: AgentState) -> Literal["generate_from_kb", "search_web"]:
     return "generate_from_kb" if state["kb_grade"] == "good" else "search_web"
 
 
-def search_web(state: AgentState):
+def search_web(state: AgentState, config: RunnableConfig | None = None):
     structlog.contextvars.bind_contextvars(step="search_web")
-    result = web_search_tool().invoke({"query": state["current_query"]})
+    result = web_search_tool().invoke({"query": state["current_query"]}, config=config)
     lines, citations = [], []
     if isinstance(result, dict):
         if result.get("answer"):
@@ -159,35 +134,12 @@ Return valid JSON like {{"grade":"good"}}.
 def grade_web_2(state: AgentState):
     structlog.contextvars.bind_contextvars(step="grade_web")
     grader = llm().with_structured_output(EvidenceGrade, method="json_mode")
-
-    prompt = f"""
-You grade web evidence for an enterprise IT support assistant.
-
-Original user question:
-{state['question']}
-
-Query used for web search:
-{state['current_query']}
-
-Web evidence:
-{state['web_results']}
-
-Evaluate whether the web evidence is sufficient,
-relevant, and specific enough to answer the ORIGINAL
-user question confidently.
-
-The search query is only a retrieval aid.
-Do not grade the evidence as good merely because
-it matches the search query.
-
-Use good only when the evidence directly supports
-a sufficiently specific answer to the original question.
-Otherwise, return weak.
-
-Return valid JSON:
-{{"grade": "good"}} or {{"grade": "weak"}}.
-"""
-
+    prompt_obj = get_workflow_prompt("rag:grade_web:llm")
+    prompt = prompt_obj.compile(
+        question=state["question"],
+        current_query=state["current_query"],
+        web_results=state["web_results"],
+    )
     grade = cast(EvidenceGrade, grader.invoke(prompt))
     return {"web_grade": grade.grade, "trace": [f"Web evidence grade → {grade.grade.upper()}"]}
 
@@ -218,22 +170,11 @@ Question: {state['question']}
     
 def rewrite_query_2(state: AgentState):
     structlog.contextvars.bind_contextvars(step="rewrite_query")
-    prompt = f"""
-You improve search queries for an enterprise IT assistant.
-
-Original user question:
-{state['question']}
-
-Previous query:
-{state['current_query']}
-
-Create a meaningfully improved query that preserves
-the original intent and addresses the missing information.
-
-Do not answer the question.
-Return only the new query.
-"""
-
+    prompt_obj = get_workflow_prompt("rag:rewrite_query")
+    prompt = prompt_obj.compile(
+        question=state["question"],
+        current_query=state["current_query"],
+    )
     rewritten = cast(str, llm().invoke(prompt).content).strip()
     return {
         "current_query": rewritten,
@@ -248,12 +189,11 @@ GENERATION_NODES = {"generate_from_kb", "generate_from_web", "direct_answer"}
 async def generate_from_kb(state: AgentState):
     structlog.contextvars.bind_contextvars(step="generate_from_kb")
     context = "\n\n".join(f"[Source: {d.metadata.get('source','unknown')}]\n{d.page_content}" for d in state["kb_docs"])
-    prompt = f"""
-You are an enterprise IT support copilot. Answer ONLY from the private company KB below.
-Be concise, actionable, and safe. If steps are present, present them clearly.
-Do not invent policy details. Mention that the answer is based on the company's private knowledge base.
-Question: {state['question']}\n\nPrivate KB:\n{context}
-"""
+    prompt_obj = get_workflow_prompt("rag:generate_kb")
+    prompt = prompt_obj.compile(
+        question=state["question"],
+        context=context,
+    )
     response = await llm().ainvoke(prompt)
     answer = response.content if hasattr(response, "content") else str(response)
     citations = []
@@ -268,11 +208,11 @@ Question: {state['question']}\n\nPrivate KB:\n{context}
 
 async def generate_from_web(state: AgentState):
     structlog.contextvars.bind_contextvars(step="generate_from_web")
-    prompt = f"""
-You are an enterprise IT support copilot. The private company KB was insufficient.
-Answer ONLY from the web evidence below. Clearly say this is external web information and may need IT validation before changing company-managed systems.
-Question: {state['question']}\n\nWeb evidence:\n{state['web_results']}
-"""
+    prompt_obj = get_workflow_prompt("rag:generate_web")
+    prompt = prompt_obj.compile(
+        question=state["question"],
+        web_results=state["web_results"],
+    )
     response = await llm().ainvoke(prompt)
     answer = response.content if hasattr(response, "content") else str(response)
     return {"answer": answer, "source_used": "web_search", "trace": ["Answer generation → WEB SEARCH"] }
@@ -280,7 +220,9 @@ Question: {state['question']}\n\nWeb evidence:\n{state['web_results']}
 
 async def direct_answer(state: AgentState):
     structlog.contextvars.bind_contextvars(step="direct_answer")
-    response = await llm().ainvoke(f"Respond briefly and naturally to: {state['question']}")
+    prompt_obj = get_workflow_prompt("rag:direct_answer")
+    prompt = prompt_obj.compile(question=state["question"])
+    response = await llm().ainvoke(prompt)
     answer = response.content if hasattr(response, "content") else str(response)
     return {"answer": answer, "source_used": "direct", "trace": ["Direct response → no retrieval"] }
 

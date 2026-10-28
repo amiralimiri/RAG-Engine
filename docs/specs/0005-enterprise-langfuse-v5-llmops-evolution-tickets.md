@@ -55,7 +55,7 @@
 | **Ticket 01** | Decommission SQLite Audit Store | `app/services/audit.py`, `data/audit.db`, `app/main.py`, `app/api/routes.py`, `tests/test_audit_migration.py` | None | `completed` |
 | **Ticket 02** | Configuration Settings & Unit Cost Accounting | `app/core/config.py` | None | `completed` |
 | **Ticket 03** | Langfuse Prompt CMS Service & Fallback Catalog | `app/services/prompts.py`, `tests/test_prompts_cms.py` | Ticket 02 | `completed` |
-| **Ticket 04** | Instrument Vector Retriever & Web Search Spans | `app/rag/fix_single_llm.py`, `app/rag/fix_single_jev.py` | Ticket 02 | `ready` |
+| **Ticket 04** | Instrument Vector Retriever & Web Search Spans | `app/rag/fix_single_llm.py`, `app/rag/fix_single_jev.py` | Ticket 02 | `completed` |
 | **Ticket 05** | JEV Cost Accounting & Prompt Observation Linking | `app/rag/fix_single_jev.py` | Ticket 02, Ticket 03 | `ready` |
 | **Ticket 06** | Formalize Retrieved Contexts in Graph State | `app/rag/state.py`, `app/rag/fix_single_llm.py`, `app/rag/fix_single_jev.py` | None | `ready` |
 | **Ticket 07** | Asynchronous Online DeepEval Scoring Engine & Routes | `app/services/evaluation.py`, `app/api/routes.py`, `tests/test_online_evaluation.py` | Ticket 01, Ticket 02, Ticket 06 | `ready` |
@@ -162,9 +162,9 @@
   2. Update `search_web(state: AgentState, config: RunnableConfig | None = None)` in both files to invoke `web_search_tool().invoke({"query": state["current_query"]}, config=config)`.
   3. Ensure `fix_single_llm.py` and `fix_single_jev.py` remain strictly decoupled without shared helper imports between each other.
 - **Acceptance Criteria:**
-  - [ ] `retrieve_kb` passes `config` down to VectorStore retriever, firing `on_retriever_start` and `on_retriever_end`.
-  - [ ] `search_web` passes `config` down to TavilySearch tool, firing `on_tool_start` and `on_tool_end`.
-  - [ ] Standalone file boundary between `fix_single_llm.py` and `fix_single_jev.py` is 100% preserved.
+  - [x] `retrieve_kb` passes `config` down to VectorStore retriever, firing `on_retriever_start` and `on_retriever_end`.
+  - [x] `search_web` passes `config` down to TavilySearch tool, firing `on_tool_start` and `on_tool_end`.
+  - [x] Standalone file boundary between `fix_single_llm.py` and `fix_single_jev.py` is 100% preserved.
 - **TDD Verification:**
   ```bash
   uv run pytest tests/ -k "test_ask or test_chat"
