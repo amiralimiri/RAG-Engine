@@ -425,6 +425,12 @@ class TestWireEventSequence:
         assert captured_kwargs["source_used"] == "knowledge_base"
         assert captured_kwargs["retrieved_contexts"] == ["KB Context doc 1"]
 
+        # Ensure background task reference is cleaned up after completion
+        from app.api.routes import _background_tasks
+        # Give event loop a cycle for task done callback
+        await asyncio.sleep(0.05)
+        assert len(_background_tasks) == 0
+
     async def test_non_streaming_fallback_node_emits_static_token(self, monkeypatch):
         """When reaching insufficient fallback node with static answer, an event: token is synthesized."""
         mock_handler = get_mock_handler("trace-insufficient-001")

@@ -64,6 +64,8 @@ WORKFLOW_GRAPHS = {
 router = APIRouter(prefix="/api")
 settings = get_settings()
 
+_background_tasks: set[asyncio.Task[Any]] = set()
+
 
 
 
@@ -313,7 +315,7 @@ async def chat_event_generator(
 
         # Trigger online evaluation asynchronously in the background
         if resolved_tid:
-            asyncio.create_task(
+            eval_task = asyncio.create_task(
                 run_online_evaluation_task(
                     trace_id=resolved_tid,
                     question=question,
@@ -322,6 +324,8 @@ async def chat_event_generator(
                     retrieved_contexts=final_retrieved_contexts,
                 )
             )
+            _background_tasks.add(eval_task)
+            eval_task.add_done_callback(_background_tasks.discard)
 
         # Finalize successful query structured log
         logger.info(

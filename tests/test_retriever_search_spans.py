@@ -311,5 +311,165 @@ def test_fix_single_llm_nodes_compile_prompts_from_cms():
             res = fix_single_llm.route_question(state)
 
         mock_get_prompt.assert_called_with("rag:router:llm")
-        mock_router.invoke.assert_called_once_with("Test router prompt for: MFA issue")
+        mock_router.invoke.assert_called_once_with(
+            "Test router prompt for: MFA issue",
+            config={"metadata": {"prompt_name": "rag:router:llm", "prompt_fallback": True}},
+        )
         assert res["source_used"] == "kb"
+
+
+class MockActivePrompt:
+    """Mock representing an active (non-fallback) Langfuse prompt client."""
+
+    def __init__(self, name: str, version: int = 2):
+        self.name = name
+        self.version = version
+        self.is_fallback = False
+
+    def compile(self, **kwargs) -> str:
+        return f"compiled-{self.name}"
+
+
+@pytest.mark.asyncio
+async def test_fix_single_llm_nodes_link_active_langfuse_prompt():
+    """Verify active Langfuse prompt objects are linked in RunnableConfig metadata for fix_single_llm."""
+    active_prompt = MockActivePrompt("rag:router:llm")
+
+    # 1. route_question
+    with patch("app.rag.fix_single_llm.get_workflow_prompt", return_value=active_prompt):
+        mock_router = MagicMock()
+        mock_router.invoke.return_value = MagicMock(route="kb")
+        with patch.object(fix_single_llm, "llm") as mock_llm_fn:
+            mock_llm_fn.return_value.with_structured_output.return_value = mock_router
+            fix_single_llm.route_question({"question": "test"})
+            mock_router.invoke.assert_called_once_with(
+                "compiled-rag:router:llm",
+                config={"metadata": {"langfuse_prompt": active_prompt}},
+            )
+
+    # 2. grade_kb_2
+    kb_prompt = MockActivePrompt("rag:grade_kb:llm")
+    with patch("app.rag.fix_single_llm.get_workflow_prompt", return_value=kb_prompt):
+        mock_grader = MagicMock()
+        mock_grader.invoke.return_value = MagicMock(grade="good")
+        with patch.object(fix_single_llm, "llm") as mock_llm_fn:
+            mock_llm_fn.return_value.with_structured_output.return_value = mock_grader
+            fix_single_llm.grade_kb_2({"question": "q", "current_query": "q", "kb_docs": []})
+            mock_grader.invoke.assert_called_once_with(
+                "compiled-rag:grade_kb:llm",
+                config={"metadata": {"langfuse_prompt": kb_prompt}},
+            )
+
+    # 3. grade_web_2
+    web_prompt = MockActivePrompt("rag:grade_web:llm")
+    with patch("app.rag.fix_single_llm.get_workflow_prompt", return_value=web_prompt):
+        mock_grader = MagicMock()
+        mock_grader.invoke.return_value = MagicMock(grade="good")
+        with patch.object(fix_single_llm, "llm") as mock_llm_fn:
+            mock_llm_fn.return_value.with_structured_output.return_value = mock_grader
+            fix_single_llm.grade_web_2({"question": "q", "current_query": "q", "web_results": "res"})
+            mock_grader.invoke.assert_called_once_with(
+                "compiled-rag:grade_web:llm",
+                config={"metadata": {"langfuse_prompt": web_prompt}},
+            )
+
+    # 4. rewrite_query_2
+    rewrite_prompt = MockActivePrompt("rag:rewrite_query")
+    with patch("app.rag.fix_single_llm.get_workflow_prompt", return_value=rewrite_prompt):
+        mock_llm = MagicMock()
+        mock_llm.invoke.return_value = MagicMock(content="new query")
+        with patch.object(fix_single_llm, "llm", return_value=mock_llm):
+            fix_single_llm.rewrite_query_2({"question": "q", "current_query": "q", "retry_count": 0})
+            mock_llm.invoke.assert_called_once_with(
+                "compiled-rag:rewrite_query",
+                config={"metadata": {"langfuse_prompt": rewrite_prompt}},
+            )
+
+    # 5. generate_from_kb
+    gen_kb_prompt = MockActivePrompt("rag:generate_kb")
+    with patch("app.rag.fix_single_llm.get_workflow_prompt", return_value=gen_kb_prompt):
+        mock_llm = MagicMock()
+        mock_llm.ainvoke = AsyncMock(return_value=MagicMock(content="answer"))
+        with patch.object(fix_single_llm, "llm", return_value=mock_llm):
+            await fix_single_llm.generate_from_kb({"question": "q", "kb_docs": []})
+            mock_llm.ainvoke.assert_called_once_with(
+                "compiled-rag:generate_kb",
+                config={"metadata": {"langfuse_prompt": gen_kb_prompt}},
+            )
+
+    # 6. generate_from_web
+    gen_web_prompt = MockActivePrompt("rag:generate_web")
+    with patch("app.rag.fix_single_llm.get_workflow_prompt", return_value=gen_web_prompt):
+        mock_llm = MagicMock()
+        mock_llm.ainvoke = AsyncMock(return_value=MagicMock(content="answer"))
+        with patch.object(fix_single_llm, "llm", return_value=mock_llm):
+            await fix_single_llm.generate_from_web({"question": "q", "web_results": "res"})
+            mock_llm.ainvoke.assert_called_once_with(
+                "compiled-rag:generate_web",
+                config={"metadata": {"langfuse_prompt": gen_web_prompt}},
+            )
+
+    # 7. direct_answer
+    direct_prompt = MockActivePrompt("rag:direct_answer")
+    with patch("app.rag.fix_single_llm.get_workflow_prompt", return_value=direct_prompt):
+        mock_llm = MagicMock()
+        mock_llm.ainvoke = AsyncMock(return_value=MagicMock(content="answer"))
+        with patch.object(fix_single_llm, "llm", return_value=mock_llm):
+            await fix_single_llm.direct_answer({"question": "q"})
+            mock_llm.ainvoke.assert_called_once_with(
+                "compiled-rag:direct_answer",
+                config={"metadata": {"langfuse_prompt": direct_prompt}},
+            )
+
+
+@pytest.mark.asyncio
+async def test_fix_single_jev_nodes_link_active_langfuse_prompt():
+    """Verify active Langfuse prompt objects are linked in RunnableConfig metadata for fix_single_jev."""
+    # 1. rewrite_query_2
+    rewrite_prompt = MockActivePrompt("rag:rewrite_query")
+    with patch("app.rag.fix_single_jev.get_workflow_prompt", return_value=rewrite_prompt):
+        mock_llm = MagicMock()
+        mock_llm.invoke.return_value = MagicMock(content="new query")
+        with patch.object(fix_single_jev, "llm", return_value=mock_llm):
+            fix_single_jev.rewrite_query_2({"question": "q", "current_query": "q", "retry_count": 0})
+            mock_llm.invoke.assert_called_once_with(
+                "compiled-rag:rewrite_query",
+                config={"metadata": {"langfuse_prompt": rewrite_prompt}},
+            )
+
+    # 2. generate_from_kb
+    gen_kb_prompt = MockActivePrompt("rag:generate_kb")
+    with patch("app.rag.fix_single_jev.get_workflow_prompt", return_value=gen_kb_prompt):
+        mock_llm = MagicMock()
+        mock_llm.ainvoke = AsyncMock(return_value=MagicMock(content="answer"))
+        with patch.object(fix_single_jev, "llm", return_value=mock_llm):
+            await fix_single_jev.generate_from_kb({"question": "q", "kb_docs": []})
+            mock_llm.ainvoke.assert_called_once_with(
+                "compiled-rag:generate_kb",
+                config={"metadata": {"langfuse_prompt": gen_kb_prompt}},
+            )
+
+    # 3. generate_from_web
+    gen_web_prompt = MockActivePrompt("rag:generate_web")
+    with patch("app.rag.fix_single_jev.get_workflow_prompt", return_value=gen_web_prompt):
+        mock_llm = MagicMock()
+        mock_llm.ainvoke = AsyncMock(return_value=MagicMock(content="answer"))
+        with patch.object(fix_single_jev, "llm", return_value=mock_llm):
+            await fix_single_jev.generate_from_web({"question": "q", "web_results": "res"})
+            mock_llm.ainvoke.assert_called_once_with(
+                "compiled-rag:generate_web",
+                config={"metadata": {"langfuse_prompt": gen_web_prompt}},
+            )
+
+    # 4. direct_answer
+    direct_prompt = MockActivePrompt("rag:direct_answer")
+    with patch("app.rag.fix_single_jev.get_workflow_prompt", return_value=direct_prompt):
+        mock_llm = MagicMock()
+        mock_llm.ainvoke = AsyncMock(return_value=MagicMock(content="answer"))
+        with patch.object(fix_single_jev, "llm", return_value=mock_llm):
+            await fix_single_jev.direct_answer({"question": "q"})
+            mock_llm.ainvoke.assert_called_once_with(
+                "compiled-rag:direct_answer",
+                config={"metadata": {"langfuse_prompt": direct_prompt}},
+            )
+

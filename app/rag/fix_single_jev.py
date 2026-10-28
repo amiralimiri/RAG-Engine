@@ -59,6 +59,25 @@ def web_search_tool():
     return _web_search
 
 
+def _build_prompt_config(prompt_obj: Any, config: RunnableConfig | None = None) -> RunnableConfig:
+    """Build or merge a RunnableConfig linking prompt metadata to LangChain observations."""
+    prompt_meta: dict[str, Any] = {}
+    if prompt_obj is not None:
+        if getattr(prompt_obj, "is_fallback", False) is True:
+            prompt_meta = {
+                "prompt_name": getattr(prompt_obj, "name", ""),
+                "prompt_fallback": True,
+            }
+        else:
+            prompt_meta = {"langfuse_prompt": prompt_obj}
+
+    cfg: RunnableConfig = dict(config) if config else {}
+    existing_meta = dict(cfg.get("metadata") or {})
+    existing_meta.update(prompt_meta)
+    cfg["metadata"] = existing_meta
+    return cfg
+
+
 def _estimate_jev_tokens(prompt_text: str, output_text: str) -> dict[str, int]:
     """Heuristic rule-of-thumb: 1 token ~= 4 characters."""
     input_tokens = max(1, len(prompt_text) // 4)
@@ -135,15 +154,6 @@ def _record_jev_generation(
 
 ########################## Node 1 — Route the Question ##########################
 
-def route_question_llm(state: AgentState):
-    structlog.contextvars.bind_contextvars(step="route_question")
-    router = llm().with_structured_output(RouteDecision, method="json_mode")
-    prompt_obj = get_workflow_prompt("rag:router:llm")
-    prompt = prompt_obj.compile(question=state["question"])
-    decision = cast(RouteDecision, router.invoke(prompt))
-    return {"current_query": state['question'], "source_used": decision.route, "trace": [f"Router → {decision.route.upper()}"] }
-
-
 def route_question_jev(state: AgentState):
     structlog.contextvars.bind_contextvars(step="route_question")
     prompt_client = get_workflow_prompt("rag:router:jev")
@@ -209,21 +219,6 @@ def retrieve_kb(state: AgentState, config: RunnableConfig | None = None):
 
 ########################## Node 3 — Grade Private KB Evidence ##########################
 
-def grade_kb_llm(state: AgentState):
-    structlog.contextvars.bind_contextvars(step="grade_kb")
-    grader = llm().with_structured_output(EvidenceGrade, method="json_mode")
-    context = "\n\n".join(f"Source: {d.metadata.get('source','unknown')}\n{d.page_content}" for d in state["kb_docs"])
-    prompt = f"""
-You grade evidence for an enterprise IT support assistant.
-Question: {state['question']}
-Private company KB evidence:\n{context}
-Return good only if the evidence is sufficient to answer confidently and specifically.
-Otherwise return weak. JSON: {{"grade":"good"}} or {{"grade":"weak"}}.
-"""
-    grade = cast(EvidenceGrade, grader.invoke(prompt))
-    return {"kb_grade": grade.grade, "trace": [f"KB evidence grade → {grade.grade.upper()}"] }
-
-
 def grade_kb_jev(state: AgentState):
     structlog.contextvars.bind_contextvars(step="grade_kb")
     prompt_client = get_workflow_prompt("rag:grade_kb:jev")
@@ -274,20 +269,6 @@ def grade_kb_jev(state: AgentState):
         "kb_grade": grade,
         "trace": [f"KB evidence grade → {grade.upper()}"],
     }
-    
-
-def grade_kb_llm_2(state: AgentState):
-    structlog.contextvars.bind_contextvars(step="grade_kb")
-    grader = llm().with_structured_output(EvidenceGrade, method="json_mode")
-    context = "\n\n".join(f"Source: {d.metadata.get('source','unknown')}\n{d.page_content}" for d in state["kb_docs"])
-    prompt_obj = get_workflow_prompt("rag:grade_kb:llm")
-    prompt = prompt_obj.compile(
-        question=state["question"],
-        current_query=state["current_query"],
-        context=context,
-    )
-    grade = cast(EvidenceGrade, grader.invoke(prompt))
-    return {"kb_grade": grade.grade, "trace": [f"KB evidence grade → {grade.grade.upper()}"] }
 
 
 def grade_kb_jev_2(state: AgentState):
@@ -379,19 +360,6 @@ def search_web(state: AgentState, config: RunnableConfig | None = None):
 
 ########################## Node 5 — Grade Web Evidence ##########################
 
-def grade_web_llm(state: AgentState):
-    structlog.contextvars.bind_contextvars(step="grade_web")
-    grader = llm().with_structured_output(EvidenceGrade, method="json_mode")
-    prompt = f"""
-Question: {state['question']}
-Web evidence:\n{state['web_results']}
-Return good if the evidence is sufficient and directly relevant; otherwise weak.
-Return valid JSON like {{"grade":"good"}}.
-"""
-    grade = cast(EvidenceGrade, grader.invoke(prompt))
-    return {"web_grade": grade.grade, "trace": [f"Web evidence grade → {grade.grade.upper()}"]}
-
-
 def grade_web_jev(state: AgentState):
     structlog.contextvars.bind_contextvars(step="grade_web")
     prompt_client = get_workflow_prompt("rag:grade_web:jev")
@@ -438,19 +406,6 @@ def grade_web_jev(state: AgentState):
         "web_grade": grade,
         "trace": [f"Web evidence grade → {grade.upper()}"],
     }
-    
-
-def grade_web_llm_2(state: AgentState):
-    structlog.contextvars.bind_contextvars(step="grade_web")
-    grader = llm().with_structured_output(EvidenceGrade, method="json_mode")
-    prompt_obj = get_workflow_prompt("rag:grade_web:llm")
-    prompt = prompt_obj.compile(
-        question=state["question"],
-        current_query=state["current_query"],
-        web_results=state["web_results"],
-    )
-    grade = cast(EvidenceGrade, grader.invoke(prompt))
-    return {"web_grade": grade.grade, "trace": [f"Web evidence grade → {grade.grade.upper()}"]}
 
 
 def grade_web_jev_2(state: AgentState):
@@ -515,36 +470,23 @@ def after_web(state: AgentState) -> Literal["generate_from_web", "rewrite_query"
 
 ########################## Node 6 — Rewrite the Query ##########################
 
-def rewrite_query(state: AgentState):
-    structlog.contextvars.bind_contextvars(step="rewrite_query")
-    prompt_obj = get_workflow_prompt("rag:rewrite_query")
-    prompt = prompt_obj.compile(
-        question=state["question"],
-        current_query=state.get("current_query", state["question"]),
-    )
-    
-    rewritten = cast(str, llm().invoke(prompt).content).strip()
-    return {
-        "current_query": rewritten,
-        "retry_count": state["retry_count"] + 1,
-        "trace": [f"Query rewrite → {rewritten}"],
-    }
-    
-    
-def rewrite_query_2(state: AgentState):
+def rewrite_query_2(state: AgentState, config: RunnableConfig | None = None):
     structlog.contextvars.bind_contextvars(step="rewrite_query")
     prompt_obj = get_workflow_prompt("rag:rewrite_query")
     prompt = prompt_obj.compile(
         question=state["question"],
         current_query=state["current_query"],
     )
-
-    rewritten = cast(str, llm().invoke(prompt).content).strip()
+    run_cfg = _build_prompt_config(prompt_obj, config)
+    rewritten = cast(str, llm().invoke(prompt, config=run_cfg).content).strip()
     return {
         "current_query": rewritten,
         "retry_count": state["retry_count"] + 1,
         "trace": [f"Query rewrite → {rewritten}"],
     }
+
+
+rewrite_query = rewrite_query_2
 
 
 GENERATION_NODES = {"generate_from_kb", "generate_from_web", "direct_answer"}
@@ -552,7 +494,7 @@ GENERATION_NODES = {"generate_from_kb", "generate_from_web", "direct_answer"}
 
 ########################## Node 7 — Generate from Private KB ##########################
 
-async def generate_from_kb(state: AgentState):
+async def generate_from_kb(state: AgentState, config: RunnableConfig | None = None):
     structlog.contextvars.bind_contextvars(step="generate_from_kb")
     context = "\n\n".join(f"[Source: {d.metadata.get('source','unknown')}]\n{d.page_content}" for d in state["kb_docs"])
     prompt_obj = get_workflow_prompt("rag:generate_kb")
@@ -560,7 +502,8 @@ async def generate_from_kb(state: AgentState):
         question=state["question"],
         context=context,
     )
-    response = await llm().ainvoke(prompt)
+    run_cfg = _build_prompt_config(prompt_obj, config)
+    response = await llm().ainvoke(prompt, config=run_cfg)
     answer = response.content if hasattr(response, "content") else str(response)
     citations = []
     seen = set()
@@ -583,14 +526,15 @@ async def generate_from_kb(state: AgentState):
 
 ########################## Node 8 — Generate from Web Search ##########################
 
-async def generate_from_web(state: AgentState):
+async def generate_from_web(state: AgentState, config: RunnableConfig | None = None):
     structlog.contextvars.bind_contextvars(step="generate_from_web")
     prompt_obj = get_workflow_prompt("rag:generate_web")
     prompt = prompt_obj.compile(
         question=state["question"],
         web_results=state["web_results"],
     )
-    response = await llm().ainvoke(prompt)
+    run_cfg = _build_prompt_config(prompt_obj, config)
+    response = await llm().ainvoke(prompt, config=run_cfg)
     answer = response.content if hasattr(response, "content") else str(response)
     return {
         "answer": answer,
@@ -602,11 +546,12 @@ async def generate_from_web(state: AgentState):
 
 ########################## Node 9 — Direct Answer ##########################
 
-async def direct_answer(state: AgentState):
+async def direct_answer(state: AgentState, config: RunnableConfig | None = None):
     structlog.contextvars.bind_contextvars(step="direct_answer")
     prompt_obj = get_workflow_prompt("rag:direct_answer")
     prompt = prompt_obj.compile(question=state["question"])
-    response = await llm().ainvoke(prompt)
+    run_cfg = _build_prompt_config(prompt_obj, config)
+    response = await llm().ainvoke(prompt, config=run_cfg)
     answer = response.content if hasattr(response, "content") else str(response)
     return {
         "answer": answer,

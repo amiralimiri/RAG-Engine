@@ -8,6 +8,7 @@ from app.api.middleware import CorrelationLoggingMiddleware
 from app.core.config import get_settings, BASE_DIR
 from app.core.logger import configure_logging
 from app.core.telemetry import flush_telemetry
+from app.core.concurrency import shutdown_background_loop
 
 
 settings = get_settings()
@@ -20,6 +21,7 @@ async def lifespan(app: FastAPI):
     yield
     # Shutdown
     flush_telemetry()
+    shutdown_background_loop()
 
 
 app = FastAPI(title=settings.app_name, version="1.0.0", lifespan=lifespan)

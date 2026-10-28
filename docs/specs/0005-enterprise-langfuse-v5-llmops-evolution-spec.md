@@ -207,7 +207,7 @@ class AgentState(TypedDict):
       "web_results": "\n\n".join(lines),
       "citations": citations,
       "source_used": "web",
-      "retrieved_contexts": state.get("retrieved_contexts", []) + web_contexts,
+      "retrieved_contexts": web_contexts,
       "trace": ["Web fallback → Tavily search"],
   }
   ```
@@ -573,7 +573,7 @@ def search_web(state: AgentState, config: RunnableConfig | None = None):
         "web_results": "\n\n".join(lines),
         "citations": citations,
         "source_used": "web",
-        "retrieved_contexts": state.get("retrieved_contexts", []) + web_contexts,
+        "retrieved_contexts": web_contexts,
         "trace": ["Web fallback → Tavily search"],
     }
 ```

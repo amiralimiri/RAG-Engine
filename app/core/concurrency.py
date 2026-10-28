@@ -59,3 +59,18 @@ def wrap_safe_invoke(compiled_graph: Any) -> Any:
     compiled_graph.invoke = _safe_invoke  # type: ignore[assignment]
     return compiled_graph
 
+
+def shutdown_background_loop(timeout: float = 2.0) -> None:
+    """Cleanly stop and close the background event loop and join its thread."""
+    global _bg_loop, _bg_thread
+    with _bg_lock:
+        if _bg_loop is not None and _bg_loop.is_running():
+            _bg_loop.call_soon_threadsafe(_bg_loop.stop)
+        if _bg_thread is not None and _bg_thread.is_alive():
+            _bg_thread.join(timeout=timeout)
+        if _bg_loop is not None and not _bg_loop.is_running() and not _bg_loop.is_closed():
+            _bg_loop.close()
+        _bg_loop = None
+        _bg_thread = None
+
+

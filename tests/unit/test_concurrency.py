@@ -1,7 +1,7 @@
 import asyncio
 from unittest.mock import MagicMock
 import pytest
-from app.core.concurrency import run_async_safely, wrap_safe_invoke
+from app.core.concurrency import run_async_safely, wrap_safe_invoke, shutdown_background_loop
 
 
 def test_run_async_safely_without_running_loop():
@@ -49,3 +49,17 @@ def test_wrap_safe_invoke():
     res = wrapped.invoke({"test": "data"}, config={"key": "val"})
     assert res["processed"] == {"test": "data"}
     assert res["config"] == {"key": "val"}
+
+
+def test_shutdown_background_loop():
+    # Ensure loop is active first
+    async def sample():
+        return 1
+
+    assert run_async_safely(sample) == 1
+    shutdown_background_loop()
+
+    # Verify that a subsequent call seamlessly re-creates loop
+    assert run_async_safely(sample) == 1
+    shutdown_background_loop()
+

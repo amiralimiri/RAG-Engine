@@ -264,7 +264,10 @@ class TestPromptCMSWiringAcrossJEVNodes:
             question="VPN broken",
             current_query="vpn help",
         )
-        mock_llm.invoke.assert_called_once_with("Compiled rewrite prompt")
+        mock_llm.invoke.assert_called_once_with(
+            "Compiled rewrite prompt",
+            config={"metadata": {"langfuse_prompt": mock_prompt}},
+        )
 
     @pytest.mark.asyncio
     async def test_generate_from_kb_wires_prompt(self, monkeypatch):
@@ -291,7 +294,10 @@ class TestPromptCMSWiringAcrossJEVNodes:
         assert res["answer"] == "KB Answer"
         mock_get_prompt.assert_called_with("rag:generate_kb")
         mock_prompt.compile.assert_called_once()
-        mock_llm.ainvoke.assert_called_once_with("Compiled KB prompt")
+        mock_llm.ainvoke.assert_called_once_with(
+            "Compiled KB prompt",
+            config={"metadata": {"langfuse_prompt": mock_prompt}},
+        )
 
     @pytest.mark.asyncio
     async def test_generate_from_web_wires_prompt(self, monkeypatch):
@@ -317,7 +323,10 @@ class TestPromptCMSWiringAcrossJEVNodes:
             question="Setup VPN",
             web_results="External web info",
         )
-        mock_llm.ainvoke.assert_called_once_with("Compiled Web prompt")
+        mock_llm.ainvoke.assert_called_once_with(
+            "Compiled Web prompt",
+            config={"metadata": {"langfuse_prompt": mock_prompt}},
+        )
 
     @pytest.mark.asyncio
     async def test_direct_answer_wires_prompt(self, monkeypatch):
@@ -339,7 +348,10 @@ class TestPromptCMSWiringAcrossJEVNodes:
         assert res["answer"] == "Hello there!"
         mock_get_prompt.assert_called_with("rag:direct_answer")
         mock_prompt.compile.assert_called_once_with(question="Hello")
-        mock_llm.ainvoke.assert_called_once_with("Compiled Direct prompt")
+        mock_llm.ainvoke.assert_called_once_with(
+            "Compiled Direct prompt",
+            config={"metadata": {"langfuse_prompt": mock_prompt}},
+        )
 
 
 class TestModuleDecoupling:
