@@ -1,9 +1,14 @@
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
 from app.api.routes import _submit_feedback_task, WORKFLOW_ASKS
+
+
+@pytest.fixture(autouse=True)
+def mock_online_evaluation(monkeypatch):
+    monkeypatch.setattr("app.api.routes.run_online_evaluation_task", AsyncMock())
 
 
 @pytest.fixture

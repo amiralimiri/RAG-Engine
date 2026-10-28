@@ -58,7 +58,7 @@
 | **Ticket 04** | Instrument Vector Retriever & Web Search Spans | `app/rag/fix_single_llm.py`, `app/rag/fix_single_jev.py` | Ticket 02 | `completed` |
 | **Ticket 05** | JEV Cost Accounting & Prompt Observation Linking | `app/rag/fix_single_jev.py` | Ticket 02, Ticket 03 | `completed` |
 | **Ticket 06** | Formalize Retrieved Contexts in Graph State | `app/rag/state.py`, `app/rag/fix_single_llm.py`, `app/rag/fix_single_jev.py` | None | `completed` |
-| **Ticket 07** | Asynchronous Online DeepEval Scoring Engine & Routes | `app/services/evaluation.py`, `app/api/routes.py`, `tests/test_online_evaluation.py` | Ticket 01, Ticket 02, Ticket 06 | `ready` |
+| **Ticket 07** | Asynchronous Online DeepEval Scoring Engine & Routes | `app/services/evaluation.py`, `app/api/routes.py`, `tests/test_online_evaluation.py` | Ticket 01, Ticket 02, Ticket 06 | `completed` |
 | **Ticket 08** | Benchmark Golden Dataset & Experiment Runner | `data/gold_benchmarks.json`, `evaluation/run_experiment.py`, `tests/test_experiment_runner.py` | Ticket 06 | `ready` |
 | **Ticket 09** | Comprehensive TDD & End-to-End Test Suite | `tests/test_token_cost_accounting.py`, `tests/test_chat_stream.py`, `tests/test_feedback_api.py`, `tests/test_e2e_observability.py` | Tickets 01–08 | `ready` |
 
@@ -239,10 +239,10 @@
      - In `POST /api/chat`, enqueue `run_online_evaluation_task` via FastAPI `BackgroundTasks`.
      - In `chat_event_generator()` (`POST /api/chat/stream`), trigger `run_online_evaluation_task` asynchronously upon stream completion.
 - **Acceptance Criteria:**
-  - [ ] `/api/chat` returns HTTP 200 immediately without waiting for DeepEval judge execution.
-  - [ ] `/api/chat/stream` emits the final `metadata` event without waiting for evaluation.
-  - [ ] Faithfulness is skipped when `source_used == "direct"` or context is empty.
-  - [ ] Judge timeouts or exceptions do not crash the server or propagate to the user.
+  - [x] `/api/chat` returns HTTP 200 immediately without waiting for DeepEval judge execution.
+  - [x] `/api/chat/stream` emits the final `metadata` event without waiting for evaluation.
+  - [x] Faithfulness is skipped when `source_used == "direct"` or context is empty.
+  - [x] Judge timeouts or exceptions do not crash the server or propagate to the user.
 - **TDD Verification:**
   ```bash
   uv run pytest tests/test_online_evaluation.py

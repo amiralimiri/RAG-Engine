@@ -1,10 +1,14 @@
+import asyncio
 import logging
+import random
 from typing import Optional
 
 from deepeval.metrics import AnswerRelevancyMetric, FaithfulnessMetric
 from deepeval.test_case import LLMTestCase
+from starlette.concurrency import run_in_threadpool
 
 from app.core import telemetry
+from app.core.config import get_settings
 from evaluation.judge import judge
 
 logger = logging.getLogger(__name__)
@@ -141,3 +145,89 @@ def score_trace_answer_relevancy(
             exc,
         )
         return None
+
+
+async def run_online_evaluation_task(
+    trace_id: Optional[str],
+    question: str,
+    answer: str,
+    source_used: str,
+    retrieved_contexts: Optional[list[str]] = None,
+) -> None:
+    """Asynchronously evaluate live chat completions and push scores to Langfuse."""
+    if not trace_id:
+        return
+
+    settings = get_settings()
+    if not settings.langfuse_enabled:
+        return
+
+    # 1. Deterministic Sampling Gate
+    if settings.eval_sample_rate <= 0.0:
+        return
+    if settings.eval_sample_rate < 1.0 and random.random() >= settings.eval_sample_rate:
+        return
+
+    logger.info("Triggering online DeepEval evaluation for trace %s", trace_id)
+
+    contexts = retrieved_contexts or []
+
+    async def _evaluate() -> None:
+        # Evaluate Faithfulness only when retrieval took place and context is present
+        if "faithfulness" in settings.eval_metrics:
+            if source_used != "direct" and contexts:
+                try:
+                    await run_in_threadpool(
+                        score_trace_faithfulness,
+                        trace_id=trace_id,
+                        question=question,
+                        answer=answer,
+                        retrieved_contexts=contexts,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "Faithfulness evaluation failed for trace %s: %s",
+                        trace_id,
+                        exc,
+                    )
+            else:
+                logger.debug(
+                    "Skipping faithfulness for direct or empty context trace %s",
+                    trace_id,
+                )
+
+        # Evaluate Answer Relevancy
+        if "answer_relevancy" in settings.eval_metrics:
+            try:
+                await run_in_threadpool(
+                    score_trace_answer_relevancy,
+                    trace_id=trace_id,
+                    question=question,
+                    answer=answer,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Answer relevancy evaluation failed for trace %s: %s",
+                    trace_id,
+                    exc,
+                )
+
+    try:
+        timeout = settings.eval_timeout_seconds if settings.eval_timeout_seconds > 0 else None
+        if timeout:
+            await asyncio.wait_for(_evaluate(), timeout=timeout)
+        else:
+            await _evaluate()
+    except asyncio.TimeoutError:
+        logger.warning(
+            "Online evaluation timed out after %.1fs for trace %s",
+            settings.eval_timeout_seconds,
+            trace_id,
+        )
+    except Exception as exc:
+        logger.warning(
+            "Unexpected error during online evaluation for trace %s: %s",
+            trace_id,
+            exc,
+        )
+

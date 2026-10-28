@@ -1,4 +1,4 @@
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 import pytest
 from fastapi.testclient import TestClient
 
@@ -42,6 +42,7 @@ def test_e2e_flow_with_langfuse_mocked(client, monkeypatch):
     monkeypatch.setattr("app.api.routes.get_langfuse_client", lambda: mock_client)
     monkeypatch.setattr("app.api.routes.get_langfuse_callback", lambda **kwargs: mock_handler)
     monkeypatch.setattr("app.api.routes.extract_trace_id", lambda handler: getattr(handler, "last_trace_id", None))
+    monkeypatch.setattr("app.api.routes.run_online_evaluation_task", AsyncMock())
 
     def mock_llm_ask(question, **kwargs):
         return {
@@ -138,6 +139,7 @@ def test_e2e_flow_with_fix_single_jev_mocked(client, monkeypatch):
     monkeypatch.setattr("app.api.routes.get_langfuse_client", lambda: mock_client)
     monkeypatch.setattr("app.api.routes.get_langfuse_callback", lambda **kwargs: mock_handler)
     monkeypatch.setattr("app.api.routes.extract_trace_id", lambda handler: getattr(handler, "last_trace_id", None))
+    monkeypatch.setattr("app.api.routes.run_online_evaluation_task", AsyncMock())
 
     def mock_jev_ask(question, **kwargs):
         assert kwargs.get("callback") is mock_handler

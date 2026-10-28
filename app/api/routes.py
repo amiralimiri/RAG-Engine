@@ -31,7 +31,7 @@ from app.core.telemetry import (
 from app.rag import fix_single_llm, fix_single_jev
 from app.rag.vectorstore import add_documents 
 from app.services.ingestion import load_file, chunk_documents, SUPPORTED
-from app.services.evaluation import score_trace_metric
+from app.services.evaluation import score_trace_metric, run_online_evaluation_task
 
 logger = structlog.get_logger(__name__)
 
@@ -112,7 +112,7 @@ def list_workflows():
 
 
 @router.post("/chat")
-def chat(payload: ChatRequest):
+def chat(payload: ChatRequest, background_tasks: BackgroundTasks):
     ask = WORKFLOW_ASKS.get(payload.workflow)
     
     if ask is None:
@@ -169,6 +169,16 @@ def chat(payload: ChatRequest):
             trace_id=trace_id,
         )
 
+        if trace_id:
+            background_tasks.add_task(
+                run_online_evaluation_task,
+                trace_id=trace_id,
+                question=payload.question,
+                answer=result["answer"],
+                source_used=result["source_used"],
+                retrieved_contexts=result.get("retrieved_contexts", []),
+            )
+
         return {
             "workflow": payload.workflow,
             "answer": result["answer"],
@@ -220,6 +230,7 @@ async def chat_event_generator(
     accumulated_trace: list[str] = []
     final_output: dict[str, Any] = {}
     tokens_delivered = 0
+    answer_chunks: list[str] = []
 
     try:
         async for event in graph.astream_events(initial_state, version="v2", config=config):
@@ -257,6 +268,7 @@ async def chat_event_generator(
                         delta_content = str(content) if content else ""
                 if delta_content:
                     tokens_delivered += 1
+                    answer_chunks.append(delta_content)
                     yield format_sse("token", StreamTokenEvent(delta=delta_content))
 
             # 3. State capture on node completion
@@ -274,6 +286,7 @@ async def chat_event_generator(
             static_answer = str(final_output["answer"])
             if static_answer:
                 tokens_delivered += 1
+                answer_chunks.append(static_answer)
                 yield format_sse("token", StreamTokenEvent(delta=static_answer))
 
         # 4. Terminal Metadata Event
@@ -282,6 +295,8 @@ async def chat_event_generator(
         final_source_used = final_output.get("source_used", "direct")
         final_citations = final_output.get("citations", [])
         final_rewritten_query = final_output.get("current_query", question)
+        final_answer = str(final_output.get("answer") or "".join(answer_chunks))
+        final_retrieved_contexts = final_output.get("retrieved_contexts") or []
 
         metadata_dict = {
             "trace_id": resolved_tid,
@@ -295,6 +310,18 @@ async def chat_event_generator(
             yield format_sse("metadata", StreamMetadataEvent(**metadata_dict))
         except Exception:
             yield format_sse("metadata", metadata_dict)
+
+        # Trigger online evaluation asynchronously in the background
+        if resolved_tid:
+            asyncio.create_task(
+                run_online_evaluation_task(
+                    trace_id=resolved_tid,
+                    question=question,
+                    answer=final_answer,
+                    source_used=final_source_used,
+                    retrieved_contexts=final_retrieved_contexts,
+                )
+            )
 
         # Finalize successful query structured log
         logger.info(
