@@ -54,7 +54,7 @@
 |---|---|---|---|---|
 | **Ticket 01** | Decommission SQLite Audit Store | `app/services/audit.py`, `data/audit.db`, `app/main.py`, `app/api/routes.py`, `tests/test_audit_migration.py` | None | `completed` |
 | **Ticket 02** | Configuration Settings & Unit Cost Accounting | `app/core/config.py` | None | `completed` |
-| **Ticket 03** | Langfuse Prompt CMS Service & Fallback Catalog | `app/services/prompts.py`, `tests/test_prompts_cms.py` | Ticket 02 | `ready` |
+| **Ticket 03** | Langfuse Prompt CMS Service & Fallback Catalog | `app/services/prompts.py`, `tests/test_prompts_cms.py` | Ticket 02 | `completed` |
 | **Ticket 04** | Instrument Vector Retriever & Web Search Spans | `app/rag/fix_single_llm.py`, `app/rag/fix_single_jev.py` | Ticket 02 | `ready` |
 | **Ticket 05** | JEV Cost Accounting & Prompt Observation Linking | `app/rag/fix_single_jev.py` | Ticket 02, Ticket 03 | `ready` |
 | **Ticket 06** | Formalize Retrieved Contexts in Graph State | `app/rag/state.py`, `app/rag/fix_single_llm.py`, `app/rag/fix_single_jev.py` | None | `ready` |
@@ -140,9 +140,9 @@
   3. Implement `get_workflow_prompt(name: str) -> TextPromptClient | FallbackPrompt` using `client.get_prompt(name, cache_ttl_seconds=300, fallback=LOCAL_PROMPTS[name])`.
   4. Gracefully catch network or client errors and return `FallbackPrompt` without throwing exceptions.
 - **Acceptance Criteria:**
-  - [ ] `get_workflow_prompt` returns a prompt object with `.compile(...)` and `.version` attributes.
-  - [ ] When Langfuse is unreachable or `LANGFUSE_ENABLED=false`, `FallbackPrompt` compiles identical text to the current hardcoded strings.
-  - [ ] All 10 prompt keys in `LOCAL_PROMPTS` compile without errors when passed required variables.
+  - [x] `get_workflow_prompt` returns a prompt object with `.compile(...)` and `.version` attributes.
+  - [x] When Langfuse is unreachable or `LANGFUSE_ENABLED=false`, `FallbackPrompt` compiles identical text to the current hardcoded strings.
+  - [x] All 10 prompt keys in `LOCAL_PROMPTS` compile without errors when passed required variables.
 - **TDD Verification:**
   ```bash
   uv run pytest tests/test_prompts_cms.py
