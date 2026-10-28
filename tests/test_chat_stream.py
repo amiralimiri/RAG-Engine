@@ -16,7 +16,7 @@ from __future__ import annotations
 import asyncio
 import json
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest
@@ -178,6 +178,7 @@ def mock_telemetry_defaults(monkeypatch):
     monkeypatch.setattr("app.api.routes.get_langfuse_callback", lambda **kwargs: mock_handler)
     monkeypatch.setattr("app.api.routes.extract_trace_id", lambda handler: getattr(handler, "last_trace_id", "trace-default"))
     monkeypatch.setattr("app.api.routes.flush_telemetry", lambda: None)
+    monkeypatch.setattr("app.api.routes.run_online_evaluation_task", AsyncMock())
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -360,6 +361,69 @@ class TestWireEventSequence:
 
         # Verify callback flush invocation
         mock_handler.flush.assert_called()
+
+    async def test_streaming_triggers_online_evaluation_task(self, monkeypatch):
+        """Verify streaming chat completion dispatches run_online_evaluation_task with trace_id and contexts."""
+        mock_handler = get_mock_handler("trace-eval-stream-1")
+        monkeypatch.setattr("app.api.routes.get_langfuse_callback", lambda **kwargs: mock_handler)
+        monkeypatch.setattr("app.api.routes.extract_trace_id", lambda handler: "trace-eval-stream-1")
+
+        eval_task_called = asyncio.Event()
+        captured_kwargs = {}
+
+        async def fake_eval_task(**kwargs):
+            nonlocal captured_kwargs
+            captured_kwargs = kwargs
+            eval_task_called.set()
+
+        monkeypatch.setattr("app.api.routes.run_online_evaluation_task", fake_eval_task)
+
+        async def mock_events(*args, **kwargs):
+            yield {"event": "on_chain_start", "metadata": {"langgraph_node": "retrieve_kb"}, "data": {}}
+            yield {
+                "event": "on_chain_end",
+                "metadata": {"langgraph_node": "retrieve_kb"},
+                "data": {"output": {"retrieved_contexts": ["KB Context doc 1"]}},
+            }
+            yield {
+                "event": "on_chat_model_stream",
+                "metadata": {"langgraph_node": "generate_from_kb"},
+                "data": {"chunk": {"content": "Final streamed answer"}},
+            }
+            yield {
+                "event": "on_chain_end",
+                "metadata": {"langgraph_node": "generate_from_kb"},
+                "data": {
+                    "output": {
+                        "answer": "Final streamed answer",
+                        "source_used": "knowledge_base",
+                        "citations": [],
+                        "retrieved_contexts": ["KB Context doc 1"],
+                    }
+                },
+            }
+
+        mock_graph = MagicMock()
+        mock_graph.astream_events = mock_events
+        monkeypatch.setitem(WORKFLOW_GRAPHS, "fix_single_llm", mock_graph)
+
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as ac:
+            async with ac.stream(
+                "POST",
+                "/api/chat/stream",
+                json={"question": "Where is the documentation?", "workflow": "fix_single_llm"},
+            ) as resp:
+                assert resp.status_code == 200
+                _ = [line async for line in resp.aiter_lines()]
+
+        await asyncio.wait_for(eval_task_called.wait(), timeout=2.0)
+        assert captured_kwargs["trace_id"] == "trace-eval-stream-1"
+        assert captured_kwargs["question"] == "Where is the documentation?"
+        assert captured_kwargs["answer"] == "Final streamed answer"
+        assert captured_kwargs["source_used"] == "knowledge_base"
+        assert captured_kwargs["retrieved_contexts"] == ["KB Context doc 1"]
 
     async def test_non_streaming_fallback_node_emits_static_token(self, monkeypatch):
         """When reaching insufficient fallback node with static answer, an event: token is synthesized."""

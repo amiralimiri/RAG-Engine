@@ -69,7 +69,7 @@ def score_trace_faithfulness(
 ) -> Optional[float]:
     """Runs faithfulness evaluation via judge and scores the Langfuse trace."""
     client = get_langfuse_client()
-    if not client:
+    if not client or not question or not answer or not retrieved_contexts:
         return None
 
     try:
@@ -83,7 +83,10 @@ def score_trace_faithfulness(
             model=judge.llm,
             async_mode=False,
         )
-        metric.measure(test_case)
+        try:
+            metric.measure(test_case, _show_indicator=False)
+        except TypeError:
+            metric.measure(test_case)
         score_val = max(0.0, min(1.0, float(metric.score)))
         comment = getattr(metric, "reason", None) or "Evaluated via DeepEval LocalModel judge"
 
@@ -112,7 +115,7 @@ def score_trace_answer_relevancy(
 ) -> Optional[float]:
     """Runs answer relevancy evaluation via judge and scores the Langfuse trace."""
     client = get_langfuse_client()
-    if not client:
+    if not client or not question or not answer:
         return None
 
     try:
@@ -125,7 +128,10 @@ def score_trace_answer_relevancy(
             model=judge.llm,
             async_mode=False,
         )
-        metric.measure(test_case)
+        try:
+            metric.measure(test_case, _show_indicator=False)
+        except TypeError:
+            metric.measure(test_case)
         score_val = max(0.0, min(1.0, float(metric.score)))
         comment = getattr(metric, "reason", None) or "Evaluated via DeepEval LocalModel judge"
 

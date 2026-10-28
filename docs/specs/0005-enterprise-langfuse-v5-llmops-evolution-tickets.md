@@ -60,7 +60,7 @@
 | **Ticket 06** | Formalize Retrieved Contexts in Graph State | `app/rag/state.py`, `app/rag/fix_single_llm.py`, `app/rag/fix_single_jev.py` | None | `completed` |
 | **Ticket 07** | Asynchronous Online DeepEval Scoring Engine & Routes | `app/services/evaluation.py`, `app/api/routes.py`, `tests/test_online_evaluation.py` | Ticket 01, Ticket 02, Ticket 06 | `completed` |
 | **Ticket 08** | Benchmark Golden Dataset & Experiment Runner | `data/gold_benchmarks.json`, `evaluation/run_experiment.py`, `tests/test_experiment_runner.py` | Ticket 06 | `completed` |
-| **Ticket 09** | Comprehensive TDD & End-to-End Test Suite | `tests/test_token_cost_accounting.py`, `tests/test_chat_stream.py`, `tests/test_feedback_api.py`, `tests/test_e2e_observability.py` | Tickets 01–08 | `ready` |
+| **Ticket 09** | Comprehensive TDD & End-to-End Test Suite | `tests/test_token_cost_accounting.py`, `tests/test_chat_stream.py`, `tests/test_feedback_api.py`, `tests/test_e2e_observability.py` | Tickets 01–08 | `completed` |
 
 ---
 
@@ -292,9 +292,9 @@
   2. Clean up `tests/test_chat_stream.py`, `tests/test_feedback_api.py`, and `tests/test_e2e_observability.py` to remove legacy `write_audit` mocks.
   3. Execute full regression test suite confirming zero test failures.
 - **Acceptance Criteria:**
-  - [ ] All new tests (`test_prompts_cms.py`, `test_online_evaluation.py`, `test_experiment_runner.py`, `test_token_cost_accounting.py`) pass.
-  - [ ] Legacy tests execute with 0 failures and 0 references to `write_audit`.
-  - [ ] Total test count increases with 100% pass rate.
+  - [x] All new tests (`test_prompts_cms.py`, `test_online_evaluation.py`, `test_experiment_runner.py`, `test_token_cost_accounting.py`) pass.
+  - [x] Legacy tests execute with 0 failures and 0 references to `write_audit`.
+  - [x] Total test count increases with 100% pass rate.
 - **TDD Verification:**
   ```bash
   uv run pytest

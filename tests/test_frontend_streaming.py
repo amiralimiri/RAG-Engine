@@ -17,7 +17,7 @@ import json
 import subprocess
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi.testclient import TestClient
@@ -26,6 +26,12 @@ from app.api.routes import WORKFLOW_ASKS, WORKFLOW_GRAPHS
 from app.main import app
 
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+
+@pytest.fixture(autouse=True)
+def mock_online_evaluation_defaults(monkeypatch):
+    """Prevent unawaited background evaluation tasks during frontend streaming tests."""
+    monkeypatch.setattr("app.api.routes.run_online_evaluation_task", AsyncMock())
 
 
 @pytest.fixture

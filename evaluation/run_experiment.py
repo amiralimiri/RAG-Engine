@@ -135,11 +135,14 @@ def run_workflow_benchmark(
 
         # Faithfulness metric (only if retrieved contexts exist and source is not direct)
         faith_val = None
-        if source_used != "direct" and contexts:
+        if source_used != "direct" and contexts and answer:
             try:
                 tc = LLMTestCase(input=question, actual_output=answer, retrieval_context=contexts)
                 fm = FaithfulnessMetric(threshold=0.5, model=judge.llm, async_mode=False)
-                fm.measure(tc)
+                try:
+                    fm.measure(tc, _show_indicator=False)
+                except TypeError:
+                    fm.measure(tc)
                 faith_val = float(fm.score)
                 faithfulness_scores.append(faith_val)
             except Exception as exc:
@@ -147,14 +150,18 @@ def run_workflow_benchmark(
 
         # Answer relevancy metric
         rel_val = None
-        try:
-            tc = LLMTestCase(input=question, actual_output=answer)
-            arm = AnswerRelevancyMetric(threshold=0.5, model=judge.llm, async_mode=False)
-            arm.measure(tc)
-            rel_val = float(arm.score)
-            relevancy_scores.append(rel_val)
-        except Exception as exc:
-            logger.warning("Answer relevancy calculation error for question '%s': %s", question[:30], exc)
+        if answer:
+            try:
+                tc = LLMTestCase(input=question, actual_output=answer)
+                arm = AnswerRelevancyMetric(threshold=0.5, model=judge.llm, async_mode=False)
+                try:
+                    arm.measure(tc, _show_indicator=False)
+                except TypeError:
+                    arm.measure(tc)
+                rel_val = float(arm.score)
+                relevancy_scores.append(rel_val)
+            except Exception as exc:
+                logger.warning("Answer relevancy calculation error for question '%s': %s", question[:30], exc)
 
         # Submit evaluation scores to Langfuse trace if available
         if client and trace_id:
