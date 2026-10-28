@@ -28,6 +28,7 @@ def llm():
             base_url=settings.llm_base_url,
             api_key=settings.llm_api_key,
             temperature=0,
+            stream_usage=True,
         )
     return _llm
 

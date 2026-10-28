@@ -85,6 +85,14 @@ class TestJEVCostAccounting:
         assert kwargs["cost_details"]["output"] == expected_cost["output"]
         assert kwargs["cost_details"]["total"] == expected_cost["total"]
 
+        # Verify observation.update and observation.end are called to persist costs
+        mock_observation.update.assert_called_once_with(
+            usage_details=kwargs["usage_details"],
+            cost_details=kwargs["cost_details"],
+            output=output_text,
+        )
+        mock_observation.end.assert_called_once()
+
     def test_record_jev_generation_default_settings_cost(self, monkeypatch):
         """Verify cost calculation with default 0.0008 USD per 1k tokens."""
         mock_client = MagicMock()
@@ -382,3 +390,101 @@ class TestModuleDecoupling:
             elif isinstance(node, ast.ImportFrom):
                 assert node.module is not None
                 assert "fix_single_jev" not in node.module
+
+
+class TestChatOpenAIStreamUsage:
+    """Verifies stream_usage=True is enabled on ChatOpenAI instances across workflows."""
+
+    def test_fix_single_llm_has_stream_usage_enabled(self, monkeypatch):
+        from app.rag import fix_single_llm
+        fix_single_llm._llm = None
+        client = fix_single_llm.llm()
+        assert getattr(client, "stream_usage", None) is True
+
+    def test_fix_single_jev_has_stream_usage_enabled(self, monkeypatch):
+        from app.rag import fix_single_jev
+        fix_single_jev._llm = None
+        client = fix_single_jev.llm()
+        assert getattr(client, "stream_usage", None) is True
+
+
+class TestLLMCostAccounting:
+    """Verifies deterministic unit token cost calculation and Langfuse generation update for LLM calls."""
+
+    def test_extract_llm_token_counts_from_llm_output(self):
+        from app.core.telemetry import extract_llm_token_counts
+        from langchain_core.outputs import LLMResult
+
+        res = LLMResult(
+            generations=[],
+            llm_output={"token_usage": {"prompt_tokens": 120, "completion_tokens": 40, "total_tokens": 160}},
+        )
+        usage = extract_llm_token_counts(res)
+        assert usage == {"input": 120, "output": 40, "total": 160}
+
+    def test_extract_llm_token_counts_from_message_usage_metadata(self):
+        from app.core.telemetry import extract_llm_token_counts
+        from langchain_core.outputs import LLMResult, ChatGeneration
+        from langchain_core.messages import AIMessage
+
+        res = LLMResult(
+            generations=[[
+                ChatGeneration(message=AIMessage(
+                    content="test answer",
+                    usage_metadata={"input_tokens": 80, "output_tokens": 25, "total_tokens": 105},
+                ))
+            ]],
+        )
+        usage = extract_llm_token_counts(res)
+        assert usage == {"input": 80, "output": 25, "total": 105}
+
+    def test_calculate_llm_cost_details(self, monkeypatch):
+        from app.core.telemetry import calculate_llm_cost_details
+
+        s = get_settings()
+        monkeypatch.setattr(s, "llm_cost_per_1k_input_tokens", 0.0015)
+        monkeypatch.setattr(s, "llm_cost_per_1k_output_tokens", 0.0020)
+
+        # 1000 input tokens = $0.0015, 2000 output tokens = $0.0040, total = $0.0055
+        cost = calculate_llm_cost_details(1000, 2000)
+        assert cost["input"] == pytest.approx(0.0015)
+        assert cost["output"] == pytest.approx(0.0040)
+        assert cost["total"] == pytest.approx(0.0055)
+
+    def test_callback_handler_on_llm_end_updates_generation_cost(self, monkeypatch):
+        """Verifies LangfuseCallbackHandler updates generation observation with cost_details on LLM completion."""
+        import uuid
+        from langfuse.langchain import CallbackHandler
+        from app.core.telemetry import LangfuseCallbackHandler
+        from langchain_core.outputs import LLMResult, ChatGeneration
+        from langchain_core.messages import AIMessage
+
+        mock_obs = MagicMock()
+        handler = LangfuseCallbackHandler(public_key="test-key")
+        run_id = uuid.uuid4()
+        handler._runs[run_id] = mock_obs
+
+        res = LLMResult(
+            generations=[[
+                ChatGeneration(message=AIMessage(
+                    content="Hello world",
+                    usage_metadata={"input_tokens": 200, "output_tokens": 50, "total_tokens": 250},
+                ))
+            ]],
+        )
+
+        with patch.object(CallbackHandler, "on_llm_end"):
+            handler.on_llm_end(res, run_id=run_id)
+
+        assert mock_obs.update.called
+        update_call = mock_obs.update.call_args[1]
+        assert "cost_details" in update_call
+        assert update_call["usage_details"] == {"input": 200, "output": 50, "total": 250}
+
+        s = get_settings()
+        expected_input_cost = (200 * s.llm_cost_per_1k_input_tokens) / 1000.0
+        expected_output_cost = (50 * s.llm_cost_per_1k_output_tokens) / 1000.0
+        assert update_call["cost_details"]["input"] == pytest.approx(expected_input_cost)
+        assert update_call["cost_details"]["output"] == pytest.approx(expected_output_cost)
+        assert update_call["cost_details"]["total"] == pytest.approx(expected_input_cost + expected_output_cost)
+

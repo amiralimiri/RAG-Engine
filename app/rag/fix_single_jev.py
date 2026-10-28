@@ -31,6 +31,7 @@ def llm():
             base_url=settings.llm_base_url,
             api_key=settings.llm_api_key,
             temperature=0,
+            stream_usage=True,
         )
     return _llm
 
@@ -152,7 +153,15 @@ def _record_jev_generation(
                         obs_kwargs["metadata"]["prompt_name"] = prompt_name
             if trace_context:
                 obs_kwargs["trace_context"] = trace_context
-            client.start_observation(**obs_kwargs).end()
+            obs = client.start_observation(**obs_kwargs)
+            if hasattr(obs, "update"):
+                obs.update(
+                    usage_details=usage,
+                    cost_details=cost_details,
+                    output=output_text,
+                )
+            if hasattr(obs, "end"):
+                obs.end()
         elif hasattr(client, "generation"):
             gen_kwargs: dict[str, Any] = {
                 "name": name,

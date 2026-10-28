@@ -151,11 +151,16 @@ class TestGetWorkflowPrompt:
 class TestPromptAutoSeeding:
     """Verifies auto-seeding missing prompts into Langfuse Prompt CMS on 404 or fallback."""
 
-    def test_seed_prompt_calls_client_create_prompt(self, monkeypatch):
+    def test_seed_prompt_skips_create_when_prompt_already_exists(self, monkeypatch):
         from app.services import prompts
         prompts._seeded_prompts.clear()
 
         mock_client = MagicMock()
+        mock_existing = MagicMock(spec=TextPromptClient)
+        mock_existing.is_fallback = False
+        mock_existing.version = 3
+        mock_client.get_prompt.return_value = mock_existing
+
         mock_settings = MagicMock()
         mock_settings.langfuse_enabled = True
 
@@ -164,6 +169,33 @@ class TestPromptAutoSeeding:
 
         success = prompts.seed_prompt("rag:direct_answer")
         assert success is True
+        mock_client.get_prompt.assert_called_once_with(
+            name="rag:direct_answer",
+            label="production",
+            cache_ttl_seconds=0,
+        )
+        mock_client.create_prompt.assert_not_called()
+        assert "rag:direct_answer" in prompts._seeded_prompts
+
+    def test_seed_prompt_calls_create_when_not_found(self, monkeypatch):
+        from app.services import prompts
+        prompts._seeded_prompts.clear()
+
+        mock_client = MagicMock()
+        mock_client.get_prompt.side_effect = RuntimeError("404 LangfuseNotFoundError")
+        mock_settings = MagicMock()
+        mock_settings.langfuse_enabled = True
+
+        monkeypatch.setattr(prompts, "get_settings", lambda: mock_settings)
+        monkeypatch.setattr(prompts, "get_langfuse_client", lambda: mock_client)
+
+        success = prompts.seed_prompt("rag:direct_answer")
+        assert success is True
+        mock_client.get_prompt.assert_called_once_with(
+            name="rag:direct_answer",
+            label="production",
+            cache_ttl_seconds=0,
+        )
         mock_client.create_prompt.assert_called_once_with(
             name="rag:direct_answer",
             prompt=prompts.LOCAL_PROMPTS["rag:direct_answer"],
@@ -172,17 +204,21 @@ class TestPromptAutoSeeding:
         )
         assert "rag:direct_answer" in prompts._seeded_prompts
 
-        # Second call should be a no-op (idempotent per process)
+        # Second call should be a no-op (idempotent in-memory gate)
         mock_client.create_prompt.reset_mock()
+        mock_client.get_prompt.reset_mock()
         success2 = prompts.seed_prompt("rag:direct_answer")
         assert success2 is True
+        mock_client.get_prompt.assert_not_called()
         mock_client.create_prompt.assert_not_called()
 
-    def test_seed_all_prompts_seeds_all_ten_prompts(self, monkeypatch):
+    def test_seed_all_prompts_seeds_missing_prompts(self, monkeypatch):
         from app.services import prompts
         prompts._seeded_prompts.clear()
 
         mock_client = MagicMock()
+        # All 10 prompts missing on server initially
+        mock_client.get_prompt.side_effect = RuntimeError("404 NotFound")
         mock_settings = MagicMock()
         mock_settings.langfuse_enabled = True
 
@@ -194,6 +230,26 @@ class TestPromptAutoSeeding:
         assert all(results.values())
         assert mock_client.create_prompt.call_count == 10
 
+    def test_seed_all_prompts_skips_when_already_on_server(self, monkeypatch):
+        from app.services import prompts
+        prompts._seeded_prompts.clear()
+
+        mock_client = MagicMock()
+        mock_existing = MagicMock(spec=TextPromptClient)
+        mock_existing.is_fallback = False
+        mock_client.get_prompt.return_value = mock_existing
+
+        mock_settings = MagicMock()
+        mock_settings.langfuse_enabled = True
+
+        monkeypatch.setattr(prompts, "get_settings", lambda: mock_settings)
+        monkeypatch.setattr(prompts, "get_langfuse_client", lambda: mock_client)
+
+        results = prompts.seed_all_prompts()
+        assert len(results) == 10
+        assert all(results.values())
+        assert mock_client.create_prompt.call_count == 0
+
     def test_get_workflow_prompt_auto_seeds_when_fallback_returned(self, monkeypatch):
         from app.services import prompts
         prompts._seeded_prompts.clear()
@@ -201,7 +257,13 @@ class TestPromptAutoSeeding:
         mock_client = MagicMock()
         mock_fallback_client = MagicMock(spec=TextPromptClient)
         mock_fallback_client.is_fallback = True
-        mock_client.get_prompt.return_value = mock_fallback_client
+
+        def mock_get_prompt(name, **kwargs):
+            if kwargs.get("cache_ttl_seconds") == 0:
+                raise RuntimeError("404 NotFound")
+            return mock_fallback_client
+
+        mock_client.get_prompt.side_effect = mock_get_prompt
 
         mock_settings = MagicMock()
         mock_settings.langfuse_enabled = True
@@ -218,6 +280,26 @@ class TestPromptAutoSeeding:
             labels=["production"],
             type="text",
         )
+
+    def test_get_workflow_prompt_does_not_create_if_already_on_server(self, monkeypatch):
+        from app.services import prompts
+        prompts._seeded_prompts.clear()
+
+        mock_client = MagicMock()
+        mock_prompt = MagicMock(spec=TextPromptClient)
+        mock_prompt.is_fallback = False
+        mock_client.get_prompt.return_value = mock_prompt
+
+        mock_settings = MagicMock()
+        mock_settings.langfuse_enabled = True
+        mock_settings.langfuse_prompt_cache_ttl_seconds = 300
+
+        monkeypatch.setattr(prompts, "get_settings", lambda: mock_settings)
+        monkeypatch.setattr(prompts, "get_langfuse_client", lambda: mock_client)
+
+        prompt = prompts.get_workflow_prompt("rag:router:llm")
+        assert prompt is mock_prompt
+        mock_client.create_prompt.assert_not_called()
 
     def test_get_workflow_prompt_auto_seeds_on_404_exception(self, monkeypatch):
         from app.services import prompts

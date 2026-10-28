@@ -131,17 +131,45 @@ _seeded_prompts: set[str] = set()
 
 
 def seed_prompt(name: str) -> bool:
-    """Safely create/seed a canonical prompt into Langfuse Prompt CMS once per process."""
+    """Safely create/seed a canonical prompt into Langfuse Prompt CMS once per process.
+
+    Checks if the prompt already exists on the Langfuse server with label 'production'
+    before calling create_prompt to prevent creating duplicate prompt versions.
+    """
     if name in _seeded_prompts:
         return True
     settings = get_settings()
     if not settings.langfuse_enabled:
         return False
     client = get_langfuse_client()
-    if not client or not hasattr(client, "create_prompt"):
+    if not client:
         return False
     fallback_text = LOCAL_PROMPTS.get(name)
     if not fallback_text:
+        return False
+
+    # 1. Check if the prompt already exists on the Langfuse server without fallback
+    if hasattr(client, "get_prompt"):
+        try:
+            existing = client.get_prompt(
+                name=name,
+                label="production",
+                cache_ttl_seconds=0,
+            )
+            if existing is not None and not getattr(existing, "is_fallback", False):
+                _seeded_prompts.add(name)
+                logger.debug(
+                    "Prompt '%s' already exists in Langfuse Prompt CMS (version %s); skipping create_prompt",
+                    name,
+                    getattr(existing, "version", "unknown"),
+                )
+                return True
+        except Exception:
+            # Prompt does not exist on Langfuse server (e.g., 404 / NotFoundError); proceed to create
+            pass
+
+    # 2. Only call create_prompt if prompt does not exist on the server
+    if not hasattr(client, "create_prompt"):
         return False
 
     _seeded_prompts.add(name)
@@ -160,7 +188,7 @@ def seed_prompt(name: str) -> bool:
 
 
 def seed_all_prompts() -> dict[str, bool]:
-    """Seed all 10 canonical prompts into Langfuse Prompt CMS if enabled."""
+    """Seed all 10 canonical prompts into Langfuse Prompt CMS if not already present."""
     results: dict[str, bool] = {}
     settings = get_settings()
     if not settings.langfuse_enabled:
@@ -169,24 +197,8 @@ def seed_all_prompts() -> dict[str, bool]:
     if not client or not hasattr(client, "create_prompt"):
         return results
 
-    for name, fallback_text in LOCAL_PROMPTS.items():
-        if name in _seeded_prompts:
-            results[name] = True
-            continue
-        try:
-            client.create_prompt(
-                name=name,
-                prompt=fallback_text,
-                labels=["production"],
-                type="text",
-            )
-            _seeded_prompts.add(name)
-            results[name] = True
-            logger.info("Seeded prompt '%s' into Langfuse Prompt CMS", name)
-        except Exception as exc:
-            _seeded_prompts.add(name)
-            results[name] = False
-            logger.warning("Failed to seed prompt '%s' into Langfuse: %s", name, exc)
+    for name in LOCAL_PROMPTS:
+        results[name] = seed_prompt(name)
     return results
 
 
@@ -204,7 +216,7 @@ def get_workflow_prompt(name: str) -> TextPromptClient | FallbackPrompt:
                 cache_ttl_seconds=settings.langfuse_prompt_cache_ttl_seconds,
                 fallback=fallback_text,
             )
-            # If the returned prompt is a fallback or has fallback flag, auto-seed to Langfuse
+            # If the returned prompt is a fallback or has fallback flag, safely ensure prompt is seeded if missing
             if getattr(prompt, "is_fallback", False) is True:
                 seed_prompt(name)
             return prompt

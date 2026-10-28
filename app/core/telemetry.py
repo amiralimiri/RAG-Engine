@@ -13,6 +13,66 @@ logger = logging.getLogger(__name__)
 _langfuse_client: Optional[Langfuse] = None
 
 
+def extract_llm_token_counts(response: Any) -> dict[str, int]:
+    """Extract input, output, and total token counts from an LLMResult across providers."""
+    input_tokens = 0
+    output_tokens = 0
+    total_tokens = 0
+
+    llm_output = getattr(response, "llm_output", None)
+    if isinstance(llm_output, dict):
+        usage = llm_output.get("token_usage") or llm_output.get("usage")
+        if isinstance(usage, dict):
+            input_tokens = usage.get("prompt_tokens") or usage.get("input_tokens") or 0
+            output_tokens = usage.get("completion_tokens") or usage.get("output_tokens") or 0
+            total_tokens = usage.get("total_tokens") or (input_tokens + output_tokens)
+
+    if not (input_tokens or output_tokens):
+        generations = getattr(response, "generations", None) or []
+        for gen_list in generations:
+            for gen in gen_list:
+                msg = getattr(gen, "message", None)
+                usage_meta = getattr(msg, "usage_metadata", None)
+                if isinstance(usage_meta, dict):
+                    input_tokens = usage_meta.get("input_tokens") or usage_meta.get("prompt_tokens") or 0
+                    output_tokens = usage_meta.get("output_tokens") or usage_meta.get("completion_tokens") or 0
+                    total_tokens = usage_meta.get("total_tokens") or (input_tokens + output_tokens)
+                    if input_tokens or output_tokens:
+                        break
+                gen_info = getattr(gen, "generation_info", None)
+                if isinstance(gen_info, dict) and "usage_metadata" in gen_info:
+                    um = gen_info["usage_metadata"]
+                    if isinstance(um, dict):
+                        input_tokens = um.get("input_tokens") or um.get("prompt_tokens") or 0
+                        output_tokens = um.get("output_tokens") or um.get("completion_tokens") or 0
+                        total_tokens = um.get("total_tokens") or (input_tokens + output_tokens)
+                        if input_tokens or output_tokens:
+                            break
+            if input_tokens or output_tokens:
+                break
+
+    if total_tokens == 0:
+        total_tokens = input_tokens + output_tokens
+
+    return {
+        "input": int(input_tokens),
+        "output": int(output_tokens),
+        "total": int(total_tokens),
+    }
+
+
+def calculate_llm_cost_details(input_tokens: int, output_tokens: int) -> dict[str, float]:
+    """Calculate deterministic USD cost details for LLM token usage using configured unit prices."""
+    settings = get_settings()
+    input_cost = (input_tokens * settings.llm_cost_per_1k_input_tokens) / 1000.0
+    output_cost = (output_tokens * settings.llm_cost_per_1k_output_tokens) / 1000.0
+    return {
+        "input": input_cost,
+        "output": output_cost,
+        "total": input_cost + output_cost,
+    }
+
+
 class LangfuseCallbackHandler(CallbackHandler):
     """Langfuse v5 CallbackHandler extended with workflow trace metadata and tags."""
 
@@ -65,6 +125,35 @@ class LangfuseCallbackHandler(CallbackHandler):
             parent_run_id=parent_run_id,
             tags=tags,
             metadata=metadata,
+            **kwargs,
+        )
+
+    def on_llm_end(
+        self,
+        response: Any,
+        *,
+        run_id: Any,
+        parent_run_id: Optional[Any] = None,
+        **kwargs: Any,
+    ) -> Any:
+        """Inject deterministic LLM unit token costs into Langfuse generation observation before completion."""
+        try:
+            generation = self._runs.get(run_id)
+            if generation is not None:
+                usage = extract_llm_token_counts(response)
+                cost_details = calculate_llm_cost_details(usage["input"], usage["output"])
+                update_kwargs: dict[str, Any] = {"cost_details": cost_details}
+                if usage["total"] > 0:
+                    update_kwargs["usage_details"] = usage
+                if hasattr(generation, "update"):
+                    generation.update(**update_kwargs)
+        except Exception as exc:
+            logger.debug("Failed to attach LLM cost details: %s", exc)
+
+        return super().on_llm_end(
+            response,
+            run_id=run_id,
+            parent_run_id=parent_run_id,
             **kwargs,
         )
 
