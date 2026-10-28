@@ -200,7 +200,11 @@ def route_after_router(state: AgentState) -> Literal["retrieve_kb", "direct_answ
 def retrieve_kb(state: AgentState, config: RunnableConfig | None = None):
     structlog.contextvars.bind_contextvars(step="retrieve_kb")
     docs = get_retriever().invoke(state["current_query"], config=config)
-    return {"kb_docs": docs, "trace": [f"Private KB retrieval → {len(docs)} chunks"] }
+    return {
+        "kb_docs": docs,
+        "retrieved_contexts": [d.page_content for d in docs],
+        "trace": [f"Private KB retrieval → {len(docs)} chunks"],
+    }
 
 
 ########################## Node 3 — Grade Private KB Evidence ##########################
@@ -352,6 +356,7 @@ def search_web(state: AgentState, config: RunnableConfig | None = None):
     structlog.contextvars.bind_contextvars(step="search_web")
     result = web_search_tool().invoke({"query": state["current_query"]}, config=config)
     lines, citations = [], []
+    web_contexts = []
     if isinstance(result, dict):
         if result.get("answer"):
             lines.append("Search answer: " + result["answer"])
@@ -359,12 +364,15 @@ def search_web(state: AgentState, config: RunnableConfig | None = None):
             title, url, content = item.get("title", ""), item.get("url", ""), item.get("content", "")
             lines.append(f"Title: {title}\nURL: {url}\nContent: {content}")
             citations.append({"title": title or url, "url": url, "type": "web"})
+            web_contexts.append(f"Title: {title}\nURL: {url}\nContent: {content}")
     else:
         lines.append(str(result))
+        web_contexts.append(str(result))
     return {
         "web_results": "\n\n".join(lines),
         "citations": citations,
         "source_used": "web",
+        "retrieved_contexts": web_contexts,
         "trace": ["Web fallback → Tavily search"],
     }
 
@@ -561,7 +569,16 @@ async def generate_from_kb(state: AgentState):
         if src not in seen:
             seen.add(src)
             citations.append({"title": src.split("/")[-1], "url": "", "type": "private_kb"})
-    return {"answer": answer, "source_used": "vectorstore", "citations": citations, "trace": ["Answer generation → PRIVATE KB"] }
+    retrieved_contexts = state.get("retrieved_contexts")
+    if retrieved_contexts is None:
+        retrieved_contexts = [d.page_content for d in state.get("kb_docs", [])]
+    return {
+        "answer": answer,
+        "source_used": "vectorstore",
+        "citations": citations,
+        "retrieved_contexts": retrieved_contexts,
+        "trace": ["Answer generation → PRIVATE KB"],
+    }
 
 
 ########################## Node 8 — Generate from Web Search ##########################
@@ -575,7 +592,12 @@ async def generate_from_web(state: AgentState):
     )
     response = await llm().ainvoke(prompt)
     answer = response.content if hasattr(response, "content") else str(response)
-    return {"answer": answer, "source_used": "web_search", "trace": ["Answer generation → WEB SEARCH"] }
+    return {
+        "answer": answer,
+        "source_used": "web_search",
+        "retrieved_contexts": state.get("retrieved_contexts", []),
+        "trace": ["Answer generation → WEB SEARCH"],
+    }
 
 
 ########################## Node 9 — Direct Answer ##########################
@@ -586,7 +608,12 @@ async def direct_answer(state: AgentState):
     prompt = prompt_obj.compile(question=state["question"])
     response = await llm().ainvoke(prompt)
     answer = response.content if hasattr(response, "content") else str(response)
-    return {"answer": answer, "source_used": "direct", "trace": ["Direct response → no retrieval"] }
+    return {
+        "answer": answer,
+        "source_used": "direct",
+        "retrieved_contexts": [],
+        "trace": ["Direct response → no retrieval"],
+    }
 
 
 ########################## Node 10 — Insufficient Evidence Answer ##########################
@@ -596,6 +623,7 @@ def insufficient(state: AgentState):
     return {
         "answer": "I couldn't find enough reliable evidence in the company knowledge base or external search to answer confidently. Please contact the IT help desk or provide more details.",
         "source_used": "insufficient_evidence",
+        "retrieved_contexts": [],
         "trace": ["Stopped → insufficient reliable evidence"],
     }
 
@@ -681,6 +709,7 @@ def ask(
         "retry_count": 0,
         "trace": [],
         "citations": [],
+        "retrieved_contexts": [],
     }
     if extracted_tid:
         initial["trace_id"] = extracted_tid

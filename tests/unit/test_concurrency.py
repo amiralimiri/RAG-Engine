@@ -21,6 +21,22 @@ async def test_run_async_safely_inside_running_loop():
     assert res == "result: hello"
 
 
+def test_run_async_safely_propagates_contextvars():
+    """Contextvars bound on the caller thread must propagate into run_async_safely."""
+    import contextvars
+    import structlog
+
+    structlog.contextvars.bind_contextvars(request_id="req-test-safe", step="test_step")
+
+    async def sample_coro() -> dict:
+        return structlog.contextvars.get_contextvars()
+
+    res = run_async_safely(sample_coro)
+    assert res.get("request_id") == "req-test-safe"
+    assert res.get("step") == "test_step"
+
+
+
 def test_wrap_safe_invoke():
     mock_graph = MagicMock()
 

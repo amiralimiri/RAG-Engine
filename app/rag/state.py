@@ -23,3 +23,4 @@ class AgentState(TypedDict):
     trace: Annotated[List[str], operator.add]
     citations: List[dict]
     trace_id: NotRequired[str]
+    retrieved_contexts: NotRequired[list[str]]

@@ -57,7 +57,7 @@
 | **Ticket 03** | Langfuse Prompt CMS Service & Fallback Catalog | `app/services/prompts.py`, `tests/test_prompts_cms.py` | Ticket 02 | `completed` |
 | **Ticket 04** | Instrument Vector Retriever & Web Search Spans | `app/rag/fix_single_llm.py`, `app/rag/fix_single_jev.py` | Ticket 02 | `completed` |
 | **Ticket 05** | JEV Cost Accounting & Prompt Observation Linking | `app/rag/fix_single_jev.py` | Ticket 02, Ticket 03 | `completed` |
-| **Ticket 06** | Formalize Retrieved Contexts in Graph State | `app/rag/state.py`, `app/rag/fix_single_llm.py`, `app/rag/fix_single_jev.py` | None | `ready` |
+| **Ticket 06** | Formalize Retrieved Contexts in Graph State | `app/rag/state.py`, `app/rag/fix_single_llm.py`, `app/rag/fix_single_jev.py` | None | `completed` |
 | **Ticket 07** | Asynchronous Online DeepEval Scoring Engine & Routes | `app/services/evaluation.py`, `app/api/routes.py`, `tests/test_online_evaluation.py` | Ticket 01, Ticket 02, Ticket 06 | `ready` |
 | **Ticket 08** | Benchmark Golden Dataset & Experiment Runner | `data/gold_benchmarks.json`, `evaluation/run_experiment.py`, `tests/test_experiment_runner.py` | Ticket 06 | `ready` |
 | **Ticket 09** | Comprehensive TDD & End-to-End Test Suite | `tests/test_token_cost_accounting.py`, `tests/test_chat_stream.py`, `tests/test_feedback_api.py`, `tests/test_e2e_observability.py` | Tickets 01–08 | `ready` |
@@ -210,9 +210,9 @@
   3. In `search_web`, append web search snippets (`Title: ...\nContent: ...`) to `retrieved_contexts`.
   4. In `ask()` for both `fix_single_llm.py` and `fix_single_jev.py`, return `retrieved_contexts` in the result dictionary.
 - **Acceptance Criteria:**
-  - [ ] `ask()` returns `"retrieved_contexts": [...]` containing raw chunk strings for KB and Web answers.
-  - [ ] When route is direct, `"retrieved_contexts"` is empty list `[]`.
-  - [ ] Both workflows exhibit identical return dictionary structures for retrieved contexts.
+  - [x] `ask()` returns `"retrieved_contexts": [...]` containing raw chunk strings for KB and Web answers.
+  - [x] When route is direct, `"retrieved_contexts"` is empty list `[]`.
+  - [x] Both workflows exhibit identical return dictionary structures for retrieved contexts.
 - **TDD Verification:**
   ```bash
   uv run python -c "from app.rag import fix_single_llm, fix_single_jev; r1 = fix_single_llm.ask('hi'); r2 = fix_single_jev.ask('hi'); assert 'retrieved_contexts' in r1 and 'retrieved_contexts' in r2"

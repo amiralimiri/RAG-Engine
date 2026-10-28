@@ -5,29 +5,48 @@ from __future__ import annotations
 import asyncio
 import concurrent.futures
 import contextvars
+import threading
 from typing import Any, Callable
+
+_bg_loop: asyncio.AbstractEventLoop | None = None
+_bg_thread: threading.Thread | None = None
+_bg_lock = threading.Lock()
+
+
+def _get_background_loop() -> asyncio.AbstractEventLoop:
+    """Return a dedicated background event loop running on a daemon thread.
+
+    Using a persistent background event loop prevents issues where async HTTP client connection pools
+    (such as httpx / langchain-openai cached clients) are tied to a closed event loop when
+    multiple sync callers run sequentially via asyncio.run().
+    """
+    global _bg_loop, _bg_thread
+    with _bg_lock:
+        if _bg_loop is None or not _bg_loop.is_running():
+            _bg_loop = asyncio.new_event_loop()
+            _bg_thread = threading.Thread(target=_bg_loop.run_forever, daemon=True)
+            _bg_thread.start()
+        return _bg_loop
 
 
 def run_async_safely(coro_fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
     """Execute an async coroutine/callable synchronously and safely.
 
-    If an event loop is already running in the current thread (e.g. inside FastAPI
-    or pytest-asyncio), execution is dispatched to a single-worker ThreadPoolExecutor
-    with copied contextvars to prevent 'RuntimeError: This event loop is already running'.
-    Otherwise, asyncio.run is called directly.
+    If called from any thread (with or without an active event loop), execution is dispatched
+    to a persistent background event loop with caller contextvars propagated to prevent
+    event loop collision, httpx connection pool closure, and contextvar loss.
     """
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        loop = None
+    loop = _get_background_loop()
+    ctx = contextvars.copy_context()
 
-    if loop and loop.is_running():
-        ctx = contextvars.copy_context()
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-            return pool.submit(
-                ctx.run, lambda: asyncio.run(coro_fn(*args, **kwargs))
-            ).result()
-    return asyncio.run(coro_fn(*args, **kwargs))
+    async def _runner() -> Any:
+        return await coro_fn(*args, **kwargs)
+
+    def _submit() -> concurrent.futures.Future[Any]:
+        return asyncio.run_coroutine_threadsafe(ctx.run(_runner), loop)
+
+    fut = _submit()
+    return fut.result()
 
 
 def wrap_safe_invoke(compiled_graph: Any) -> Any:
@@ -39,3 +58,4 @@ def wrap_safe_invoke(compiled_graph: Any) -> Any:
 
     compiled_graph.invoke = _safe_invoke  # type: ignore[assignment]
     return compiled_graph
+
