@@ -227,6 +227,8 @@ def test_jev_nodes_emit_generation_metadata(monkeypatch):
     assert obs_call_args["input"] == "How to reset VPN?"
     assert obs_call_args["output"] == "kb"
     assert obs_call_args["usage_details"]["total"] >= 2
+    assert "cost_details" in obs_call_args
+    assert obs_call_args["cost_details"]["total"] > 0
     mock_observation.end.assert_called_once()
 
     # Test grade_kb_jev
@@ -242,6 +244,8 @@ def test_jev_nodes_emit_generation_metadata(monkeypatch):
     assert obs_call_args2["name"] == "jev_kb_grader"
     assert obs_call_args2["as_type"] == "generation"
     assert obs_call_args2["output"] == "good"
+    assert "cost_details" in obs_call_args2
+    assert obs_call_args2["cost_details"]["total"] > 0
     mock_observation.end.assert_called_once()
 
 

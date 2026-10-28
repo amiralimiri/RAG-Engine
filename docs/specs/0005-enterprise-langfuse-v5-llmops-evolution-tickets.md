@@ -56,7 +56,7 @@
 | **Ticket 02** | Configuration Settings & Unit Cost Accounting | `app/core/config.py` | None | `completed` |
 | **Ticket 03** | Langfuse Prompt CMS Service & Fallback Catalog | `app/services/prompts.py`, `tests/test_prompts_cms.py` | Ticket 02 | `completed` |
 | **Ticket 04** | Instrument Vector Retriever & Web Search Spans | `app/rag/fix_single_llm.py`, `app/rag/fix_single_jev.py` | Ticket 02 | `completed` |
-| **Ticket 05** | JEV Cost Accounting & Prompt Observation Linking | `app/rag/fix_single_jev.py` | Ticket 02, Ticket 03 | `ready` |
+| **Ticket 05** | JEV Cost Accounting & Prompt Observation Linking | `app/rag/fix_single_jev.py` | Ticket 02, Ticket 03 | `completed` |
 | **Ticket 06** | Formalize Retrieved Contexts in Graph State | `app/rag/state.py`, `app/rag/fix_single_llm.py`, `app/rag/fix_single_jev.py` | None | `ready` |
 | **Ticket 07** | Asynchronous Online DeepEval Scoring Engine & Routes | `app/services/evaluation.py`, `app/api/routes.py`, `tests/test_online_evaluation.py` | Ticket 01, Ticket 02, Ticket 06 | `ready` |
 | **Ticket 08** | Benchmark Golden Dataset & Experiment Runner | `data/gold_benchmarks.json`, `evaluation/run_experiment.py`, `tests/test_experiment_runner.py` | Ticket 06 | `ready` |
@@ -186,9 +186,9 @@
   3. Pass `cost_details` and `usage_details` to `client.start_observation(as_type="generation", ...)`.
   4. In `route_question_jev`, `grade_kb_jev`, and `grade_web_jev`, obtain the prompt via `get_workflow_prompt(...)` and pass it into `_record_jev_generation()`.
 - **Acceptance Criteria:**
-  - [ ] JEV generation observations include both `usage_details` and `cost_details` in USD.
-  - [ ] Observations are linked to the active prompt version when `prompt_client` is supplied.
-  - [ ] Graph execution succeeds when `LANGFUSE_ENABLED=false` without calculation errors.
+  - [x] JEV generation observations include both `usage_details` and `cost_details` in USD.
+  - [x] Observations are linked to the active prompt version when `prompt_client` is supplied.
+  - [x] Graph execution succeeds when `LANGFUSE_ENABLED=false` without calculation errors.
 - **TDD Verification:**
   ```bash
   uv run pytest tests/ -k "test_jev or test_chat"
