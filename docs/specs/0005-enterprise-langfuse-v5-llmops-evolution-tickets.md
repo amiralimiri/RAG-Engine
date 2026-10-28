@@ -59,7 +59,7 @@
 | **Ticket 05** | JEV Cost Accounting & Prompt Observation Linking | `app/rag/fix_single_jev.py` | Ticket 02, Ticket 03 | `completed` |
 | **Ticket 06** | Formalize Retrieved Contexts in Graph State | `app/rag/state.py`, `app/rag/fix_single_llm.py`, `app/rag/fix_single_jev.py` | None | `completed` |
 | **Ticket 07** | Asynchronous Online DeepEval Scoring Engine & Routes | `app/services/evaluation.py`, `app/api/routes.py`, `tests/test_online_evaluation.py` | Ticket 01, Ticket 02, Ticket 06 | `completed` |
-| **Ticket 08** | Benchmark Golden Dataset & Experiment Runner | `data/gold_benchmarks.json`, `evaluation/run_experiment.py`, `tests/test_experiment_runner.py` | Ticket 06 | `ready` |
+| **Ticket 08** | Benchmark Golden Dataset & Experiment Runner | `data/gold_benchmarks.json`, `evaluation/run_experiment.py`, `tests/test_experiment_runner.py` | Ticket 06 | `completed` |
 | **Ticket 09** | Comprehensive TDD & End-to-End Test Suite | `tests/test_token_cost_accounting.py`, `tests/test_chat_stream.py`, `tests/test_feedback_api.py`, `tests/test_e2e_observability.py` | Tickets 01–08 | `ready` |
 
 ---
@@ -268,9 +268,9 @@
      - Prints a comparative summary table in the terminal.
   3. Write unit tests in `tests/test_experiment_runner.py` validating the JSON benchmark schema and seeding logic.
 - **Acceptance Criteria:**
-  - [ ] `data/gold_benchmarks.json` contains valid JSON with exactly 10 cases conforming to the benchmark schema.
-  - [ ] `evaluation/run_experiment.py --help` runs cleanly.
-  - [ ] The experiment runner can execute against mock or live workflows and output formatted benchmark metrics.
+  - [x] `data/gold_benchmarks.json` contains valid JSON with exactly 10 cases conforming to the benchmark schema.
+  - [x] `evaluation/run_experiment.py --help` runs cleanly.
+  - [x] The experiment runner can execute against mock or live workflows and output formatted benchmark metrics.
 - **TDD Verification:**
   ```bash
   uv run pytest tests/test_experiment_runner.py

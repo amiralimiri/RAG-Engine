@@ -1,0 +1,82 @@
+[
+  {
+    "id": "tc-01-greeting",
+    "input": "Hello! Good morning, how can you help me today?",
+    "expected_output": "Warm greeting offering enterprise IT support assistance.",
+    "expected_route": "direct",
+    "expected_source": "direct",
+    "category": "direct_conversation"
+  },
+  {
+    "id": "tc-02-kb-vpn-pulse",
+    "input": "How do I configure Pulse Secure VPN on my corporate MacBook?",
+    "expected_output": "Install Pulse Secure from Self Service portal, connect to vpn.corp.internal, authenticate with corporate SSO and MFA.",
+    "expected_route": "kb",
+    "expected_source": "vectorstore",
+    "category": "private_kb_retrieval"
+  },
+  {
+    "id": "tc-03-kb-password-reset",
+    "input": "Where do I go to change my Active Directory domain password?",
+    "expected_output": "Navigate to identity.corp.internal/self-service and follow password complexity requirements.",
+    "expected_route": "kb",
+    "expected_source": "vectorstore",
+    "category": "private_kb_retrieval"
+  },
+  {
+    "id": "tc-04-kb-mfa-token",
+    "input": "I lost my phone with Okta Verify. How can I regain access to corporate apps?",
+    "expected_output": "Contact the IT Service Desk directly or visit the in-person Tech Bar for identity verification and temporary bypass code.",
+    "expected_route": "kb",
+    "expected_source": "vectorstore",
+    "category": "private_kb_retrieval"
+  },
+  {
+    "id": "tc-05-kb-guest-wifi",
+    "input": "What is the procedure for granting temporary Wi-Fi access to an external vendor visiting next Tuesday?",
+    "expected_output": "Sponsor a guest account via guest-wifi.corp.internal with visitor email and department cost center.",
+    "expected_route": "kb",
+    "expected_source": "vectorstore",
+    "category": "private_kb_retrieval"
+  },
+  {
+    "id": "tc-06-web-docker-error",
+    "input": "How do I fix Docker error 'failed to solve with frontend dockerfile.v0' on Ubuntu 24.04?",
+    "expected_output": "Enable BuildKit with DOCKER_BUILDKIT=1 or update Docker daemon configuration.",
+    "expected_route": "kb",
+    "expected_source": "web_search",
+    "category": "web_fallback"
+  },
+  {
+    "id": "tc-07-web-python-uv",
+    "input": "What is the command to create an isolated virtual environment and add dependencies using the astral uv CLI tool?",
+    "expected_output": "Use 'uv venv' to create the virtual environment and 'uv add <package>' to install dependencies.",
+    "expected_route": "kb",
+    "expected_source": "web_search",
+    "category": "web_fallback"
+  },
+  {
+    "id": "tc-08-rewrite-printer-vague",
+    "input": "Office printer is broken and won't print my PDF.",
+    "expected_output": "Clear print spooler, check paper tray status, or verify connection to printserver.corp.internal.",
+    "expected_route": "kb",
+    "expected_source": "vectorstore",
+    "category": "query_rewrite"
+  },
+  {
+    "id": "tc-09-insufficient-alien",
+    "input": "What is the corporate travel reimbursement policy for interplanetary flights to Alpha Centauri?",
+    "expected_output": "Insufficient evidence found in company knowledge base or web search. Please contact IT/HR help desk.",
+    "expected_route": "kb",
+    "expected_source": "insufficient_evidence",
+    "category": "insufficient_evidence"
+  },
+  {
+    "id": "tc-10-direct-farewell",
+    "input": "Thanks, that solved my issue. Have a great day!",
+    "expected_output": "You're welcome! Feel free to reach out if you need further IT assistance.",
+    "expected_route": "direct",
+    "expected_source": "direct",
+    "category": "direct_conversation"
+  }
+]
