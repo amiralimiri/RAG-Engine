@@ -178,24 +178,43 @@ async def run_online_evaluation_task(
 
     contexts = retrieved_contexts or []
 
+    async def _eval_faithfulness() -> None:
+        try:
+            await run_in_threadpool(
+                score_trace_faithfulness,
+                trace_id=trace_id,
+                question=question,
+                answer=answer,
+                retrieved_contexts=contexts,
+            )
+        except Exception as exc:
+            logger.warning(
+                "Faithfulness evaluation failed for trace %s: %s",
+                trace_id,
+                exc,
+            )
+
+    async def _eval_answer_relevancy() -> None:
+        try:
+            await run_in_threadpool(
+                score_trace_answer_relevancy,
+                trace_id=trace_id,
+                question=question,
+                answer=answer,
+            )
+        except Exception as exc:
+            logger.warning(
+                "Answer relevancy evaluation failed for trace %s: %s",
+                trace_id,
+                exc,
+            )
+
     async def _evaluate() -> None:
+        tasks = []
         # Evaluate Faithfulness only when retrieval took place and context is present
         if "faithfulness" in settings.eval_metrics:
             if source_used != "direct" and contexts:
-                try:
-                    await run_in_threadpool(
-                        score_trace_faithfulness,
-                        trace_id=trace_id,
-                        question=question,
-                        answer=answer,
-                        retrieved_contexts=contexts,
-                    )
-                except Exception as exc:
-                    logger.warning(
-                        "Faithfulness evaluation failed for trace %s: %s",
-                        trace_id,
-                        exc,
-                    )
+                tasks.append(_eval_faithfulness())
             else:
                 logger.debug(
                     "Skipping faithfulness for direct or empty context trace %s",
@@ -204,19 +223,10 @@ async def run_online_evaluation_task(
 
         # Evaluate Answer Relevancy
         if "answer_relevancy" in settings.eval_metrics:
-            try:
-                await run_in_threadpool(
-                    score_trace_answer_relevancy,
-                    trace_id=trace_id,
-                    question=question,
-                    answer=answer,
-                )
-            except Exception as exc:
-                logger.warning(
-                    "Answer relevancy evaluation failed for trace %s: %s",
-                    trace_id,
-                    exc,
-                )
+            tasks.append(_eval_answer_relevancy())
+
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
 
     try:
         timeout = settings.eval_timeout_seconds if settings.eval_timeout_seconds > 0 else None

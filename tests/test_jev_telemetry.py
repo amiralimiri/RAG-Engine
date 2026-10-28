@@ -281,3 +281,78 @@ def test_jev_nodes_emit_generation_with_trace_context(monkeypatch):
     assert mock_client.start_observation.called
     obs_call_args = mock_client.start_observation.call_args[1]
     assert obs_call_args["trace_context"] == {"trace_id": "trace-root-999"}
+
+
+def test_jev_nodes_emit_generation_with_trace_context_from_contextvars(monkeypatch):
+    """When state has no trace_id, _record_jev_generation pulls active trace_id from structlog contextvars."""
+    import structlog
+    structlog.contextvars.bind_contextvars(trace_id="ctx-trace-abc-123")
+
+    mock_jev = MagicMock()
+    mock_jev.invoke.return_value.choices = {"route": MagicMock(choice="kb")}
+    monkeypatch.setattr(fix_single_jev, "jev", lambda: mock_jev)
+
+    mock_client = MagicMock()
+    mock_obs = MagicMock()
+    mock_client.start_observation.return_value = mock_obs
+    monkeypatch.setattr(fix_single_jev, "get_langfuse_client", lambda: mock_client)
+
+    state = {
+        "question": "How to reset VPN?",
+        "current_query": "",
+        "kb_docs": [],
+        "web_results": "",
+        "kb_grade": "",
+        "web_grade": "",
+        "answer": "",
+        "source_used": "",
+        "retry_count": 0,
+        "trace": [],
+        "citations": [],
+    }
+    fix_single_jev.route_question_jev(state)
+    obs_args = mock_client.start_observation.call_args[1]
+    assert obs_args["trace_context"] == {"trace_id": "ctx-trace-abc-123"}
+
+
+def test_jev_nodes_emit_generation_with_trace_context_from_config(monkeypatch):
+    """When state has no trace_id, _record_jev_generation extracts trace_id from config callbacks or metadata."""
+    import structlog
+    structlog.contextvars.unbind_contextvars("trace_id")
+
+    mock_jev = MagicMock()
+    mock_jev.invoke.return_value.choices = {"route": MagicMock(choice="kb")}
+    monkeypatch.setattr(fix_single_jev, "jev", lambda: mock_jev)
+
+    mock_client = MagicMock()
+    mock_obs = MagicMock()
+    mock_client.start_observation.return_value = mock_obs
+    monkeypatch.setattr(fix_single_jev, "get_langfuse_client", lambda: mock_client)
+
+    state = {
+        "question": "How to reset VPN?",
+        "current_query": "",
+        "kb_docs": [],
+        "web_results": "",
+        "kb_grade": "",
+        "web_grade": "",
+        "answer": "",
+        "source_used": "",
+        "retry_count": 0,
+        "trace": [],
+        "citations": [],
+    }
+
+    # 1. via config metadata
+    fix_single_jev.route_question_jev(state, config={"metadata": {"trace_id": "meta-trace-456"}})
+    obs_args = mock_client.start_observation.call_args[1]
+    assert obs_args["trace_context"] == {"trace_id": "meta-trace-456"}
+
+    # 2. via config callback handler
+    mock_client.start_observation.reset_mock()
+    mock_handler = MagicMock()
+    mock_handler.last_trace_id = "handler-trace-789"
+    fix_single_jev.route_question_jev(state, config={"callbacks": [mock_handler]})
+    obs_args2 = mock_client.start_observation.call_args[1]
+    assert obs_args2["trace_context"] == {"trace_id": "handler-trace-789"}
+

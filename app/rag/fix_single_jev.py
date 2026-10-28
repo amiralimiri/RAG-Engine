@@ -95,14 +95,32 @@ def _record_jev_generation(
     output_text: str,
     trace_id: str | None = None,
     prompt_client: Any | None = None,
+    config: RunnableConfig | None = None,
 ) -> None:
     try:
         client = get_langfuse_client()
         if not client:
             return
         current_settings = get_settings()
-        resolved_trace_id = trace_id or structlog.contextvars.get_contextvars().get("trace_id")
-        trace_context = {"trace_id": resolved_trace_id} if resolved_trace_id else None
+
+        # Retrieve active trace_id from explicit argument, config (callbacks or metadata), or structlog contextvars
+        active_trace_id = trace_id
+        if not active_trace_id and config and isinstance(config, dict):
+            callbacks = config.get("callbacks") or []
+            if isinstance(callbacks, list):
+                for cb in callbacks:
+                    active_trace_id = extract_trace_id(cb)
+                    if active_trace_id:
+                        break
+            if not active_trace_id:
+                meta = config.get("metadata")
+                if isinstance(meta, dict):
+                    active_trace_id = meta.get("trace_id")
+
+        if not active_trace_id:
+            active_trace_id = structlog.contextvars.get_contextvars().get("trace_id")
+
+        trace_context = {"trace_id": str(active_trace_id)} if active_trace_id else None
         usage = _estimate_jev_tokens(input_text, output_text)
 
         input_cost = (usage["input"] * current_settings.jev_cost_per_1k_input_tokens) / 1000.0
@@ -146,15 +164,15 @@ def _record_jev_generation(
             }
             if prompt_client is not None and not getattr(prompt_client, "is_fallback", False):
                 gen_kwargs["prompt"] = prompt_client
-            if trace_id:
-                gen_kwargs["trace_id"] = resolved_trace_id
+            if active_trace_id:
+                gen_kwargs["trace_id"] = str(active_trace_id)
             client.generation(**gen_kwargs)
     except Exception as exc:
         logger.debug("Failed to record JEV generation span: %s", exc)
 
 ########################## Node 1 — Route the Question ##########################
 
-def route_question_jev(state: AgentState):
+def route_question_jev(state: AgentState, config: RunnableConfig | None = None):
     structlog.contextvars.bind_contextvars(step="route_question")
     prompt_client = get_workflow_prompt("rag:router:jev")
     question = state["question"]
@@ -190,6 +208,7 @@ def route_question_jev(state: AgentState):
         decision,
         trace_id=trace_id,
         prompt_client=prompt_client,
+        config=config,
     )
     # confidence = result.choices["route"].confidence
     # print(f"[Router] {decision} (confidence: {confidence:.3f})")
@@ -219,7 +238,7 @@ def retrieve_kb(state: AgentState, config: RunnableConfig | None = None):
 
 ########################## Node 3 — Grade Private KB Evidence ##########################
 
-def grade_kb_jev(state: AgentState):
+def grade_kb_jev(state: AgentState, config: RunnableConfig | None = None):
     structlog.contextvars.bind_contextvars(step="grade_kb")
     prompt_client = get_workflow_prompt("rag:grade_kb:jev")
     context = "\n\n".join(
@@ -261,6 +280,7 @@ def grade_kb_jev(state: AgentState):
         grade,
         trace_id=trace_id,
         prompt_client=prompt_client,
+        config=config,
     )
     # confidence = result.choices["grade"].confidence
     # print(f"[KB Grader] {grade} (confidence: {confidence:.3f})")
@@ -271,7 +291,7 @@ def grade_kb_jev(state: AgentState):
     }
 
 
-def grade_kb_jev_2(state: AgentState):
+def grade_kb_jev_2(state: AgentState, config: RunnableConfig | None = None):
     structlog.contextvars.bind_contextvars(step="grade_kb")
     prompt_client = get_workflow_prompt("rag:grade_kb:jev")
     context = "\n\n".join(
@@ -317,6 +337,7 @@ def grade_kb_jev_2(state: AgentState):
         grade,
         trace_id=trace_id,
         prompt_client=prompt_client,
+        config=config,
     )
     # confidence = result.choices["grade"].confidence
     # print(f"[KB Grader] {grade} (confidence: {confidence:.3f})")
@@ -360,7 +381,7 @@ def search_web(state: AgentState, config: RunnableConfig | None = None):
 
 ########################## Node 5 — Grade Web Evidence ##########################
 
-def grade_web_jev(state: AgentState):
+def grade_web_jev(state: AgentState, config: RunnableConfig | None = None):
     structlog.contextvars.bind_contextvars(step="grade_web")
     prompt_client = get_workflow_prompt("rag:grade_web:jev")
     prompt_state = (
@@ -398,6 +419,7 @@ def grade_web_jev(state: AgentState):
         grade,
         trace_id=trace_id,
         prompt_client=prompt_client,
+        config=config,
     )
     # confidence = result.choices["grade"].confidence
     # print(f"[Web Grader] {grade} (confidence: {confidence:.3f})")
@@ -408,7 +430,7 @@ def grade_web_jev(state: AgentState):
     }
 
 
-def grade_web_jev_2(state: AgentState):
+def grade_web_jev_2(state: AgentState, config: RunnableConfig | None = None):
     structlog.contextvars.bind_contextvars(step="grade_web")
     prompt_client = get_workflow_prompt("rag:grade_web:jev")
     prompt_state = (
@@ -450,6 +472,7 @@ def grade_web_jev_2(state: AgentState):
         grade,
         trace_id=trace_id,
         prompt_client=prompt_client,
+        config=config,
     )
     # confidence = result.choices["grade"].confidence
     # print(f"[Web Grader] {grade} (confidence: {confidence:.3f})")

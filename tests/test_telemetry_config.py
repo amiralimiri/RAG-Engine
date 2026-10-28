@@ -50,7 +50,7 @@ def test_default_evaluation_and_cost_settings():
     # Evaluation defaults
     assert settings.eval_sample_rate == 1.0
     assert settings.eval_metrics == ["faithfulness", "answer_relevancy"]
-    assert settings.eval_timeout_seconds == 30.0
+    assert settings.eval_timeout_seconds == 120.0
     assert settings.langfuse_prompt_cache_ttl_seconds == 300
 
     # Token cost multipliers (USD per 1k tokens)
@@ -162,7 +162,7 @@ def test_get_settings_exposes_defaults():
     settings = get_settings()
     assert settings.eval_sample_rate == 1.0
     assert settings.eval_metrics == ["faithfulness", "answer_relevancy"]
-    assert settings.eval_timeout_seconds == 30.0
+    assert settings.eval_timeout_seconds == 120.0
     assert settings.langfuse_prompt_cache_ttl_seconds == 300
     assert settings.llm_cost_per_1k_input_tokens == 0.0015
     assert settings.llm_cost_per_1k_output_tokens == 0.0020

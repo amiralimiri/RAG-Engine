@@ -350,6 +350,51 @@ class TestTimeoutAndFailOpenSafety:
         mock_faith.assert_called_once()
         mock_rel.assert_called_once()
 
+    async def test_default_eval_timeout_is_120s(self):
+        from app.core.config import Settings
+        s = Settings()
+        assert s.eval_timeout_seconds == 120.0
+
+    async def test_eval_metrics_run_concurrently(self, base_eval_settings, monkeypatch):
+        """Verify faithfulness and answer relevancy execute concurrently in threadpool."""
+        monkeypatch.setattr("app.services.evaluation.get_settings", lambda: base_eval_settings)
+
+        started = set()
+        both_running = False
+
+        def slow_f(*args, **kwargs):
+            nonlocal both_running
+            started.add("faithfulness")
+            time.sleep(0.05)
+            if "relevancy" in started:
+                both_running = True
+            return 0.9
+
+        def slow_r(*args, **kwargs):
+            nonlocal both_running
+            started.add("relevancy")
+            time.sleep(0.05)
+            if "faithfulness" in started:
+                both_running = True
+            return 0.95
+
+        monkeypatch.setattr("app.services.evaluation.score_trace_faithfulness", slow_f)
+        monkeypatch.setattr("app.services.evaluation.score_trace_answer_relevancy", slow_r)
+
+        t0 = time.perf_counter()
+        await run_online_evaluation_task(
+            trace_id="trace-concurrent-001",
+            question="Q",
+            answer="A",
+            source_used="kb",
+            retrieved_contexts=["ctx"],
+        )
+        elapsed = time.perf_counter() - t0
+
+        assert both_running, "Both evaluation tasks should overlap in execution"
+        assert elapsed < 0.2, f"Concurrent execution should be fast, took {elapsed}s"
+
+
 
 class TestRouteIntegration:
     """Verify POST /api/chat and POST /api/chat/stream dispatch run_online_evaluation_task."""

@@ -127,6 +127,69 @@ Web evidence:
 }
 
 
+_seeded_prompts: set[str] = set()
+
+
+def seed_prompt(name: str) -> bool:
+    """Safely create/seed a canonical prompt into Langfuse Prompt CMS once per process."""
+    if name in _seeded_prompts:
+        return True
+    settings = get_settings()
+    if not settings.langfuse_enabled:
+        return False
+    client = get_langfuse_client()
+    if not client or not hasattr(client, "create_prompt"):
+        return False
+    fallback_text = LOCAL_PROMPTS.get(name)
+    if not fallback_text:
+        return False
+
+    _seeded_prompts.add(name)
+    try:
+        client.create_prompt(
+            name=name,
+            prompt=fallback_text,
+            labels=["production"],
+            type="text",
+        )
+        logger.info("Auto-seeded prompt '%s' into Langfuse Prompt CMS with label 'production'", name)
+        return True
+    except Exception as exc:
+        logger.warning("Could not auto-seed prompt '%s' into Langfuse: %s", name, exc)
+        return False
+
+
+def seed_all_prompts() -> dict[str, bool]:
+    """Seed all 10 canonical prompts into Langfuse Prompt CMS if enabled."""
+    results: dict[str, bool] = {}
+    settings = get_settings()
+    if not settings.langfuse_enabled:
+        return results
+    client = get_langfuse_client()
+    if not client or not hasattr(client, "create_prompt"):
+        return results
+
+    for name, fallback_text in LOCAL_PROMPTS.items():
+        if name in _seeded_prompts:
+            results[name] = True
+            continue
+        try:
+            client.create_prompt(
+                name=name,
+                prompt=fallback_text,
+                labels=["production"],
+                type="text",
+            )
+            _seeded_prompts.add(name)
+            results[name] = True
+            logger.info("Seeded prompt '%s' into Langfuse Prompt CMS", name)
+        except Exception as exc:
+            _seeded_prompts.add(name)
+            results[name] = False
+            logger.warning("Failed to seed prompt '%s' into Langfuse: %s", name, exc)
+    return results
+
+
 def get_workflow_prompt(name: str) -> TextPromptClient | FallbackPrompt:
     """Retrieve prompt from Langfuse Prompt CMS with local caching and fail-open fallback."""
     settings = get_settings()
@@ -135,17 +198,30 @@ def get_workflow_prompt(name: str) -> TextPromptClient | FallbackPrompt:
     client = get_langfuse_client()
     if client and settings.langfuse_enabled:
         try:
-            return client.get_prompt(
+            prompt = client.get_prompt(
                 name=name,
                 type="text",
                 cache_ttl_seconds=settings.langfuse_prompt_cache_ttl_seconds,
                 fallback=fallback_text,
             )
+            # If the returned prompt is a fallback or has fallback flag, auto-seed to Langfuse
+            if getattr(prompt, "is_fallback", False) is True:
+                seed_prompt(name)
+            return prompt
         except Exception as exc:
             logger.warning(
                 "Failed to fetch prompt '%s' from Langfuse Prompt CMS: %s. Using local fallback.",
                 name,
                 exc,
             )
+            seed_prompt(name)
 
     return FallbackPrompt(name=name, template=fallback_text, version=0)
+
+
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
+    print("Seeding canonical prompts into Langfuse Prompt CMS...")
+    seeded_status = seed_all_prompts()
+    for prompt_key, is_ok in seeded_status.items():
+        print(f"  {prompt_key}: {'seeded' if is_ok else 'failed/skipped'}")

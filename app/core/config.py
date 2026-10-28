@@ -53,7 +53,7 @@ class Settings(BaseSettings):
     eval_metrics: list[str] = Field(
         default_factory=lambda: ["faithfulness", "answer_relevancy"]
     )
-    eval_timeout_seconds: float = Field(default=30.0, ge=0.0)
+    eval_timeout_seconds: float = Field(default=120.0, ge=0.0)
 
     # Unit Token Cost Multipliers (USD per 1,000 tokens)
     llm_cost_per_1k_input_tokens: float = Field(default=0.0015, ge=0.0)
