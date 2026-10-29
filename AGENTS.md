@@ -11,3 +11,7 @@ Canonical roles (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-hum
 ### Domain docs
 
 Single-context (`GLOSSARY.md` + `docs/adr/` at the repo root). See `docs/agents/domain.md`.
+
+### Tool abstractions
+
+Dual-output `BaseTool` seams and test doubles. See `docs/agents/tool-abstractions.md`.
