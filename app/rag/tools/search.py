@@ -2,11 +2,12 @@
 
 from typing import Any
 from langchain_core.runnables import RunnableConfig
-from langchain_core.tools import BaseTool, StructuredTool
+from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field
 import structlog
 
 from app.core.config import get_settings
+from app.rag.tools.base import DualOutputStructuredTool
 
 logger = structlog.get_logger(__name__)
 
@@ -46,6 +47,22 @@ def _extract_web_citations(result: Any) -> list[dict[str, Any]]:
     return citations
 
 
+def _extract_web_contexts(result: Any) -> list[str]:
+    contexts = []
+    if isinstance(result, dict):
+        for item in result.get("results", []):
+            title = item.get("title", "")
+            url = item.get("url", "")
+            content = item.get("content", "")
+            contexts.append(f"Title: {title}\nURL: {url}\nContent: {content}")
+    elif isinstance(result, str):
+        if result:
+            contexts.append(result)
+    elif result is not None:
+        contexts.append(str(result))
+    return contexts
+
+
 def create_web_search_tool(
     search_client: Any = None,
     name: str = "web_search",
@@ -70,22 +87,30 @@ def create_web_search_tool(
             include_raw_content=False,
         )
 
-    def _run(query: str, config: RunnableConfig | None = None) -> tuple[str, list[dict[str, Any]]]:
+    def _run(query: str, config: RunnableConfig | None = None) -> tuple[str, dict[str, Any]]:
         structlog.contextvars.bind_contextvars(step="search_web")
         client = _get_active_client()
         result = client.invoke({"query": query}, config=config)
-        return _format_search_results(result), _extract_web_citations(result)
+        artifact = {
+            "citations": _extract_web_citations(result),
+            "retrieved_contexts": _extract_web_contexts(result),
+        }
+        return _format_search_results(result), artifact
 
-    async def _arun(query: str, config: RunnableConfig | None = None) -> tuple[str, list[dict[str, Any]]]:
+    async def _arun(query: str, config: RunnableConfig | None = None) -> tuple[str, dict[str, Any]]:
         structlog.contextvars.bind_contextvars(step="search_web")
         client = _get_active_client()
         if hasattr(client, "ainvoke"):
             result = await client.ainvoke({"query": query}, config=config)
         else:
             result = client.invoke({"query": query}, config=config)
-        return _format_search_results(result), _extract_web_citations(result)
+        artifact = {
+            "citations": _extract_web_citations(result),
+            "retrieved_contexts": _extract_web_contexts(result),
+        }
+        return _format_search_results(result), artifact
 
-    return StructuredTool.from_function(
+    return DualOutputStructuredTool.from_function(
         func=_run,
         coroutine=_arun,
         name=name,

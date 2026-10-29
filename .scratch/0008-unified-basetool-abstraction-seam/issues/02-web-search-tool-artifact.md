@@ -5,10 +5,10 @@ Upgrade `create_web_search_tool` in `app/rag/tools/search.py` to adhere to the d
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** completed
 
-- [ ] Red: Add test in `tests/rag/test_tools.py` asserting `create_web_search_tool().invoke({"query": "..."})` returns `(content, artifact)` where `artifact["citations"]` is `list[dict]` and `artifact["retrieved_contexts"]` is `list[str]`.
-- [ ] Red: Add test in `tests/rag/test_tools.py` asserting `await create_web_search_tool().ainvoke({"query": "..."})` returns the same dual-output structure.
-- [ ] Red: Add test asserting provider exceptions (e.g. Tavily API rate limit `HTTPError`) bubble up directly from `invoke` and `ainvoke`.
-- [ ] Green: Refactor `_run` and `_arun` in `app/rag/tools/search.py` to return `(content, {"citations": citations, "retrieved_contexts": contexts})`.
-- [ ] Refactor: Ensure clean typing and docstrings, verifying all tests in `tests/rag/test_tools.py` pass.
+- [x] Red: Add test in `tests/rag/test_tools.py` asserting `create_web_search_tool().invoke({"query": "..."})` returns `(content, artifact)` where `artifact["citations"]` is `list[dict]` and `artifact["retrieved_contexts"]` is `list[str]`.
+- [x] Red: Add test in `tests/rag/test_tools.py` asserting `await create_web_search_tool().ainvoke({"query": "..."})` returns the same dual-output structure.
+- [x] Red: Add test asserting provider exceptions (e.g. Tavily API rate limit `HTTPError`) bubble up directly from `invoke` and `ainvoke`.
+- [x] Green: Refactor `_run` and `_arun` in `app/rag/tools/search.py` to return `(content, {"citations": citations, "retrieved_contexts": contexts})`.
+- [x] Refactor: Ensure clean typing and docstrings, verifying all tests in `tests/rag/test_tools.py` pass.

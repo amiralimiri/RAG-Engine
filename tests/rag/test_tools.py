@@ -123,11 +123,20 @@ def test_create_web_search_tool_sync():
     assert tool.name == "web_search"
     assert "query" in tool.args
 
-    output = tool.invoke({"query": "fastapi"})
-    assert "Search answer: FastAPI is a modern web framework." in output
-    assert "Title: FastAPI Tutorial" in output
-    assert "URL: https://fastapi.tiangolo.com" in output
-    assert "Content: Learn how to build high performance APIs." in output
+    result = tool.invoke({"query": "fastapi"})
+    assert isinstance(result, tuple) and len(result) == 2
+    content, artifact = result
+
+    assert "Search answer: FastAPI is a modern web framework." in content
+    assert "Title: FastAPI Tutorial" in content
+    assert "URL: https://fastapi.tiangolo.com" in content
+    assert "Content: Learn how to build high performance APIs." in content
+    assert artifact["citations"] == [
+        {"title": "FastAPI Tutorial", "url": "https://fastapi.tiangolo.com", "type": "web"}
+    ]
+    assert artifact["retrieved_contexts"] == [
+        "Title: FastAPI Tutorial\nURL: https://fastapi.tiangolo.com\nContent: Learn how to build high performance APIs."
+    ]
     mock_search.invoke.assert_called_once()
 
 
@@ -145,10 +154,34 @@ async def test_create_web_search_tool_async():
     })
 
     tool = create_web_search_tool(search_client=mock_search)
-    output = await tool.ainvoke({"query": "python"})
-    assert "Title: Python 3.14 Docs" in output
-    assert "URL: https://docs.python.org" in output
+    result = await tool.ainvoke({"query": "python"})
+    assert isinstance(result, tuple) and len(result) == 2
+    content, artifact = result
+
+    assert "Title: Python 3.14 Docs" in content
+    assert "URL: https://docs.python.org" in content
+    assert "Content: Official Python documentation." in content
+    assert artifact["citations"] == [
+        {"title": "Python 3.14 Docs", "url": "https://docs.python.org", "type": "web"}
+    ]
+    assert artifact["retrieved_contexts"] == [
+        "Title: Python 3.14 Docs\nURL: https://docs.python.org\nContent: Official Python documentation."
+    ]
     mock_search.ainvoke.assert_called_once()
+
+
+def test_create_web_search_tool_empty():
+    mock_search = MagicMock()
+    mock_search.invoke.return_value = {"results": []}
+
+    tool = create_web_search_tool(search_client=mock_search)
+    result = tool.invoke({"query": "nonexistent"})
+    assert isinstance(result, tuple) and len(result) == 2
+    content, artifact = result
+
+    assert content == "No relevant web search results found."
+    assert artifact["citations"] == []
+    assert artifact["retrieved_contexts"] == []
 
 
 def test_create_web_search_tool_string_output():
@@ -156,5 +189,30 @@ def test_create_web_search_tool_string_output():
     mock_search.invoke.return_value = "Direct raw string search result."
 
     tool = create_web_search_tool(search_client=mock_search)
-    output = tool.invoke({"query": "raw"})
-    assert output == "Direct raw string search result."
+    result = tool.invoke({"query": "raw"})
+    assert isinstance(result, tuple) and len(result) == 2
+    content, artifact = result
+
+    assert content == "Direct raw string search result."
+    assert artifact["citations"] == []
+    assert artifact["retrieved_contexts"] == ["Direct raw string search result."]
+
+
+def test_create_web_search_tool_sync_exception_propagation():
+    mock_search = MagicMock()
+    mock_search.invoke.side_effect = RuntimeError("Tavily API rate limit exceeded")
+
+    tool = create_web_search_tool(search_client=mock_search)
+    with pytest.raises(RuntimeError, match="Tavily API rate limit exceeded"):
+        tool.invoke({"query": "rate_limited"})
+
+
+@pytest.mark.asyncio
+async def test_create_web_search_tool_async_exception_propagation():
+    mock_search = MagicMock()
+    mock_search.ainvoke = AsyncMock(side_effect=RuntimeError("Tavily API rate limit exceeded"))
+
+    tool = create_web_search_tool(search_client=mock_search)
+    with pytest.raises(RuntimeError, match="Tavily API rate limit exceeded"):
+        await tool.ainvoke({"query": "rate_limited"})
+
