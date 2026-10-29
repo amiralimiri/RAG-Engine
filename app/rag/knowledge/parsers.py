@@ -7,6 +7,8 @@ from docx import Document as DocxDocument
 from langchain_community.document_loaders import PyPDFLoader, TextLoader
 from langchain_core.documents import Document
 
+SUPPORTED_EXTENSIONS: frozenset[str] = frozenset({".pdf", ".txt", ".md", ".docx"})
+
 
 def _normalize_suffix(suffix: str) -> str:
     """Normalize file extension suffix to lowercase with leading dot."""

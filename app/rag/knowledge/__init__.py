@@ -18,6 +18,7 @@ from app.rag.knowledge.parsers import (
     DocxParser,
     DocumentParser,
     PDFParser,
+    SUPPORTED_EXTENSIONS,
     TextParser,
 )
 from app.rag.knowledge.vectorstore import (
@@ -48,6 +49,7 @@ __all__ = [
     "TextParser",
     "DocxParser",
     "CompositeDocumentParser",
+    "SUPPORTED_EXTENSIONS",
     "DocumentChunker",
     "RecursiveCharacterChunker",
     "DocumentIndexer",

@@ -10,12 +10,11 @@ import structlog
 from app.api.schemas import ChatRequest, ChatResponse, FeedbackRequest, WorkflowListResponse
 from app.core.config import get_settings
 from app.core.telemetry import extract_trace_id, flush_telemetry, get_langfuse_callback, get_langfuse_client
-from app.rag.knowledge import get_document_indexer
+from app.rag.knowledge import SUPPORTED_EXTENSIONS, get_document_indexer
 from app.rag.workflows import get_workflow_registry
 from app.rag.workflows.legacy import WORKFLOW_ASKS, WORKFLOW_GRAPHS
 from app.rag.workflows.runner import _background_tasks, get_workflow_runner
 from app.services.evaluation import run_online_evaluation_task, score_trace_metric
-from app.services.ingestion import SUPPORTED
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/api")
@@ -93,8 +92,8 @@ async def upload_file(file: UploadFile = File(...), x_admin_key: str = Header(de
     if not file.filename:
         raise HTTPException(status_code=400, detail="Filename is required")
     suffix = Path(file.filename).suffix.lower()
-    if suffix not in SUPPORTED:
-        raise HTTPException(status_code=400, detail=f"Supported: {', '.join(sorted(SUPPORTED))}")
+    if suffix not in SUPPORTED_EXTENSIONS:
+        raise HTTPException(status_code=400, detail=f"Supported: {', '.join(sorted(SUPPORTED_EXTENSIONS))}")
     upload_dir = Path(settings.upload_dir)
     upload_dir.mkdir(parents=True, exist_ok=True)
     safe_name = Path(file.filename).name

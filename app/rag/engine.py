@@ -13,7 +13,7 @@ from app.core.telemetry import extract_trace_id
 from app.rag.classifiers import WorkflowClassifier, _build_prompt_config
 from app.rag.state import AgentState
 from app.rag.tools import create_retriever_tool, create_web_search_tool
-from app.rag.vectorstore import get_retriever
+from app.rag.knowledge import get_knowledge_store
 from app.services.prompts import get_workflow_prompt
 
 logger = logging.getLogger(__name__)
@@ -65,7 +65,11 @@ def route_after_router(state: AgentState) -> Literal["retrieve_kb", "direct_answ
 
 def retrieve_kb(state: AgentState, config: RunnableConfig | None = None, retriever: Any = None):
     structlog.contextvars.bind_contextvars(step="retrieve_kb")
-    active_retriever = retriever if retriever is not None else get_retriever()
+    active_retriever = (
+        retriever
+        if retriever is not None
+        else get_knowledge_store().as_retriever(search_kwargs={"k": get_settings().top_k})
+    )
     tool = create_retriever_tool(retriever=active_retriever)
     raw_output = tool.invoke({"query": state["current_query"]}, config=config)
     content, artifact = _unpack_tool_output(raw_output)

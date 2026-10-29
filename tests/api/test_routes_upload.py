@@ -12,6 +12,7 @@ from app.main import app
 from app.rag.knowledge import (
     InMemoryVectorStoreAdapter,
     IndexingResult,
+    SUPPORTED_EXTENSIONS,
     get_knowledge_store,
     reset_knowledge_store,
 )
@@ -87,7 +88,7 @@ def test_upload_unauthorized(client: TestClient):
 
 
 def test_upload_unsupported_extension(client: TestClient):
-    """POST /api/upload with unsupported file extension returns 400."""
+    """POST /api/upload with unsupported file extension returns 400 asserting against SUPPORTED_EXTENSIONS."""
     settings = get_settings()
     admin_key = settings.admin_api_key.get_secret_value()
 
@@ -96,7 +97,8 @@ def test_upload_unsupported_extension(client: TestClient):
 
     response = client.post("/api/upload", files=files, headers=headers)
     assert response.status_code == 400
-    assert "Supported:" in response.json()["detail"]
+    expected_detail = f"Supported: {', '.join(sorted(SUPPORTED_EXTENSIONS))}"
+    assert response.json()["detail"] == expected_detail
 
 
 def test_upload_indexer_failure_returns_500(client: TestClient, monkeypatch: pytest.MonkeyPatch):

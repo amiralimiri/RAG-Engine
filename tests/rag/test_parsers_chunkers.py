@@ -16,6 +16,7 @@ from app.rag.knowledge.parsers import (
     DocxParser,
     DocumentParser,
     PDFParser,
+    SUPPORTED_EXTENSIONS,
     TextParser,
 )
 
@@ -58,7 +59,7 @@ def temp_docs_dir(tmp_path: Path) -> Path:
 
 
 def test_package_exports():
-    """Verify parsers and chunkers are cleanly exposed by app.rag.knowledge."""
+    """Verify parsers, chunkers, and supported extensions are cleanly exposed by app.rag.knowledge."""
     import app.rag.knowledge as pkg
 
     assert hasattr(pkg, "DocumentParser")
@@ -68,6 +69,14 @@ def test_package_exports():
     assert hasattr(pkg, "CompositeDocumentParser")
     assert hasattr(pkg, "DocumentChunker")
     assert hasattr(pkg, "RecursiveCharacterChunker")
+    assert hasattr(pkg, "SUPPORTED_EXTENSIONS")
+    assert pkg.SUPPORTED_EXTENSIONS == SUPPORTED_EXTENSIONS
+
+
+def test_supported_extensions_source_of_truth():
+    """Verify SUPPORTED_EXTENSIONS is a frozenset containing canonical file formats."""
+    assert isinstance(SUPPORTED_EXTENSIONS, frozenset)
+    assert SUPPORTED_EXTENSIONS == frozenset({".pdf", ".txt", ".md", ".docx"})
 
 
 def test_parsers_implement_protocol():
@@ -100,8 +109,11 @@ def test_parser_can_parse_suffix():
     assert not docx_parser.can_parse(".doc")
 
     composite = CompositeDocumentParser()
-    for ext in [".pdf", ".txt", ".md", ".docx", "PDF", "TXT", "MD", "DOCX"]:
+    for ext in SUPPORTED_EXTENSIONS:
         assert composite.can_parse(ext)
+        assert composite.can_parse(ext.upper())
+        assert composite.can_parse(ext.lstrip("."))
+        assert composite.can_parse(ext.lstrip(".").upper())
     assert not composite.can_parse(".json")
     assert not composite.can_parse(".csv")
 
