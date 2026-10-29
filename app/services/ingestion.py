@@ -1,27 +1,32 @@
+"""Backward-compatibility facade for document loading and chunking.
+
+Delegates directly to app.rag.knowledge parsing and chunking components.
+"""
+
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable
 from langchain_core.documents import Document
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_community.document_loaders import PyPDFLoader, TextLoader
-from docx import Document as DocxDocument
+
+from app.rag.knowledge.chunkers import RecursiveCharacterChunker
+from app.rag.knowledge.parsers import CompositeDocumentParser
+
+SUPPORTED = frozenset({".pdf", ".txt", ".md", ".docx"})
 
 
-SUPPORTED = {".pdf", ".txt", ".md", ".docx"}
-
-
-def load_file(path: Path) -> list[Document]:
-    suffix = path.suffix.lower()
-    if suffix == ".pdf":
-        return PyPDFLoader(str(path)).load()
-    if suffix in {".txt", ".md"}:
-        return TextLoader(str(path), encoding="utf-8").load()
-    if suffix == ".docx":
-        doc = DocxDocument(str(path))
-        text = "\n".join(p.text for p in doc.paragraphs if p.text.strip())
-        return [Document(page_content=text, metadata={"source": str(path)})]
-    raise ValueError(f"Unsupported file type: {suffix}")
+def load_file(path: Path | str) -> list[Document]:
+    """Parse a file into Document objects, delegating to CompositeDocumentParser."""
+    parser = CompositeDocumentParser()
+    return parser.parse(Path(path))
 
 
 def chunk_documents(docs: Iterable[Document]) -> list[Document]:
-    splitter = RecursiveCharacterTextSplitter(chunk_size=900, chunk_overlap=120, add_start_index=True)
-    return splitter.split_documents(list(docs))
+    """Split documents into chunks, delegating to RecursiveCharacterChunker."""
+    chunker = RecursiveCharacterChunker()
+    return chunker.chunk(list(docs))
+
+
+__all__ = [
+    "SUPPORTED",
+    "load_file",
+    "chunk_documents",
+]

@@ -30,13 +30,13 @@ Migrate all first-party callers and tools to the new `app/rag/knowledge/` subsys
 - Ticket 03: Deep DocumentIndexer Write Pipeline with Deterministic Upserts
 - Ticket 04: Pinecone Vector Store Adapter & Non-Destructive Validation
 
-**Status:** ready-for-agent
+**Status:** completed
 
-- [ ] Red: Add test in `tests/api/test_routes_upload.py` asserting `POST /api/upload` uses `DocumentIndexer` and returns HTTP 200 with index results against `InMemoryVectorStoreAdapter`.
-- [ ] Red: Add regression test asserting legacy imports from `app.rag.vectorstore` and `app.services.ingestion` execute without error.
-- [ ] Red: Add test in `tests/rag/test_tools.py` verifying `create_retriever_tool` works without `sys.modules["app.rag.engine"]` reflection.
-- [ ] Green: Refactor `app/api/routes.py:upload_file` to use `indexer.aindex_file`.
-- [ ] Green: Refactor `ingest_sample_kb.py` to use `indexer.index_batch`.
-- [ ] Green: Refactor `app/rag/tools/retriever.py` to obtain its retriever from `get_knowledge_store()`.
-- [ ] Green: Refactor `app/rag/vectorstore.py` and `app/services/ingestion.py` as backward-compatible delegation shims.
-- [ ] Refactor: Run full regression test suite (`uv run pytest`) asserting all 376+ tests pass cleanly.
+- [x] Red: Add test in `tests/api/test_routes_upload.py` asserting `POST /api/upload` uses `DocumentIndexer` and returns HTTP 200 with index results against `InMemoryVectorStoreAdapter`.
+- [x] Red: Add regression test asserting legacy imports from `app.rag.vectorstore` and `app.services.ingestion` execute without error.
+- [x] Red: Add test in `tests/rag/test_tools.py` verifying `create_retriever_tool` works without `sys.modules["app.rag.engine"]` reflection.
+- [x] Green: Refactor `app/api/routes.py:upload_file` to use `indexer.aindex_file`.
+- [x] Green: Refactor `ingest_sample_kb.py` to use `indexer.index_batch`.
+- [x] Green: Refactor `app/rag/tools/retriever.py` to obtain its retriever from `get_knowledge_store()`.
+- [x] Green: Refactor `app/rag/vectorstore.py` and `app/services/ingestion.py` as backward-compatible delegation shims.
+- [x] Refactor: Run full regression test suite (`uv run pytest`) asserting all 376+ tests pass cleanly.

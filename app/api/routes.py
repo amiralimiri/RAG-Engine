@@ -30,8 +30,8 @@ from app.core.telemetry import (
     flush_telemetry,
 )
 from app.rag import fix_single_llm, fix_single_jev
-from app.rag.vectorstore import add_documents 
-from app.services.ingestion import load_file, chunk_documents, SUPPORTED
+from app.rag.knowledge import get_document_indexer
+from app.services.ingestion import SUPPORTED
 from app.services.evaluation import score_trace_metric, run_online_evaluation_task
 from app.rag.workflows import (
     EvalContext,
@@ -690,8 +690,9 @@ def feedback(payload: FeedbackRequest, background_tasks: BackgroundTasks):
 
 
 
+@router.post("/upload")
 @router.post("/ingest")
-async def ingest(file: UploadFile = File(...), x_admin_key: str = Header(default="")):
+async def upload_file(file: UploadFile = File(...), x_admin_key: str = Header(default="")):
     # --- auth ---
     expected = settings.admin_api_key.get_secret_value()
     if not hmac.compare_digest(x_admin_key.encode("utf-8"), expected.encode("utf-8")):
@@ -721,15 +722,24 @@ async def ingest(file: UploadFile = File(...), x_admin_key: str = Header(default
     
     # --- process ---
     try:
-        docs = await run_in_threadpool(load_file, dest)
-        chunks = await run_in_threadpool(chunk_documents, docs)
-        ids = await run_in_threadpool(add_documents, chunks)
+        indexer = get_document_indexer()
+        result = await indexer.aindex_file(dest)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Ingestion failed: {exc}") from exc
+    
+    if not result.success:
+        raise HTTPException(status_code=500, detail=f"Ingestion failed: {result.error}")
     
     return {
         "message": "Document indexed",
         "file": dest.name,
-        "chunks": len(chunks),
-        "ids_created": len(ids),
+        "chunks": result.chunk_count,
+        "ids_created": len(result.ids_created),
+        "document_count": result.document_count,
+        "ids": result.ids_created,
+        "result": result.model_dump(),
     }
+
+
+# Backward-compatible alias
+ingest = upload_file

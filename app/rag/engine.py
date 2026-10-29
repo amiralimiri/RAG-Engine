@@ -267,7 +267,7 @@ def create_agentic_rag_graph(
     elif retriever is not None:
         active_kb_tool = create_retriever_tool(retriever=retriever)
     else:
-        active_kb_tool = create_retriever_tool()
+        active_kb_tool = create_retriever_tool(retriever=get_retriever())
 
     if web_tool is not None:
         active_web_tool = web_tool

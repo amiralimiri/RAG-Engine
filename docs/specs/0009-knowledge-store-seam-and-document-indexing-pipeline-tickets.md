@@ -51,7 +51,7 @@
 | **Ticket 02** | Pluggable Document Parsing and Chunking Strategy Protocols | `app/rag/knowledge/parsers.py`, `app/rag/knowledge/chunkers.py`, `tests/rag/test_parsers_chunkers.py` | None | `ready-for-agent` |
 | **Ticket 03** | Deep DocumentIndexer Write Pipeline with Deterministic Upserts | `app/rag/knowledge/indexer.py`, `tests/rag/test_document_indexer.py` | Tickets 01, 02 | `ready-for-agent` |
 | **Ticket 04** | Pinecone Vector Store Adapter & Non-Destructive Validation | `app/rag/knowledge/vectorstore.py`, `tests/rag/test_knowledge_store.py` | Ticket 01 | `ready-for-agent` |
-| **Ticket 05** | Caller Modernization, Tool Seam Integration & Backward Compatibility Shims | `app/api/routes.py`, `ingest_sample_kb.py`, `app/rag/tools/retriever.py`, `app/rag/vectorstore.py`, `app/services/ingestion.py` | Tickets 03, 04 | `ready-for-agent` |
+| **Ticket 05** | Caller Modernization, Tool Seam Integration & Backward Compatibility Shims | `app/api/routes.py`, `ingest_sample_kb.py`, `app/rag/tools/retriever.py`, `app/rag/vectorstore.py`, `app/services/ingestion.py` | Tickets 03, 04 | `completed` |
 
 ---
 

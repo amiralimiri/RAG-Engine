@@ -216,3 +216,57 @@ async def test_create_web_search_tool_async_exception_propagation():
     with pytest.raises(RuntimeError, match="Tavily API rate limit exceeded"):
         await tool.ainvoke({"query": "rate_limited"})
 
+
+def test_create_retriever_tool_default_retriever_uses_knowledge_store(monkeypatch: pytest.MonkeyPatch):
+    """create_retriever_tool() without arguments obtains retriever from get_knowledge_store().as_retriever()."""
+    mock_retriever = MagicMock()
+    mock_retriever.invoke.return_value = [
+        Document(page_content="Hardware policy chunk.", metadata={"source": "hardware.md"})
+    ]
+
+    mock_store = MagicMock()
+    mock_store.as_retriever.return_value = mock_retriever
+
+    monkeypatch.setattr("app.rag.knowledge.get_knowledge_store", lambda **kw: mock_store)
+
+    tool = create_retriever_tool()
+    content, artifact = tool.invoke({"query": "laptop replacement"})
+
+    assert "Hardware policy chunk." in content
+    assert artifact["citations"] == [{"title": "hardware.md", "url": "", "type": "private_kb"}]
+    mock_store.as_retriever.assert_called_once()
+    mock_retriever.invoke.assert_called_once()
+
+
+def test_create_retriever_tool_without_engine_module_reflection(monkeypatch: pytest.MonkeyPatch):
+    """create_retriever_tool does not depend on sys.modules['app.rag.engine']."""
+    import sys
+
+    # Even if app.rag.engine has a dummy retriever or is missing, get_knowledge_store() is used directly
+    mock_retriever = MagicMock()
+    mock_retriever.invoke.return_value = [
+        Document(page_content="Zero reflection chunk.", metadata={"source": "policy.md"})
+    ]
+
+    mock_store = MagicMock()
+    mock_store.as_retriever.return_value = mock_retriever
+
+    monkeypatch.setattr("app.rag.knowledge.get_knowledge_store", lambda **kw: mock_store)
+
+    # Inject a bogus get_retriever on app.rag.engine if present
+    engine_mod = sys.modules.get("app.rag.engine")
+    if engine_mod is not None:
+        bogus_called = False
+
+        def bogus_get():
+            nonlocal bogus_called
+            bogus_called = True
+            raise AssertionError("Reflection hack was called on app.rag.engine!")
+
+        monkeypatch.setattr(engine_mod, "get_retriever", bogus_get)
+
+    tool = create_retriever_tool()
+    content, artifact = tool.invoke({"query": "policy"})
+    assert "Zero reflection chunk." in content
+
+
