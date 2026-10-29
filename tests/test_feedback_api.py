@@ -3,7 +3,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
-from app.api.routes import _submit_feedback_task, WORKFLOW_ASKS
+from app.api.routes import _submit_feedback_task
+from tests.conftest import MockWorkflowDefinition
 
 
 @pytest.fixture(autouse=True)
@@ -16,7 +17,7 @@ def client():
     return TestClient(app)
 
 
-def test_chat_endpoint_returns_trace_id(client, monkeypatch):
+def test_chat_endpoint_returns_trace_id(client, monkeypatch, register_mock_workflow):
     """Call POST /api/chat with mock ask function, verify 'trace_id' is present in response dict."""
     mock_handler = MagicMock()
     mock_handler.last_trace_id = "trace-test-123"
@@ -30,16 +31,13 @@ def test_chat_endpoint_returns_trace_id(client, monkeypatch):
         lambda handler: getattr(handler, "last_trace_id", None),
     )
 
-    def mock_ask(question, **kwargs):
-        return {
-            "answer": "Mock IT response",
-            "source_used": "knowledge_base",
-            "trace": ["retrieval"],
-            "citations": [],
-            "current_query": question,
-        }
-
-    monkeypatch.setitem(WORKFLOW_ASKS, "fix_single_jev", mock_ask)
+    register_mock_workflow(
+        "fix_single_jev",
+        answer="Mock IT response",
+        source_used="knowledge_base",
+        trace=["retrieval"],
+        citations=[],
+    )
 
     payload = {
         "question": "How do I connect to VPN?",
@@ -53,9 +51,10 @@ def test_chat_endpoint_returns_trace_id(client, monkeypatch):
     assert data["answer"] == "Mock IT response"
 
 
-def test_chat_endpoint_passes_session_and_user_id_to_ask(client, monkeypatch):
-    """POST /api/chat passes session_id, user_id, and callback to the respective workflow ask() function."""
-    captured_kwargs = {}
+def test_chat_endpoint_passes_session_and_user_id_to_ask(client, monkeypatch, clean_registry):
+    """POST /api/chat passes session_id, user_id, and callback to the respective workflow."""
+    captured_request = None
+    captured_config = None
     mock_handler = MagicMock()
 
     monkeypatch.setattr(
@@ -63,17 +62,37 @@ def test_chat_endpoint_passes_session_and_user_id_to_ask(client, monkeypatch):
         lambda **kwargs: mock_handler,
     )
 
-    def mock_ask(question, **kwargs):
-        captured_kwargs.update(kwargs)
+    mock_graph = MagicMock()
+
+    def _invoke(state, config=None):
+        nonlocal captured_config
+        captured_config = config
         return {
             "answer": "Answer with session",
             "source_used": "direct",
             "trace": [],
             "citations": [],
-            "current_query": question,
+            "current_query": state.get("question"),
         }
 
-    monkeypatch.setitem(WORKFLOW_ASKS, "fix_single_llm", mock_ask)
+    mock_graph.invoke = _invoke
+
+    class CapturedMockWorkflow(MockWorkflowDefinition):
+        def to_initial_state(self, request, trace_id=None):
+            nonlocal captured_request
+            captured_request = request
+            return super().to_initial_state(request, trace_id=trace_id)
+
+    clean_registry.register(
+        CapturedMockWorkflow(
+            "fix_single_llm",
+            graph=mock_graph,
+            answer="Answer with session",
+            source_used="direct",
+            trace=[],
+        ),
+        override=True,
+    )
 
     payload = {
         "question": "Need help with printer",
@@ -83,9 +102,11 @@ def test_chat_endpoint_passes_session_and_user_id_to_ask(client, monkeypatch):
     }
     response = client.post("/api/chat", json=payload)
     assert response.status_code == 200
-    assert captured_kwargs.get("session_id") == "sess-test-999"
-    assert captured_kwargs.get("user_id") == "user-test-888"
-    assert captured_kwargs.get("callback") is mock_handler
+    assert captured_request is not None
+    assert captured_request.session_id == "sess-test-999"
+    assert captured_request.user_id == "user-test-888"
+    assert captured_config is not None
+    assert captured_config.get("callbacks") == [mock_handler]
 
 
 def test_feedback_endpoint_accepts_valid_payload(client, monkeypatch):

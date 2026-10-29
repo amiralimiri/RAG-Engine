@@ -10,6 +10,7 @@ import pytest
 from app.api.schemas import ChatRequest, ChatResponse
 from app.rag.workflows.base import EvalContext, WorkflowDefinition, WorkflowInfo
 from app.rag.workflows.registry import WorkflowRegistry, get_workflow_registry
+from app.rag.workflows.runner import DEFAULT_GENERATION_NODES, DEFAULT_STEP_LABELS
 from app.rag.workflows import register_default_workflows
 
 
@@ -25,6 +26,7 @@ class MockWorkflowDefinition:
         source_used: str = "knowledge_base",
         trace: list[str] | None = None,
         citations: list[dict[str, Any]] | None = None,
+        rewritten_query: str | None = None,
         retrieved_contexts: list[str] | None = None,
         stream_events: list[dict[str, Any]] | Callable[..., Any] | None = None,
         graph: Any = None,
@@ -41,14 +43,15 @@ class MockWorkflowDefinition:
             description=description or f"Mock workflow definition for {id}",
             is_conversational=is_conversational,
             supports_streaming=supports_streaming,
-            step_labels=step_labels if step_labels is not None else {"retrieve_kb": "Searching internal knowledge base..."},
-            generation_nodes=generation_nodes if generation_nodes is not None else {"generate_from_kb"},
+            step_labels=step_labels if step_labels is not None else dict(DEFAULT_STEP_LABELS),
+            generation_nodes=generation_nodes if generation_nodes is not None else (set(DEFAULT_GENERATION_NODES) | {"agent"}),
             metadata=metadata or {},
         )
         self.answer = answer
         self.source_used = source_used
         self.trace = trace if trace is not None else ["step1", "step2"]
         self.citations = citations if citations is not None else []
+        self.rewritten_query = rewritten_query
         self.retrieved_contexts = retrieved_contexts if retrieved_contexts is not None else []
         self._custom_graph = graph
         self._stream_events = stream_events
@@ -58,13 +61,20 @@ class MockWorkflowDefinition:
             return self._custom_graph
 
         mock = MagicMock()
-        mock.invoke.return_value = {
-            "answer": self.answer,
-            "source_used": self.source_used,
-            "trace": self.trace,
-            "citations": self.citations,
-            "retrieved_contexts": self.retrieved_contexts,
-        }
+
+        def _invoke(state: Any = None, config: Any = None, **kwargs: Any) -> Any:
+            current_q = (state.get("current_query") or state.get("question")) if isinstance(state, dict) else None
+            return {
+                "answer": self.answer,
+                "source_used": self.source_used,
+                "trace": self.trace,
+                "citations": self.citations,
+                "retrieved_contexts": self.retrieved_contexts,
+                "current_query": current_q or self.rewritten_query,
+                "question": state.get("question") if isinstance(state, dict) else None,
+            }
+
+        mock.invoke.side_effect = _invoke
 
         async def _ainvoke(state: Any, config: Any = None, **kwargs: Any) -> Any:
             return mock.invoke(state, config=config, **kwargs)
@@ -104,6 +114,7 @@ class MockWorkflowDefinition:
             source_used=final_state.get("source_used") or self.source_used,
             trace=final_state.get("trace") or self.trace,
             citations=final_state.get("citations") or self.citations,
+            rewritten_query=final_state.get("rewritten_query") or final_state.get("current_query") or final_state.get("question"),
             trace_id=trace_id or final_state.get("trace_id"),
         )
 

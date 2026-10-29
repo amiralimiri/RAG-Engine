@@ -11,7 +11,6 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
-from app.api.routes import WORKFLOW_ASKS
 
 
 @pytest.fixture
@@ -206,7 +205,7 @@ def test_api_workflows_contract(client):
     assert data["default"] in data["workflows"]
 
 
-def test_api_chat_contract_success(client, monkeypatch):
+def test_api_chat_contract_success(client, monkeypatch, register_mock_workflow):
     """Assert POST /api/chat contract returns trace_id, source_used, and trace arrays."""
     mock_handler = MagicMock()
     mock_handler.last_trace_id = "trace-frontend-test-999"
@@ -220,16 +219,13 @@ def test_api_chat_contract_success(client, monkeypatch):
         lambda handler: getattr(handler, "last_trace_id", None),
     )
 
-    def mock_ask(question, **kwargs):
-        return {
-            "answer": "Connect to GlobalProtect VPN using your Okta MFA credentials.",
-            "source_used": "vectorstore",
-            "trace": ["router", "retrieve_kb", "grade_documents", "generate_answer"],
-            "citations": ["IT Knowledge Base - VPN Handbook (Page 4)"],
-            "current_query": question,
-        }
-
-    monkeypatch.setitem(WORKFLOW_ASKS, "fix_single_jev", mock_ask)
+    register_mock_workflow(
+        "fix_single_jev",
+        answer="Connect to GlobalProtect VPN using your Okta MFA credentials.",
+        source_used="vectorstore",
+        trace=["router", "retrieve_kb", "grade_documents", "generate_answer"],
+        citations=["IT Knowledge Base - VPN Handbook (Page 4)"],
+    )
 
     payload = {
         "question": "How do I connect to VPN?",

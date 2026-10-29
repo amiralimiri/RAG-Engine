@@ -6,7 +6,6 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from app.core.config import get_settings
-from app.api.routes import WORKFLOW_ASKS, WORKFLOW_GRAPHS
 from app.rag.workflows import get_workflow_registry
 from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, ToolMessage
 from tests.test_chat_stream import parse_sse_lines
@@ -37,7 +36,7 @@ def test_lifespan_startup_and_shutdown(monkeypatch):
     mock_flush.assert_called_once()
 
 
-def test_e2e_flow_with_langfuse_mocked(client, monkeypatch):
+def test_e2e_flow_with_langfuse_mocked(client, monkeypatch, register_mock_workflow):
     """Mock Langfuse client and callback; invoke /api/chat with fix_single_llm, verify trace returned, invoke /api/feedback with that trace ID, assert 200 response and background score dispatch."""
     mock_client = MagicMock()
     mock_handler = MagicMock()
@@ -50,17 +49,14 @@ def test_e2e_flow_with_langfuse_mocked(client, monkeypatch):
     monkeypatch.setattr("app.api.routes.extract_trace_id", lambda handler: getattr(handler, "last_trace_id", None))
     monkeypatch.setattr("app.api.routes.run_online_evaluation_task", mock_eval)
 
-    def mock_llm_ask(question, **kwargs):
-        return {
-            "answer": "Follow VPN installation guide for your OS.",
-            "source_used": "knowledge_base",
-            "trace": ["route_question", "retrieve_kb", "generate_from_kb"],
-            "citations": ["vpn_setup.md"],
-            "current_query": question,
-            "retrieved_contexts": ["Follow corporate VPN installation instructions."],
-        }
-
-    monkeypatch.setitem(WORKFLOW_ASKS, "fix_single_llm", mock_llm_ask)
+    register_mock_workflow(
+        "fix_single_llm",
+        answer="Follow VPN installation guide for your OS.",
+        source_used="knowledge_base",
+        trace=["route_question", "retrieve_kb", "generate_from_kb"],
+        citations=["vpn_setup.md"],
+        retrieved_contexts=["Follow corporate VPN installation instructions."],
+    )
 
     # 1. Chat invocation
     chat_payload = {
@@ -107,25 +103,28 @@ def test_e2e_flow_with_langfuse_mocked(client, monkeypatch):
     )
 
 
-def test_e2e_flow_with_langfuse_disabled(client, monkeypatch):
+def test_e2e_flow_with_langfuse_disabled(client, monkeypatch, register_mock_workflow):
     """Run chat invocation with LANGFUSE_ENABLED=False, verify normal response with trace_id=None and no exceptions."""
     settings = get_settings()
     monkeypatch.setattr(settings, "langfuse_enabled", False)
     mock_eval = AsyncMock()
     monkeypatch.setattr("app.api.routes.run_online_evaluation_task", mock_eval)
 
-    def mock_jev_ask(question, **kwargs):
-        # Assert callback is None when telemetry is disabled
-        assert kwargs.get("callback") is None
-        return {
-            "answer": "Visit https://mfa.example.com to reset your MFA token.",
-            "source_used": "knowledge_base",
-            "trace": ["route_question", "retrieve_kb", "generate_from_kb"],
-            "citations": ["mfa_reset.md"],
-            "current_query": question,
-        }
-
-    monkeypatch.setitem(WORKFLOW_ASKS, "fix_single_jev", mock_jev_ask)
+    mock_graph = MagicMock()
+    mock_graph.invoke.return_value = {
+        "answer": "Visit https://mfa.example.com to reset your MFA token.",
+        "source_used": "knowledge_base",
+        "trace": ["route_question", "retrieve_kb", "generate_from_kb"],
+        "citations": ["mfa_reset.md"],
+    }
+    register_mock_workflow(
+        "fix_single_jev",
+        graph=mock_graph,
+        answer="Visit https://mfa.example.com to reset your MFA token.",
+        source_used="knowledge_base",
+        trace=["route_question", "retrieve_kb", "generate_from_kb"],
+        citations=["mfa_reset.md"],
+    )
 
     payload = {
         "question": "How do I reset my MFA?",
@@ -139,6 +138,9 @@ def test_e2e_flow_with_langfuse_disabled(client, monkeypatch):
     assert data["workflow"] == "fix_single_jev"
     # When trace_id is None, online evaluation is skipped
     mock_eval.assert_not_called()
+    # Telemetry callbacks are not injected when disabled
+    call_config = mock_graph.invoke.call_args.kwargs.get("config")
+    assert call_config is None or "callbacks" not in call_config
 
     # Also submit feedback when disabled - should not raise
     fb_res = client.post(
@@ -149,7 +151,7 @@ def test_e2e_flow_with_langfuse_disabled(client, monkeypatch):
     assert fb_res.json() == {"status": "accepted", "trace_id": "dummy-trace"}
 
 
-def test_e2e_flow_with_fix_single_jev_mocked(client, monkeypatch):
+def test_e2e_flow_with_fix_single_jev_mocked(client, monkeypatch, register_mock_workflow):
     """Exercise fix_single_jev workflow end-to-end with mock Langfuse callback and score client."""
     mock_client = MagicMock()
     mock_handler = MagicMock()
@@ -162,18 +164,23 @@ def test_e2e_flow_with_fix_single_jev_mocked(client, monkeypatch):
     monkeypatch.setattr("app.api.routes.extract_trace_id", lambda handler: getattr(handler, "last_trace_id", None))
     monkeypatch.setattr("app.api.routes.run_online_evaluation_task", mock_eval)
 
-    def mock_jev_ask(question, **kwargs):
-        assert kwargs.get("callback") is mock_handler
-        return {
-            "answer": "JEV validated response.",
-            "source_used": "knowledge_base",
-            "trace": ["route_question", "retrieve_kb", "generate_from_kb"],
-            "citations": [],
-            "current_query": question,
-            "retrieved_contexts": ["Company laptop policy context."],
-        }
-
-    monkeypatch.setitem(WORKFLOW_ASKS, "fix_single_jev", mock_jev_ask)
+    mock_graph = MagicMock()
+    mock_graph.invoke.return_value = {
+        "answer": "JEV validated response.",
+        "source_used": "knowledge_base",
+        "trace": ["route_question", "retrieve_kb", "generate_from_kb"],
+        "citations": [],
+        "retrieved_contexts": ["Company laptop policy context."],
+    }
+    register_mock_workflow(
+        "fix_single_jev",
+        graph=mock_graph,
+        answer="JEV validated response.",
+        source_used="knowledge_base",
+        trace=["route_question", "retrieve_kb", "generate_from_kb"],
+        citations=[],
+        retrieved_contexts=["Company laptop policy context."],
+    )
 
     chat_payload = {
         "question": "What is the policy on company laptops?",
@@ -214,24 +221,20 @@ def test_e2e_flow_with_fix_single_jev_mocked(client, monkeypatch):
     )
 
 
-def test_e2e_flow_with_langfuse_keys_unset(client, monkeypatch):
+def test_e2e_flow_with_langfuse_keys_unset(client, monkeypatch, register_mock_workflow):
     """When langfuse_enabled is True but keys are None, trace_id is gracefully None without error."""
     settings = get_settings()
     monkeypatch.setattr(settings, "langfuse_enabled", True)
     monkeypatch.setattr(settings, "langfuse_public_key", None)
     monkeypatch.setattr(settings, "langfuse_secret_key", None)
 
-    def mock_ask(question, **kwargs):
-        assert kwargs.get("callback") is None
-        return {
-            "answer": "Fallback response without keys",
-            "source_used": "direct",
-            "trace": [],
-            "citations": [],
-            "current_query": question,
-        }
-
-    monkeypatch.setitem(WORKFLOW_ASKS, "fix_single_llm", mock_ask)
+    register_mock_workflow(
+        "fix_single_llm",
+        answer="Fallback response without keys",
+        source_used="direct",
+        trace=[],
+        citations=[],
+    )
 
     res = client.post("/api/chat", json={"question": "Hello", "workflow": "fix_single_llm"})
     assert res.status_code == 200
@@ -240,7 +243,7 @@ def test_e2e_flow_with_langfuse_keys_unset(client, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_e2e_streaming_flow_with_observability_and_evaluation(monkeypatch):
+async def test_e2e_streaming_flow_with_observability_and_evaluation(monkeypatch, register_mock_workflow):
     """Verify POST /api/chat/stream emits SSE tokens, terminal metadata with trace_id,
     dispatches background online evaluation with retrieved_contexts, and handles feedback."""
     mock_client = MagicMock()
@@ -299,7 +302,7 @@ async def test_e2e_streaming_flow_with_observability_and_evaluation(monkeypatch)
 
     mock_graph = MagicMock()
     mock_graph.astream_events = mock_astream_events
-    monkeypatch.setitem(WORKFLOW_GRAPHS, "fix_single_jev", mock_graph)
+    register_mock_workflow("fix_single_jev", graph=mock_graph)
 
     # 1. Stream chat request
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as ac:

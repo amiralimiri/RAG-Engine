@@ -28,7 +28,6 @@ from langchain_core.messages.tool import ToolCallChunk
 from langchain_core.tools import BaseTool
 
 from app.main import app
-from app.api.routes import WORKFLOW_ASKS, WORKFLOW_GRAPHS
 from app.rag.classifiers import FakeClassifierAdapter
 from app.rag.workflows import get_workflow_registry
 from app.rag.workflows.self_corrective import SelfCorrectiveRagWorkflow
@@ -237,7 +236,7 @@ class TestBoundaryValidation:
         )
         assert resp.status_code == 422
 
-    def test_missing_workflow_key_defaults_to_fix_single_jev(self, client, monkeypatch):
+    def test_missing_workflow_key_defaults_to_fix_single_jev(self, client, monkeypatch, register_mock_workflow):
         """Missing workflow defaults to fix_single_jev without 422 error."""
         async def dummy_events(*args, **kwargs):
             yield {"event": "on_chat_model_stream", "metadata": {"langgraph_node": "direct_answer"}, "data": {"chunk": {"content": "ok"}}}
@@ -245,7 +244,7 @@ class TestBoundaryValidation:
 
         mock_graph = MagicMock()
         mock_graph.astream_events = dummy_events
-        monkeypatch.setitem(WORKFLOW_GRAPHS, "fix_single_jev", mock_graph)
+        register_mock_workflow("fix_single_jev", graph=mock_graph)
 
         resp = client.post(
             "/api/chat/stream",
@@ -263,14 +262,14 @@ class TestBoundaryValidation:
 class TestHeadersAndContentType:
     """Verify standard SSE response headers."""
 
-    def test_streaming_headers(self, client, monkeypatch):
+    def test_streaming_headers(self, client, monkeypatch, register_mock_workflow):
         """Valid request returns HTTP 200 with text/event-stream, no-cache, and X-Accel-Buffering: no."""
         async def dummy_events(*args, **kwargs):
             yield {"event": "on_chain_end", "metadata": {"langgraph_node": "direct_answer"}, "data": {"output": {"source_used": "direct"}}}
 
         mock_graph = MagicMock()
         mock_graph.astream_events = dummy_events
-        monkeypatch.setitem(WORKFLOW_GRAPHS, "fix_single_jev", mock_graph)
+        register_mock_workflow("fix_single_jev", graph=mock_graph)
 
         resp = client.post(
             "/api/chat/stream",
@@ -302,7 +301,7 @@ class TestWireEventSequence:
         yield {"event": "on_chat_model_stream", "metadata": {"langgraph_node": "direct_answer"}, "data": {"chunk": {"content": " world!\n\nHere is code:\n  return 42"}}}
         yield {"event": "on_chain_end", "metadata": {"langgraph_node": "direct_answer"}, "data": {"output": {"source_used": "direct", "citations": [{"title": "guide.md"}], "current_query": "rewritten query"}}}
 
-    async def test_event_sequence_and_payloads(self, monkeypatch):
+    async def test_event_sequence_and_payloads(self, monkeypatch, register_mock_workflow):
         """Verify step, token, and metadata events are formatted as valid JSON data blocks."""
         mock_handler = get_mock_handler("trace-seq-001")
         monkeypatch.setattr("app.api.routes.get_langfuse_callback", lambda **kwargs: mock_handler)
@@ -310,7 +309,7 @@ class TestWireEventSequence:
 
         mock_graph = MagicMock()
         mock_graph.astream_events = self._mock_astream_events
-        monkeypatch.setitem(WORKFLOW_GRAPHS, "fix_single_llm", mock_graph)
+        register_mock_workflow("fix_single_llm", graph=mock_graph)
 
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app), base_url="http://test"
@@ -371,7 +370,7 @@ class TestWireEventSequence:
         # Verify callback flush invocation
         mock_handler.flush.assert_called()
 
-    async def test_streaming_triggers_online_evaluation_task(self, monkeypatch):
+    async def test_streaming_triggers_online_evaluation_task(self, monkeypatch, register_mock_workflow):
         """Verify streaming chat completion dispatches run_online_evaluation_task with trace_id and contexts."""
         mock_handler = get_mock_handler("trace-eval-stream-1")
         monkeypatch.setattr("app.api.routes.get_langfuse_callback", lambda **kwargs: mock_handler)
@@ -414,7 +413,7 @@ class TestWireEventSequence:
 
         mock_graph = MagicMock()
         mock_graph.astream_events = mock_events
-        monkeypatch.setitem(WORKFLOW_GRAPHS, "fix_single_llm", mock_graph)
+        register_mock_workflow("fix_single_llm", graph=mock_graph)
 
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app), base_url="http://test"
@@ -440,7 +439,7 @@ class TestWireEventSequence:
         await asyncio.sleep(0.05)
         assert len(_background_tasks) == 0
 
-    async def test_non_streaming_fallback_node_emits_static_token(self, monkeypatch):
+    async def test_non_streaming_fallback_node_emits_static_token(self, monkeypatch, register_mock_workflow):
         """When reaching insufficient fallback node with static answer, an event: token is synthesized."""
         mock_handler = get_mock_handler("trace-insufficient-001")
         monkeypatch.setattr("app.api.routes.get_langfuse_callback", lambda **kwargs: mock_handler)
@@ -463,7 +462,7 @@ class TestWireEventSequence:
 
         mock_graph = MagicMock()
         mock_graph.astream_events = mock_insufficient_stream
-        monkeypatch.setitem(WORKFLOW_GRAPHS, "fix_single_llm", mock_graph)
+        register_mock_workflow("fix_single_llm", graph=mock_graph)
 
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app), base_url="http://test"
@@ -486,7 +485,7 @@ class TestWireEventSequence:
         assert len(metas) == 1
         assert metas[0]["source_used"] == "insufficient_evidence"
 
-    async def test_token_isolation_from_routers_and_graders(self, monkeypatch):
+    async def test_token_isolation_from_routers_and_graders(self, monkeypatch, register_mock_workflow):
         """Asserts token isolation: router/grader JSON output is never leaked as token deltas."""
         mock_handler = get_mock_handler("trace-iso-002")
         monkeypatch.setattr("app.api.routes.get_langfuse_callback", lambda **kwargs: mock_handler)
@@ -503,7 +502,7 @@ class TestWireEventSequence:
 
         mock_graph = MagicMock()
         mock_graph.astream_events = mock_events
-        monkeypatch.setitem(WORKFLOW_GRAPHS, "fix_single_llm", mock_graph)
+        register_mock_workflow("fix_single_llm", graph=mock_graph)
 
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as ac:
             async with ac.stream("POST", "/api/chat/stream", json={"question": "test isolation", "workflow": "fix_single_llm"}) as resp:
@@ -533,7 +532,7 @@ class TestStreamStepsFeatureFlag:
         yield {"event": "on_chat_model_stream", "metadata": {"langgraph_node": "direct_answer"}, "data": {"chunk": {"content": "Direct reply"}}}
         yield {"event": "on_chain_end", "metadata": {"langgraph_node": "direct_answer"}, "data": {"output": {"source_used": "direct"}}}
 
-    async def test_no_step_events_when_stream_steps_false(self, monkeypatch):
+    async def test_no_step_events_when_stream_steps_false(self, monkeypatch, register_mock_workflow):
         """When stream_steps=False, no event: step frames are emitted before tokens."""
         mock_handler = get_mock_handler("trace-nostep-003")
         monkeypatch.setattr("app.api.routes.get_langfuse_callback", lambda **kwargs: mock_handler)
@@ -541,7 +540,7 @@ class TestStreamStepsFeatureFlag:
 
         mock_graph = MagicMock()
         mock_graph.astream_events = self._mock_astream_events
-        monkeypatch.setitem(WORKFLOW_GRAPHS, "fix_single_llm", mock_graph)
+        register_mock_workflow("fix_single_llm", graph=mock_graph)
 
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as ac:
             async with ac.stream(
@@ -568,7 +567,7 @@ class TestStreamStepsFeatureFlag:
 class TestClientDisconnection:
     """Client dropout mid-stream triggers graceful teardown and flush."""
 
-    async def test_disconnect_triggers_telemetry_flush(self, monkeypatch):
+    async def test_disconnect_triggers_telemetry_flush(self, monkeypatch, register_mock_workflow):
         """Simulating client disconnect mid-stream invokes callback flush during teardown."""
         mock_handler = get_mock_handler("trace-disc-004")
         monkeypatch.setattr("app.api.routes.get_langfuse_callback", lambda **kwargs: mock_handler)
@@ -582,7 +581,7 @@ class TestClientDisconnection:
 
         mock_graph = MagicMock()
         mock_graph.astream_events = mock_astream_events_long
-        monkeypatch.setitem(WORKFLOW_GRAPHS, "fix_single_llm", mock_graph)
+        register_mock_workflow("fix_single_llm", graph=mock_graph)
 
         transport = DisconnectableASGITransport(app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
@@ -609,7 +608,7 @@ class TestClientDisconnection:
 class TestMidStreamError:
     """Runtime errors during streaming emit event: error with code 500."""
 
-    async def test_mid_stream_error_emits_error_event(self, monkeypatch):
+    async def test_mid_stream_error_emits_error_event(self, monkeypatch, register_mock_workflow):
         mock_handler = get_mock_handler("trace-err-005")
         monkeypatch.setattr("app.api.routes.get_langfuse_callback", lambda **kwargs: mock_handler)
         monkeypatch.setattr("app.api.routes.extract_trace_id", lambda handler: "trace-err-005")
@@ -620,7 +619,7 @@ class TestMidStreamError:
 
         mock_graph = MagicMock()
         mock_graph.astream_events = mock_events_with_error
-        monkeypatch.setitem(WORKFLOW_GRAPHS, "fix_single_llm", mock_graph)
+        register_mock_workflow("fix_single_llm", graph=mock_graph)
 
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as ac:
             async with ac.stream(
@@ -647,22 +646,19 @@ class TestMidStreamError:
 class TestBackwardCompatibility:
     """Synchronous POST /api/chat continues functioning identically."""
 
-    def test_sync_chat_endpoint_works(self, client, monkeypatch):
+    def test_sync_chat_endpoint_works(self, client, monkeypatch, register_mock_workflow):
         """Standard POST /api/chat returns HTTP 200 with complete response dict."""
         mock_handler = get_mock_handler("trace-bc-006")
         monkeypatch.setattr("app.api.routes.get_langfuse_callback", lambda **kwargs: mock_handler)
         monkeypatch.setattr("app.api.routes.extract_trace_id", lambda handler: "trace-bc-006")
 
-        def mock_ask(question, **kwargs):
-            return {
-                "answer": "Backward compatible synchronous answer.",
-                "source_used": "knowledge_base",
-                "trace": ["route_question", "retrieve_kb", "generate_from_kb"],
-                "citations": [{"title": "network_guide.pdf"}],
-                "current_query": question,
-            }
-
-        monkeypatch.setitem(WORKFLOW_ASKS, "fix_single_llm", mock_ask)
+        register_mock_workflow(
+            "fix_single_llm",
+            answer="Backward compatible synchronous answer.",
+            source_used="knowledge_base",
+            trace=["route_question", "retrieve_kb", "generate_from_kb"],
+            citations=[{"title": "network_guide.pdf"}],
+        )
 
         resp = client.post("/api/chat", json={"question": "How do I configure VPN?", "workflow": "fix_single_llm"})
         assert resp.status_code == 200
@@ -1023,6 +1019,7 @@ class TestUnifiedBaseToolStreamingRegression:
             id="stream_kb_seam_wf",
             name="Stream KB Seam Workflow",
             classifier=classifier,
+            model=fake_llm,
             kb_tool=kb_tool,
         )
 
@@ -1102,6 +1099,7 @@ class TestUnifiedBaseToolStreamingRegression:
             id="stream_web_seam_wf",
             name="Stream Web Seam Workflow",
             classifier=classifier,
+            model=fake_llm,
             kb_tool=kb_tool,
             web_tool=web_tool,
         )
@@ -1186,12 +1184,15 @@ class TestUnifiedBaseToolStreamingRegression:
         mock_retriever.ainvoke = AsyncMock(return_value=[legacy_doc])
         mock_retriever.invoke = MagicMock(return_value=[legacy_doc])
 
+        from app.rag.tools.retriever import create_retriever_tool
+
         classifier = FakeClassifierAdapter(route_decision="kb", kb_grade="good")
         workflow = SelfCorrectiveRagWorkflow(
             id="stream_legacy_adapter_wf",
             name="Stream Legacy Adapter Workflow",
             classifier=classifier,
-            retriever=mock_retriever,
+            model=fake_llm,
+            kb_tool=create_retriever_tool(retriever=mock_retriever),
         )
 
         registry = get_workflow_registry()

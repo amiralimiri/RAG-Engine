@@ -7,7 +7,6 @@ from starlette.testclient import TestClient
 
 from app.core.config import Settings
 from app.main import app
-from app.api.routes import WORKFLOW_ASKS, WORKFLOW_GRAPHS
 from app.services.evaluation import run_online_evaluation_task
 
 
@@ -399,24 +398,20 @@ class TestTimeoutAndFailOpenSafety:
 class TestRouteIntegration:
     """Verify POST /api/chat and POST /api/chat/stream dispatch run_online_evaluation_task."""
 
-    def test_sync_chat_enqueues_background_evaluation(self, monkeypatch):
+    def test_sync_chat_enqueues_background_evaluation(self, monkeypatch, register_mock_workflow):
         client = TestClient(app)
 
         mock_eval = AsyncMock()
         monkeypatch.setattr("app.api.routes.run_online_evaluation_task", mock_eval)
 
-        mock_ask = MagicMock(
-            return_value={
-                "answer": "Test sync answer",
-                "source_used": "kb",
-                "retrieved_contexts": ["doc chunk 1", "doc chunk 2"],
-                "trace": ["retrieve_kb", "generate_from_kb"],
-                "trace_id": "trace-sync-123",
-                "citations": [],
-                "workflow": "fix_single_llm",
-            }
+        register_mock_workflow(
+            "fix_single_llm",
+            answer="Test sync answer",
+            source_used="kb",
+            retrieved_contexts=["doc chunk 1", "doc chunk 2"],
+            trace=["retrieve_kb", "generate_from_kb"],
+            citations=[],
         )
-        monkeypatch.setitem(WORKFLOW_ASKS, "fix_single_llm", mock_ask)
         monkeypatch.setattr("app.api.routes.extract_trace_id", lambda handler: "trace-sync-123")
 
         payload = {
@@ -437,7 +432,7 @@ class TestRouteIntegration:
         )
 
     @pytest.mark.asyncio
-    async def test_streaming_chat_triggers_background_evaluation(self, monkeypatch):
+    async def test_streaming_chat_triggers_background_evaluation(self, monkeypatch, register_mock_workflow):
         eval_task_called = asyncio.Event()
         captured_kwargs = {}
 
@@ -485,7 +480,7 @@ class TestRouteIntegration:
 
         mock_graph = MagicMock()
         mock_graph.astream_events = mock_astream_events
-        monkeypatch.setitem(WORKFLOW_GRAPHS, "fix_single_llm", mock_graph)
+        register_mock_workflow("fix_single_llm", graph=mock_graph)
         monkeypatch.setattr("app.api.routes.extract_trace_id", lambda handler: "trace-stream-456")
 
         async with httpx.AsyncClient(

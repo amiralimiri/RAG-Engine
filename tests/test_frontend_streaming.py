@@ -22,7 +22,6 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from fastapi.testclient import TestClient
 
-from app.api.routes import WORKFLOW_ASKS, WORKFLOW_GRAPHS
 from app.main import app
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -248,7 +247,7 @@ class TestStreamingContractParity:
     """Verifies that POST /api/chat/stream yields matching metadata and contracts compared to legacy POST /api/chat."""
 
     @pytest.mark.parametrize("workflow", ["fix_single_llm", "fix_single_jev"])
-    def test_e2e_streaming_vs_sync_contract_parity(self, client, monkeypatch, workflow):
+    def test_e2e_streaming_vs_sync_contract_parity(self, client, monkeypatch, register_mock_workflow, workflow):
         """Verify that streaming via POST /api/chat/stream yields identical metadata and contracts compared to POST /api/chat."""
         test_trace_id = "trace-e2e-parity-12345"
         mock_handler = MagicMock()
@@ -269,19 +268,7 @@ class TestStreamingContractParity:
         ]
         test_rewritten = "How do I connect to the corporate VPN?"
 
-        # 1. Setup legacy synchronous mock
-        def mock_sync_ask(question, **kwargs):
-            return {
-                "answer": test_answer,
-                "source_used": test_source,
-                "trace": test_trace,
-                "citations": test_citations,
-                "current_query": test_rewritten,
-            }
-
-        monkeypatch.setitem(WORKFLOW_ASKS, workflow, mock_sync_ask)
-
-        # 2. Setup streaming graph mock emitting steps, tokens, and final completion
+        # Setup streaming graph mock emitting steps, tokens, and final completion
         async def mock_astream_events(initial_state, version="v2", config=None):
             # Step events
             yield {
@@ -328,8 +315,22 @@ class TestStreamingContractParity:
             }
 
         mock_graph = MagicMock()
+        mock_graph.invoke.return_value = {
+            "answer": test_answer,
+            "source_used": test_source,
+            "trace": test_trace,
+            "citations": test_citations,
+            "current_query": test_rewritten,
+        }
         mock_graph.astream_events = mock_astream_events
-        monkeypatch.setitem(WORKFLOW_GRAPHS, workflow, mock_graph)
+        register_mock_workflow(
+            workflow,
+            graph=mock_graph,
+            answer=test_answer,
+            source_used=test_source,
+            trace=test_trace,
+            citations=test_citations,
+        )
 
         request_payload = {
             "question": "How do I connect to VPN?",
@@ -403,7 +404,7 @@ class TestStreamingContractParity:
         # 7. Trace ID matches
         assert sync_data["trace_id"] == stream_meta["trace_id"] == test_trace_id
 
-    def test_e2e_streaming_step_suppression_parity(self, client, monkeypatch):
+    def test_e2e_streaming_step_suppression_parity(self, client, monkeypatch, register_mock_workflow):
         """Verify stream_steps=False suppresses step events while preserving identical tokens and metadata."""
         mock_handler = MagicMock()
         mock_handler.last_trace_id = "trace-steps-suppressed"
@@ -418,7 +419,7 @@ class TestStreamingContractParity:
 
         mock_graph = MagicMock()
         mock_graph.astream_events = mock_astream_events
-        monkeypatch.setitem(WORKFLOW_GRAPHS, "fix_single_llm", mock_graph)
+        register_mock_workflow("fix_single_llm", graph=mock_graph)
 
         # Request with stream_steps=False
         with client.stream(

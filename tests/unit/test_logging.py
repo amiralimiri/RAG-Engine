@@ -360,10 +360,9 @@ def test_noise_suppression_includes_new_loggers():
         assert logging.getLogger(name).getEffectiveLevel() >= logging.WARNING
 
 
-def test_trace_id_present_in_workflow_execution_logs(monkeypatch, capsys):
+def test_trace_id_present_in_workflow_execution_logs(monkeypatch, capsys, register_mock_workflow):
     """Assert trace_id is present in log events emitted during workflow execution."""
     from unittest.mock import MagicMock
-    from app.api.routes import WORKFLOW_ASKS
 
     dummy_settings = Settings(
         langfuse_enabled=True,
@@ -381,7 +380,9 @@ def test_trace_id_present_in_workflow_execution_logs(monkeypatch, capsys):
 
     captured_workflow_logs = []
 
-    def mock_workflow_ask(question, **kwargs):
+    mock_graph = MagicMock()
+
+    def _invoke(state, config=None):
         node_logger = logging.getLogger("app.rag.route_question")
         node_logger.info("Routing question to KB")
         captured_workflow_logs.append(dict(structlog.contextvars.get_contextvars()))
@@ -390,10 +391,18 @@ def test_trace_id_present_in_workflow_execution_logs(monkeypatch, capsys):
             "source_used": "kb",
             "trace": ["route_question"],
             "citations": [],
-            "current_query": question,
+            "current_query": state.get("question"),
         }
 
-    monkeypatch.setitem(WORKFLOW_ASKS, "fix_single_llm", mock_workflow_ask)
+    mock_graph.invoke = _invoke
+
+    register_mock_workflow(
+        "fix_single_llm",
+        graph=mock_graph,
+        answer="Answer from KB",
+        source_used="kb",
+        trace=["route_question"],
+    )
 
     with TestClient(app) as client:
         res = client.post("/api/chat", json={"question": "How to reset VPN?", "workflow": "fix_single_llm"})
