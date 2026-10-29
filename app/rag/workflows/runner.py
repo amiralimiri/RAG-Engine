@@ -6,6 +6,7 @@ import asyncio
 from collections.abc import AsyncGenerator
 from datetime import datetime, timezone
 import json
+import sys
 from typing import TYPE_CHECKING, Any
 import uuid
 
@@ -23,6 +24,7 @@ if TYPE_CHECKING:
         StreamStepEvent,
         StreamTokenEvent,
     )
+import app.core.telemetry as _core_telemetry
 from app.core.telemetry import (
     extract_trace_id,
     flush_telemetry,
@@ -30,9 +32,38 @@ from app.core.telemetry import (
 )
 from app.rag.workflows.base import WorkflowDefinition
 from app.rag.workflows.registry import WorkflowRegistry, get_workflow_registry
+import app.services.evaluation as _core_eval
 from app.services.evaluation import run_online_evaluation_task
 
 logger = structlog.get_logger(__name__)
+
+
+def _get_langfuse_callback(**kwargs: Any) -> Any:
+    routes = sys.modules.get("app.api.routes")
+    if routes and hasattr(routes, "get_langfuse_callback") and routes.get_langfuse_callback is not _core_telemetry.get_langfuse_callback:
+        return routes.get_langfuse_callback(**kwargs)
+    return get_langfuse_callback(**kwargs)
+
+
+def _extract_trace_id(handler: Any) -> str | None:
+    routes = sys.modules.get("app.api.routes")
+    if routes and hasattr(routes, "extract_trace_id") and routes.extract_trace_id is not _core_telemetry.extract_trace_id:
+        return routes.extract_trace_id(handler)
+    return extract_trace_id(handler)
+
+
+def _flush_telemetry() -> None:
+    routes = sys.modules.get("app.api.routes")
+    if routes and hasattr(routes, "flush_telemetry") and routes.flush_telemetry is not _core_telemetry.flush_telemetry:
+        routes.flush_telemetry()
+    flush_telemetry()
+
+
+def _get_run_online_evaluation_task() -> Any:
+    routes = sys.modules.get("app.api.routes")
+    if routes and hasattr(routes, "run_online_evaluation_task") and routes.run_online_evaluation_task is not _core_eval.run_online_evaluation_task:
+        return routes.run_online_evaluation_task
+    return run_online_evaluation_task
 
 DEFAULT_STEP_LABELS: dict[str, str] = {
     "route_question": "Analyzing inquiry & routing...",
@@ -134,7 +165,7 @@ class WorkflowRunner:
         if callback is not None:
             handler = callback
         else:
-            handler = get_langfuse_callback(
+            handler = _get_langfuse_callback(
                 workflow_name=request.workflow,
                 session_id=request.session_id,
                 user_id=request.user_id,
@@ -142,7 +173,7 @@ class WorkflowRunner:
                 metadata=telemetry_metadata,
             )
 
-        trace_id = extract_trace_id(handler) or sanitized_tid
+        trace_id = _extract_trace_id(handler) or sanitized_tid
         if handler is not None and not trace_id:
             ctx_tid = structlog.contextvars.get_contextvars().get("trace_id")
             trace_id = ctx_tid.replace("-", "").lower() if ctx_tid else uuid.uuid4().hex
@@ -203,7 +234,7 @@ class WorkflowRunner:
         """Convert final state to ChatResponse, bind resolved trace context, and schedule online evaluation."""
         chat_response = wf_def.to_chat_response(final_state, trace_id=trace_id)
         chat_response._raw_state = final_state
-        resolved_tid = extract_trace_id(handler) or trace_id or chat_response.trace_id
+        resolved_tid = _extract_trace_id(handler) or trace_id or chat_response.trace_id
 
         if resolved_tid:
             structlog.contextvars.bind_contextvars(trace_id=resolved_tid)
@@ -235,9 +266,11 @@ class WorkflowRunner:
                 or []
             )
 
+            eval_fn = _get_run_online_evaluation_task()
+
             if background_tasks is not None:
                 background_tasks.add_task(
-                    run_online_evaluation_task,
+                    eval_fn,
                     trace_id=resolved_tid,
                     question=request.question,
                     answer=chat_response.answer,
@@ -252,7 +285,7 @@ class WorkflowRunner:
 
                 if loop is not None and loop.is_running():
                     task = loop.create_task(
-                        run_online_evaluation_task(
+                        eval_fn(
                             trace_id=resolved_tid,
                             question=request.question,
                             answer=chat_response.answer,
@@ -318,7 +351,7 @@ class WorkflowRunner:
             logger.exception("Error in chat pipeline: %s", exc)
             raise HTTPException(status_code=500, detail=f"Inference error: {exc}") from exc
         finally:
-            flush_telemetry()
+            _flush_telemetry()
 
     async def aexecute(
         self,
@@ -367,7 +400,7 @@ class WorkflowRunner:
             logger.exception("Error in chat pipeline: %s", exc)
             raise HTTPException(status_code=500, detail=f"Inference error: {exc}") from exc
         finally:
-            flush_telemetry()
+            _flush_telemetry()
 
     def stream(
         self,
@@ -484,7 +517,7 @@ class WorkflowRunner:
                     yield self.format_sse("token", StreamTokenEvent(delta=static_answer))
 
             # 5. Terminal Metadata Event
-            resolved_tid = extract_trace_id(handler) or trace_id
+            resolved_tid = _extract_trace_id(handler) or trace_id
             if wf_def is not None:
                 chat_resp = wf_def.to_chat_response(final_output, trace_id=resolved_tid)
                 eval_ctx = wf_def.extract_eval_context(final_output)
@@ -525,8 +558,9 @@ class WorkflowRunner:
 
             # Safeguard background evaluation task
             if resolved_tid:
+                eval_fn = _get_run_online_evaluation_task()
                 eval_task = asyncio.create_task(
-                    run_online_evaluation_task(
+                    eval_fn(
                         trace_id=resolved_tid,
                         question=request.question,
                         answer=final_answer,
@@ -589,7 +623,7 @@ class WorkflowRunner:
                 except Exception:
                     pass
             try:
-                flush_telemetry()
+                _flush_telemetry()
             except Exception:
                 pass
 
