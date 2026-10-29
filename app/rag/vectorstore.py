@@ -15,11 +15,8 @@ from app.rag.knowledge.vectorstore import (
 
 
 def get_vectorstore() -> Any:
-    """Backward-compatible access to the active vector store or adapter."""
-    store = get_knowledge_store()
-    if hasattr(store, "_store") and getattr(store, "_store", None) is not None:
-        return store._store
-    return store
+    """Backward-compatible access to the active vector store adapter."""
+    return get_knowledge_store()
 
 
 def get_retriever(search_kwargs: dict[str, Any] | None = None) -> Any:

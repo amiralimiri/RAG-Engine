@@ -20,13 +20,4 @@ def ingest_sample_kb(files: list[Path] | None = None) -> list:
 
 
 if __name__ == "__main__":
-    settings = get_settings()
-    folder = Path(settings.sample_kb_dir)
-    files = [p for p in folder.iterdir() if p.is_file()] if folder.exists() else []
-
-    indexer = get_document_indexer()
-    results = indexer.index_batch(files)
-
-    total_chunks = sum(r.chunk_count for r in results)
-    total_ids = sum(len(r.ids_created) for r in results)
-    print(f"\nIndexed {len(files)} files -> {total_chunks} chunks -> {total_ids} vectors")
+    ingest_sample_kb()

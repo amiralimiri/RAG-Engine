@@ -27,8 +27,9 @@ To realize the pluggable knowledge store architecture projected in ADR-0006 §3 
 - Expose a minimal, high-leverage entrypoint:
   - `index_file(path: Path | str) -> IndexingResult`
   - `aindex_file(path: Path | str) -> IndexingResult`
-  - `index_batch(paths: list[Path | str]) -> IndexingResult`
-  - `aindex_batch(paths: list[Path | str]) -> IndexingResult`
+  - `index_batch(paths: list[Path | str]) -> list[IndexingResult]`
+  - `aindex_batch(paths: list[Path | str]) -> list[IndexingResult]`
+  *(Note on batch return type: Returning `list[IndexingResult]` rather than a single aggregate result allows granular, per-file error tracking, status inspection, and chunk reporting when processing multi-document batches without halting execution on individual file parse errors).*
 - Parameterize `DocumentIndexer` with swappable strategy protocols:
   - `DocumentParser`: Reads file formats into normalized `Document` objects (built-in adapters for PDF, Markdown, Plaintext, and DOCX).
   - `DocumentChunker`: Partitions documents into retrieval-optimized chunks (default `RecursiveCharacterChunker` driven by application settings).

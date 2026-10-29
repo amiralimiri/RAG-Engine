@@ -151,10 +151,10 @@ async def test_upsert_idempotency_async(sample_docs: dict[str, Path]):
 def test_index_batch_processes_in_batched_slices(sample_docs: dict[str, Path]):
     """Assert index_batch processes multiple files in batched slices."""
     store = InMemoryVectorStoreAdapter()
-    indexer = DocumentIndexer(store=store)
+    indexer = DocumentIndexer(store=store, batch_size=2)
 
     paths = [sample_docs["txt"], sample_docs["md"], sample_docs["docx"], sample_docs["pdf"]]
-    results = indexer.index_batch(paths, batch_size=2)
+    results = indexer.index_batch(paths)
 
     assert len(results) == len(paths)
     for res in results:
@@ -169,10 +169,10 @@ def test_index_batch_processes_in_batched_slices(sample_docs: dict[str, Path]):
 async def test_aindex_batch_processes_in_batched_slices(sample_docs: dict[str, Path]):
     """Assert aindex_batch processes multiple files concurrently in slices."""
     store = InMemoryVectorStoreAdapter()
-    indexer = DocumentIndexer(store=store)
+    indexer = DocumentIndexer(store=store, batch_size=2)
 
     paths = [sample_docs["txt"], sample_docs["md"], sample_docs["docx"], sample_docs["pdf"]]
-    results = await indexer.aindex_batch(paths, batch_size=2)
+    results = await indexer.aindex_batch(paths)
 
     assert len(results) == len(paths)
     for res in results:
@@ -204,7 +204,7 @@ def test_unhandled_parsing_errors_captured_without_crashing_batch(
 ):
     """Assert unhandled parsing errors return success=False and captured error message without crashing batch."""
     store = InMemoryVectorStoreAdapter()
-    indexer = DocumentIndexer(store=store)
+    indexer = DocumentIndexer(store=store, batch_size=2)
 
     unsupported_file = tmp_path / "corrupted.unsupported"
     unsupported_file.write_text("Unsupported content format", encoding="utf-8")
@@ -215,7 +215,7 @@ def test_unhandled_parsing_errors_captured_without_crashing_batch(
         sample_docs["md"],
     ]
 
-    results = indexer.index_batch(paths, batch_size=2)
+    results = indexer.index_batch(paths)
     assert len(results) == 3
 
     # First file succeeded
@@ -243,7 +243,7 @@ async def test_aindex_batch_error_resilience(
 ):
     """Assert aindex_batch handles individual file errors gracefully in concurrent slices."""
     store = InMemoryVectorStoreAdapter()
-    indexer = DocumentIndexer(store=store)
+    indexer = DocumentIndexer(store=store, batch_size=2)
 
     unsupported_file = tmp_path / "corrupted.unsupported"
     unsupported_file.write_text("Unsupported content format", encoding="utf-8")
@@ -254,7 +254,7 @@ async def test_aindex_batch_error_resilience(
         sample_docs["md"],
     ]
 
-    results = await indexer.aindex_batch(paths, batch_size=2)
+    results = await indexer.aindex_batch(paths)
     assert len(results) == 3
     assert results[0].success is True
     assert results[1].success is False

@@ -110,13 +110,12 @@ class DocumentIndexer:
     def index_batch(
         self,
         paths: list[Path | str],
-        batch_size: int = 10,
     ) -> list[IndexingResult]:
         """Synchronously index a collection of documents in batched slices."""
         results: list[IndexingResult] = []
         if not paths:
             return results
-        step = max(1, batch_size)
+        step = max(1, self.batch_size)
         for i in range(0, len(paths), step):
             batch = paths[i : i + step]
             for p in batch:
@@ -126,13 +125,12 @@ class DocumentIndexer:
     async def aindex_batch(
         self,
         paths: list[Path | str],
-        batch_size: int = 10,
     ) -> list[IndexingResult]:
         """Asynchronously index a collection of documents concurrently in batched slices."""
         results: list[IndexingResult] = []
         if not paths:
             return results
-        step = max(1, batch_size)
+        step = max(1, self.batch_size)
         for i in range(0, len(paths), step):
             batch = paths[i : i + step]
             batch_results = await asyncio.gather(*(self.aindex_file(p) for p in batch))

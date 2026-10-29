@@ -166,8 +166,13 @@ def test_branch_insufficient_evidence(mock_llm_and_web, fake_retriever, monkeypa
 def test_retriever_default_hook(mock_llm_and_web):
     mock_default_retriever = MagicMock()
     mock_default_retriever.invoke.return_value = [Document(page_content="Default KB doc")]
+    mock_store = MagicMock()
+    mock_store.as_retriever.return_value = mock_default_retriever
 
-    with patch("app.rag.engine.get_retriever", return_value=mock_default_retriever):
+    with (
+        patch("app.rag.engine.get_retriever", return_value=mock_default_retriever),
+        patch("app.rag.knowledge.get_knowledge_store", return_value=mock_store),
+    ):
         classifier = FakeClassifierAdapter(route_decision="kb", kb_grade="good")
         # retriever=None to test default
         graph = create_agentic_rag_graph(classifier, retriever=None)
