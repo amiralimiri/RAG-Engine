@@ -9,7 +9,7 @@ import logging
 from pathlib import Path
 import sys
 import time
-from typing import Any, Callable, Optional
+from typing import Any
 
 # Ensure project root is in sys.path when executed directly as a script
 project_root = Path(__file__).resolve().parent.parent
@@ -30,13 +30,11 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 logger = logging.getLogger("experiment_runner")
 settings = get_settings()
 
-WORKFLOWS: dict[str, Callable[[str], dict[str, Any]]] = {}
-
 DEFAULT_BENCHMARK_PATH = Path("data/gold_benchmarks.json")
 DEFAULT_DATASET_NAME = "it-support-benchmark"
 
 
-def load_gold_benchmarks(benchmark_file: Optional[Path | str] = None) -> list[dict[str, Any]]:
+def load_gold_benchmarks(benchmark_file: Path | str | None = None) -> list[dict[str, Any]]:
     """Loads canonical benchmark test cases from JSON file."""
     path = Path(benchmark_file) if benchmark_file else DEFAULT_BENCHMARK_PATH
     if not path.exists():
@@ -48,7 +46,7 @@ def load_gold_benchmarks(benchmark_file: Optional[Path | str] = None) -> list[di
 def ensure_dataset(
     client: Any,
     dataset_name: str = DEFAULT_DATASET_NAME,
-    benchmark_path: Optional[Path | str] = None,
+    benchmark_path: Path | str | None = None,
 ) -> Any:
     """Ensures that the benchmark dataset exists in Langfuse.
     
@@ -91,7 +89,7 @@ def ensure_dataset(
 def seed_golden_dataset(
     client: Any = None,
     dataset_name: str = DEFAULT_DATASET_NAME,
-    benchmark_path: Optional[Path | str] = None,
+    benchmark_path: Path | str | None = None,
 ) -> Any:
     """Convenience alias for seeding or ensuring the golden benchmark dataset."""
     return ensure_dataset(client, dataset_name, benchmark_path)
@@ -99,11 +97,10 @@ def seed_golden_dataset(
 
 def run_workflow_benchmark(
     workflow_name: str,
-    workflow_fn: Optional[Callable[[str], dict[str, Any]]] = None,
     dataset: Any = None,
     client: Any = None,
-    run_timestamp: Optional[int] = None,
-    runner: Optional[WorkflowRunner] = None,
+    run_timestamp: int | None = None,
+    runner: WorkflowRunner | None = None,
 ) -> dict[str, Any]:
     """Runs a single workflow against all benchmark items in the dataset."""
     ts = run_timestamp or int(time.time())
@@ -111,9 +108,13 @@ def run_workflow_benchmark(
     logger.info("=== Running Experiment for Workflow: %s (%s) ===", workflow_name, run_name)
 
     active_runner = runner or get_workflow_runner()
-    wf_def = None
-    if workflow_fn is None:
+    try:
         wf_def = active_runner.registry.get(workflow_name)
+    except KeyError:
+        raise ValueError(
+            f"Workflow '{workflow_name}' is not registered in the active WorkflowRegistry. "
+            f"Available workflows: {active_runner.registry.list_ids()}"
+        )
 
     items = getattr(dataset, "items", dataset) if dataset else []
     total_latencies: list[float] = []
@@ -129,22 +130,14 @@ def run_workflow_benchmark(
             question = inp.get("question", "") if isinstance(inp, dict) else str(inp)
 
         start_t = time.perf_counter()
-        if workflow_fn is not None:
-            result = workflow_fn(question)
-            latency = time.perf_counter() - start_t
-            answer = result.get("answer", "")
-            source_used = result.get("source_used", "")
-            contexts = result.get("retrieved_contexts", [])
-            trace_id = result.get("trace_id")
-        else:
-            req = ChatRequest(question=question, workflow=workflow_name)
-            chat_resp, final_state = active_runner.execute_with_state(req)
-            latency = time.perf_counter() - start_t
-            eval_ctx = wf_def.extract_eval_context(final_state) if wf_def is not None else None
-            answer = chat_resp.answer or ""
-            source_used = (eval_ctx.source_used if eval_ctx else None) or chat_resp.source_used or ""
-            contexts = (eval_ctx.retrieved_contexts if eval_ctx else None) or []
-            trace_id = chat_resp.trace_id
+        req = ChatRequest(question=question, workflow=workflow_name)
+        chat_resp, final_state = active_runner.execute_with_state(req)
+        latency = time.perf_counter() - start_t
+        eval_ctx = wf_def.extract_eval_context(final_state) if wf_def is not None else None
+        answer = chat_resp.answer or ""
+        source_used = (eval_ctx.source_used if eval_ctx else None) or chat_resp.source_used or ""
+        contexts = (eval_ctx.retrieved_contexts if eval_ctx else None) or []
+        trace_id = chat_resp.trace_id
 
         total_latencies.append(latency)
 
@@ -249,7 +242,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: Optional[list[str]] = None) -> list[dict[str, Any]]:
+def main(argv: list[str] | None = None) -> list[dict[str, Any]]:
     """CLI entry point for running Langfuse benchmark experiments."""
     parser = build_arg_parser()
     args = parser.parse_args(argv)
@@ -267,8 +260,7 @@ def main(argv: Optional[list[str]] = None) -> list[dict[str, Any]]:
         )
         dataset = load_gold_benchmarks(args.benchmark_file)
 
-    available_registry_ids = set(get_workflow_registry().list_ids())
-    available_ids = available_registry_ids | set(WORKFLOWS.keys())
+    available_ids = set(get_workflow_registry().list_ids())
     target_workflows = [w.strip() for w in args.workflows.split(",") if w.strip() in available_ids]
     if not target_workflows:
         logger.error("No valid workflows selected. Available: %s", sorted(available_ids))
@@ -278,10 +270,8 @@ def main(argv: Optional[list[str]] = None) -> list[dict[str, Any]]:
     run_timestamp = int(time.time())
 
     for wf_name in target_workflows:
-        wf_fn = WORKFLOWS.get(wf_name)
         summary = run_workflow_benchmark(
             workflow_name=wf_name,
-            workflow_fn=wf_fn,
             dataset=dataset,
             client=client,
             run_timestamp=run_timestamp,

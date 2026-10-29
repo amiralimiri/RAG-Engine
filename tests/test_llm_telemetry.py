@@ -25,7 +25,7 @@ def runner_and_mock_graph():
     return runner, mock_invoke
 
 
-def test_ask_llm_backward_compatibility(runner_and_mock_graph):
+def test_workflow_runner_telemetry_llm_execution(runner_and_mock_graph):
     """Executing fix_single_llm without keyword arguments passes expected initial state and clean config."""
     runner, mock_invoke = runner_and_mock_graph
     request = ChatRequest(question="hello", workflow="fix_single_llm")

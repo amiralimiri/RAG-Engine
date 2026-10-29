@@ -53,11 +53,6 @@ def get_chat_model() -> BaseChatModel:
     )
 
 
-def llm() -> BaseChatModel:
-    """Stateless accessor for chat model backwards compatibility."""
-    return get_chat_model()
-
-
 def route_after_router(state: AgentState) -> Literal["retrieve_kb", "direct_answer"]:
     return "retrieve_kb" if state["source_used"] == "kb" else "direct_answer"
 

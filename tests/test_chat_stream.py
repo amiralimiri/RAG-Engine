@@ -990,7 +990,6 @@ class TestUnifiedBaseToolStreamingRegression:
     async def test_streaming_with_injected_kb_tool_dual_output_artifact(self, monkeypatch):
         """Verify SSE step events, token streaming, and terminal metadata citations from injected kb_tool artifact."""
         fake_llm = FakeListChatModel(responses=["Follow the official VPN guidelines to connect."])
-        monkeypatch.setattr("app.rag.engine.llm", lambda: fake_llm)
 
         eval_task_called = asyncio.Event()
         captured_eval = {}
@@ -1068,7 +1067,6 @@ class TestUnifiedBaseToolStreamingRegression:
     async def test_streaming_with_injected_web_tool_dual_output_artifact(self, monkeypatch):
         """Verify SSE streaming flow when falling back to injected web_tool, extracting citations and context from artifact."""
         fake_llm = FakeListChatModel(responses=["Install Docker via official apt repository."])
-        monkeypatch.setattr("app.rag.engine.llm", lambda: fake_llm)
 
         eval_task_called = asyncio.Event()
         captured_eval = {}
@@ -1177,7 +1175,6 @@ class TestUnifiedBaseToolStreamingRegression:
     async def test_streaming_legacy_retriever_adapter_compatibility(self, monkeypatch):
         """Verify that passing legacy retriever adapter into SelfCorrectiveRagWorkflow streams end-to-end flawlessly."""
         fake_llm = FakeListChatModel(responses=["Legacy adapter streaming answer."])
-        monkeypatch.setattr("app.rag.engine.llm", lambda: fake_llm)
 
         mock_retriever = MagicMock()
         legacy_doc = Document(page_content="Legacy knowledge doc.", metadata={"source": "docs/legacy_stream.pdf"})

@@ -133,6 +133,8 @@ def test_seed_golden_dataset_degrades_gracefully_when_offline():
 
 def test_run_benchmark_workflow_execution_and_metrics():
     from evaluation.run_experiment import run_workflow_benchmark
+    from app.api.schemas import ChatResponse
+    from app.rag.workflows.base import EvalContext
 
     mock_client = MagicMock()
     mock_dataset = MagicMock()
@@ -142,12 +144,25 @@ def test_run_benchmark_workflow_execution_and_metrics():
     mock_item.link = MagicMock()
     mock_dataset.items = [mock_item]
 
-    mock_workflow = MagicMock(return_value={
+    mock_runner = MagicMock()
+    mock_wf_def = MagicMock()
+    mock_runner.registry.get.return_value = mock_wf_def
+    mock_chat_response = ChatResponse(
+        workflow="fix_single_llm",
+        answer="Install Pulse Secure from Self Service portal.",
+        source_used="vectorstore",
+        trace_id="tr-test-123",
+    )
+    final_state = {
         "answer": "Install Pulse Secure from Self Service portal.",
         "source_used": "vectorstore",
         "retrieved_contexts": ["Pulse Secure installation guide."],
-        "trace_id": "tr-test-123",
-    })
+    }
+    mock_runner.execute_with_state.return_value = (mock_chat_response, final_state)
+    mock_wf_def.extract_eval_context.return_value = EvalContext(
+        source_used="vectorstore",
+        retrieved_contexts=["Pulse Secure installation guide."],
+    )
 
     with patch("evaluation.run_experiment.FaithfulnessMetric") as mock_fm_cls, \
          patch("evaluation.run_experiment.AnswerRelevancyMetric") as mock_arm_cls:
@@ -162,9 +177,9 @@ def test_run_benchmark_workflow_execution_and_metrics():
 
         summary = run_workflow_benchmark(
             workflow_name="fix_single_llm",
-            workflow_fn=mock_workflow,
             dataset=mock_dataset,
             client=mock_client,
+            runner=mock_runner,
         )
 
         assert summary["Workflow"] == "fix_single_llm"
@@ -181,6 +196,8 @@ def test_run_benchmark_workflow_execution_and_metrics():
 
 def test_run_benchmark_skips_faithfulness_for_direct_source():
     from evaluation.run_experiment import run_workflow_benchmark
+    from app.api.schemas import ChatResponse
+    from app.rag.workflows.base import EvalContext
 
     mock_client = MagicMock()
     mock_dataset = MagicMock()
@@ -190,12 +207,24 @@ def test_run_benchmark_skips_faithfulness_for_direct_source():
     mock_item.link = MagicMock()
     mock_dataset.items = [mock_item]
 
-    mock_workflow = MagicMock(return_value={
+    mock_runner = MagicMock()
+    mock_wf_def = MagicMock()
+    mock_runner.registry.get.return_value = mock_wf_def
+    mock_chat_response = ChatResponse(
+        workflow="fix_single_llm",
+        answer="Hello, how can I assist you?",
+        source_used="direct",
+        trace_id="tr-direct-001",
+    )
+    final_state = {
         "answer": "Hello, how can I assist you?",
         "source_used": "direct",
-        "retrieved_contexts": [],
-        "trace_id": "tr-direct-001",
-    })
+    }
+    mock_runner.execute_with_state.return_value = (mock_chat_response, final_state)
+    mock_wf_def.extract_eval_context.return_value = EvalContext(
+        source_used="direct",
+        retrieved_contexts=[],
+    )
 
     with patch("evaluation.run_experiment.FaithfulnessMetric") as mock_fm_cls, \
          patch("evaluation.run_experiment.AnswerRelevancyMetric") as mock_arm_cls:
@@ -206,15 +235,29 @@ def test_run_benchmark_skips_faithfulness_for_direct_source():
 
         summary = run_workflow_benchmark(
             workflow_name="fix_single_llm",
-            workflow_fn=mock_workflow,
             dataset=mock_dataset,
             client=mock_client,
+            runner=mock_runner,
         )
 
         mock_fm_cls.assert_not_called()
         mock_arm.measure.assert_called_once()
         assert summary["Avg Faithfulness"] == 0.0
         assert summary["Avg Relevancy"] == 0.92
+
+
+def test_run_benchmark_workflow_not_registered_raises_value_error():
+    from evaluation.run_experiment import run_workflow_benchmark
+
+    mock_runner = MagicMock()
+    mock_runner.registry.get.side_effect = KeyError("Workflow 'unknown' not found")
+    mock_runner.registry.list_ids.return_value = ["fix_single_llm"]
+
+    with pytest.raises(ValueError, match="is not registered in the active WorkflowRegistry"):
+        run_workflow_benchmark(
+            workflow_name="unknown",
+            runner=mock_runner,
+        )
 
 
 def test_run_benchmark_workflow_execution_via_runner():
@@ -314,18 +357,17 @@ def test_arg_parser_configuration():
     assert args.workflows == "fix_single_llm"
 
 
-def test_main_cli_execution_with_fallback(capsys):
+def test_main_cli_execution_with_fallback(capsys, register_mock_workflow):
     from evaluation.run_experiment import main
 
-    mock_wf = MagicMock(return_value={
-        "answer": "Test answer",
-        "source_used": "vectorstore",
-        "retrieved_contexts": ["Test context"],
-        "trace_id": "test-tr-1",
-    })
+    register_mock_workflow(
+        "fix_single_llm",
+        answer="Test answer",
+        source_used="vectorstore",
+        retrieved_contexts=["Test context"],
+    )
 
     with patch("evaluation.run_experiment.get_langfuse_client", return_value=None), \
-         patch.dict("evaluation.run_experiment.WORKFLOWS", {"fix_single_llm": mock_wf}), \
          patch("evaluation.run_experiment.load_gold_benchmarks", return_value=[
              {"id": "tc-01-greeting", "input": "Hello", "expected_output": "Hi", "expected_route": "direct", "expected_source": "direct", "category": "direct_conversation"}
          ]), \

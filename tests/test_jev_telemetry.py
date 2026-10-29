@@ -84,7 +84,7 @@ def jev_runner_and_mock_graph():
     return runner, mock_invoke
 
 
-def test_ask_jev_backward_compatibility(jev_runner_and_mock_graph):
+def test_workflow_runner_telemetry_jev_execution(jev_runner_and_mock_graph):
     """Executing fix_single_jev without keyword arguments passes expected initial state and clean config."""
     runner, mock_invoke = jev_runner_and_mock_graph
     request = ChatRequest(question="hello", workflow="fix_single_jev")
