@@ -20,12 +20,12 @@ Equip `InMemoryVectorStoreAdapter` with:
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** completed
 
-- [ ] Red: Create `tests/rag/test_knowledge_store.py` asserting `InMemoryVectorStoreAdapter` satisfies `isinstance(adapter, VectorStoreAdapter)`.
-- [ ] Red: Add test for synchronous `add_documents` and `similarity_search` verifying exact cosine similarity ranking and top-k filtering with deterministic offline embeddings.
-- [ ] Red: Add test for asynchronous `aadd_documents` and `asimilarity_search` asserting identical results to sync methods.
-- [ ] Red: Add test for `as_retriever()` asserting both synchronous `retriever.invoke(query)` and asynchronous `await retriever.ainvoke(query)` return top relevant documents.
-- [ ] Green: Implement `VectorStoreAdapter` protocol and `IndexingResult` model in `app/rag/knowledge/base.py`.
-- [ ] Green: Implement `InMemoryVectorStoreAdapter` and offline embedding double in `app/rag/knowledge/vectorstore.py`.
-- [ ] Refactor: Export components cleanly in `app/rag/knowledge/__init__.py` and ensure full typing and test coverage.
+- [x] Red: Create `tests/rag/test_knowledge_store.py` asserting `InMemoryVectorStoreAdapter` satisfies `isinstance(adapter, VectorStoreAdapter)`.
+- [x] Red: Add test for synchronous `add_documents` and `similarity_search` verifying exact cosine similarity ranking and top-k filtering with deterministic offline embeddings.
+- [x] Red: Add test for asynchronous `aadd_documents` and `asimilarity_search` asserting identical results to sync methods.
+- [x] Red: Add test for `as_retriever()` asserting both synchronous `retriever.invoke(query)` and asynchronous `await retriever.ainvoke(query)` return top relevant documents.
+- [x] Green: Implement `VectorStoreAdapter` protocol and `IndexingResult` model in `app/rag/knowledge/base.py`.
+- [x] Green: Implement `InMemoryVectorStoreAdapter` and offline embedding double in `app/rag/knowledge/vectorstore.py`.
+- [x] Refactor: Export components cleanly in `app/rag/knowledge/__init__.py` and ensure full typing and test coverage.
