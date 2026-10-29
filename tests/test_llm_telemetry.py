@@ -1,16 +1,39 @@
 from unittest.mock import MagicMock
 import pytest
-from app.rag import fix_single_llm
+
+from app.api.schemas import ChatRequest
+from app.rag.workflows.registry import get_workflow_registry
+from app.rag.workflows.runner import WorkflowRunner
 
 
-def test_ask_llm_backward_compatibility(monkeypatch):
-    """Calling ask() without keyword arguments passes expected initial state and empty/None config."""
-    mock_invoke = MagicMock(return_value={"answer": "mock answer", "source_used": "direct"})
-    monkeypatch.setattr(fix_single_llm.agent_graph, "invoke", mock_invoke)
+@pytest.fixture
+def runner_and_mock_graph():
+    """Fixture providing a WorkflowRunner with fix_single_llm graph mocked."""
+    registry = get_workflow_registry()
+    wf_def = registry.get("fix_single_llm")
+    mock_invoke = MagicMock(return_value={
+        "answer": "mock answer",
+        "source_used": "direct",
+        "trace": [],
+        "citations": [],
+        "retrieved_contexts": [],
+    })
+    mock_graph = MagicMock()
+    mock_graph.invoke = mock_invoke
+    wf_def._compiled_graph = mock_graph
+    runner = WorkflowRunner(registry=registry)
+    return runner, mock_invoke
 
-    result = fix_single_llm.ask("hello")
 
-    assert result == {"answer": "mock answer", "source_used": "direct"}
+def test_ask_llm_backward_compatibility(runner_and_mock_graph):
+    """Executing fix_single_llm without keyword arguments passes expected initial state and clean config."""
+    runner, mock_invoke = runner_and_mock_graph
+    request = ChatRequest(question="hello", workflow="fix_single_llm")
+
+    response, final_state = runner.execute_with_state(request)
+
+    assert response.answer == "mock answer"
+    assert response.source_used == "direct"
     mock_invoke.assert_called_once()
     args, kwargs = mock_invoke.call_args
 
@@ -27,66 +50,70 @@ def test_ask_llm_backward_compatibility(monkeypatch):
     assert initial_state["retry_count"] == 0
     assert initial_state["trace"] == []
     assert initial_state["citations"] == []
+    assert initial_state["retrieved_contexts"] == []
 
-    # Config should be None or empty
-    config = kwargs.get("config") if "config" in kwargs else (args[1] if len(args) > 1 else None)
-    assert config in (None, {})
+    config = kwargs.get("config") if "config" in kwargs else (args[1] if len(args) > 1 else {})
+    assert "callbacks" in config
+    assert len(config["callbacks"]) == 1
+    assert "tags" not in config or not config["tags"]
 
 
-def test_ask_llm_passes_callback(monkeypatch):
-    """Calling ask() with a callback passes config={"callbacks": [callback]} to agent_graph.invoke."""
-    mock_invoke = MagicMock(return_value={"answer": "mock answer"})
-    monkeypatch.setattr(fix_single_llm.agent_graph, "invoke", mock_invoke)
-
+def test_ask_llm_passes_callback(runner_and_mock_graph):
+    """Executing fix_single_llm with a callback passes config['callbacks'] = [callback]."""
+    runner, mock_invoke = runner_and_mock_graph
     dummy_cb = object()
-    result = fix_single_llm.ask("hello", callback=dummy_cb)
+    request = ChatRequest(question="hello", workflow="fix_single_llm")
 
-    assert result == {"answer": "mock answer"}
+    response, _ = runner.execute_with_state(request, callback=dummy_cb)
+
+    assert response.answer == "mock answer"
     mock_invoke.assert_called_once()
-    args, kwargs = mock_invoke.call_args
-    assert kwargs.get("config") == {"callbacks": [dummy_cb]}
+    _, kwargs = mock_invoke.call_args
+    assert kwargs.get("config", {}).get("callbacks") == [dummy_cb]
 
 
-def test_ask_llm_accepts_all_telemetry_kwargs(monkeypatch):
-    """Calling ask() with session_id, user_id, metadata, tags, and callback is accepted."""
-    mock_invoke = MagicMock(return_value={"answer": "mock answer"})
-    monkeypatch.setattr(fix_single_llm.agent_graph, "invoke", mock_invoke)
-
+def test_ask_llm_accepts_all_telemetry_kwargs(runner_and_mock_graph):
+    """Executing fix_single_llm with session_id, user_id, metadata, tags, and callback is accepted."""
+    runner, mock_invoke = runner_and_mock_graph
     dummy_cb = object()
-    result = fix_single_llm.ask(
-        "hello",
+    request = ChatRequest(
+        question="hello",
+        workflow="fix_single_llm",
         session_id="session-123",
         user_id="user-456",
+    )
+
+    response, _ = runner.execute_with_state(
+        request,
         metadata={"env": "test"},
         tags=["unit-test"],
         callback=dummy_cb,
     )
 
-    assert result == {"answer": "mock answer"}
+    assert response.answer == "mock answer"
     mock_invoke.assert_called_once()
-    args, kwargs = mock_invoke.call_args
-    assert kwargs.get("config") == {
-        "callbacks": [dummy_cb],
-        "tags": ["unit-test"],
-        "metadata": {"env": "test"},
-    }
+    _, kwargs = mock_invoke.call_args
+    config = kwargs.get("config", {})
+    assert config.get("callbacks") == [dummy_cb]
+    assert config.get("tags") == ["unit-test"]
+    assert config.get("metadata", {}).get("env") == "test"
+    assert config.get("configurable", {}).get("thread_id") == "session-123"
 
 
-def test_ask_llm_propagates_tags_and_metadata_without_callback(monkeypatch):
-    """Calling ask() without callback still forwards tags and metadata in config."""
-    mock_invoke = MagicMock(return_value={"answer": "mock answer"})
-    monkeypatch.setattr(fix_single_llm.agent_graph, "invoke", mock_invoke)
+def test_ask_llm_propagates_tags_and_metadata_without_callback(runner_and_mock_graph):
+    """Executing fix_single_llm without callback still forwards tags and metadata in config."""
+    runner, mock_invoke = runner_and_mock_graph
+    request = ChatRequest(question="hello", workflow="fix_single_llm")
 
-    result = fix_single_llm.ask(
-        "hello",
+    response, _ = runner.execute_with_state(
+        request,
         tags=["standalone-tag"],
         metadata={"source": "cli"},
     )
 
-    assert result == {"answer": "mock answer"}
+    assert response.answer == "mock answer"
     mock_invoke.assert_called_once()
-    args, kwargs = mock_invoke.call_args
-    assert kwargs.get("config") == {
-        "tags": ["standalone-tag"],
-        "metadata": {"source": "cli"},
-    }
+    _, kwargs = mock_invoke.call_args
+    config = kwargs.get("config", {})
+    assert config.get("tags") == ["standalone-tag"]
+    assert config.get("metadata", {}).get("source") == "cli"

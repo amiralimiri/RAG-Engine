@@ -1,6 +1,3 @@
-import ast
-import inspect
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from langchain_core.callbacks import BaseCallbackHandler
@@ -9,9 +6,11 @@ from langchain_core.retrievers import BaseRetriever
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import tool
 
-from app.rag import classifiers, engine
+from app.rag import engine
 from app.rag.classifiers import OpenAIClassifierAdapter
-from app.services.prompts import FallbackPrompt, LOCAL_PROMPTS, get_workflow_prompt
+from app.rag.engine import create_agentic_rag_graph
+from app.rag.tools import create_retriever_tool, create_web_search_tool
+from app.services.prompts import FallbackPrompt, get_workflow_prompt
 
 
 class RecordingCallbackHandler(BaseCallbackHandler):
@@ -54,86 +53,60 @@ def dummy_web_search(query: str) -> dict:
 
 
 # ==============================================================================
-# 1. Zero-coupling contract between fix_single_llm and fix_single_jev
-# ==============================================================================
-
-def test_strict_zero_coupling_between_llm_and_jev():
-    """Verify standalone file boundary: neither module imports the other directly or indirectly."""
-    repo_root = Path(__file__).resolve().parent.parent
-    llm_path = repo_root / "app" / "rag" / "fix_single_llm.py"
-    jev_path = repo_root / "app" / "rag" / "fix_single_jev.py"
-
-    for path, forbidden in [(llm_path, "fix_single_jev"), (jev_path, "fix_single_llm")]:
-        source = path.read_text(encoding="utf-8")
-        parsed = ast.parse(source, filename=str(path))
-        for node in ast.walk(parsed):
-            if isinstance(node, ast.Import):
-                for alias in node.names:
-                    assert forbidden not in alias.name, f"{path.name} must not import {forbidden}"
-            elif isinstance(node, ast.ImportFrom):
-                module = node.module or ""
-                assert forbidden not in module, f"{path.name} must not import from {forbidden}"
-                for alias in node.names:
-                    assert forbidden not in alias.name, f"{path.name} must not import {forbidden}"
-
-
-# ==============================================================================
-# 2. engine: retrieve_kb and search_web config propagation & callbacks
+# 1. create_retriever_tool config propagation & callbacks
 # ==============================================================================
 
 def test_fix_single_llm_retrieve_kb_signature_and_config_forwarding():
-    """retrieve_kb accepts config: RunnableConfig | None and passes it to get_retriever().invoke."""
-    sig = inspect.signature(engine.retrieve_kb)
-    assert "config" in sig.parameters, "retrieve_kb must accept a config parameter"
-
+    """create_retriever_tool accepts config: RunnableConfig and passes it to retriever.invoke."""
     mock_retriever = MagicMock()
     mock_docs = [Document(page_content="VPN info", metadata={"source": "kb/vpn.md"})]
     mock_retriever.invoke.return_value = mock_docs
 
+    kb_tool = create_retriever_tool(retriever=mock_retriever)
     custom_config: RunnableConfig = {"tags": ["unit-test-llm"], "metadata": {"trace_id": "trace-123"}}
-    state = {"current_query": "how do I connect to VPN?", "question": "how to vpn"}
 
-    with patch.object(engine, "get_retriever", return_value=mock_retriever):
-        result = engine.retrieve_kb(state, config=custom_config)
+    content, artifact = kb_tool.invoke({"query": "how do I connect to VPN?"}, config=custom_config)
 
     mock_retriever.invoke.assert_called_once_with("how do I connect to VPN?", config=custom_config)
-    assert result["kb_docs"] == mock_docs
-    assert "Private KB retrieval → 1 chunks" in result["trace"][0]
+    assert artifact["documents"] == mock_docs
+    assert len(artifact["citations"]) == 1
+    assert "VPN info" in content
 
 
 def test_fix_single_llm_retrieve_kb_default_config_none():
-    """retrieve_kb defaults config to None when called without config."""
+    """create_retriever_tool defaults config to None when called without config."""
     mock_retriever = MagicMock()
     mock_retriever.invoke.return_value = []
-    state = {"current_query": "mfa setup", "question": "mfa"}
 
-    with patch.object(engine, "get_retriever", return_value=mock_retriever):
-        result = engine.retrieve_kb(state)
+    kb_tool = create_retriever_tool(retriever=mock_retriever)
+    content, artifact = kb_tool.invoke({"query": "mfa setup"})
 
     mock_retriever.invoke.assert_called_once_with("mfa setup", config=None)
-    assert result["kb_docs"] == []
+    assert artifact["documents"] == []
 
 
 def test_fix_single_llm_retrieve_kb_triggers_retriever_callbacks():
-    """retrieve_kb actually fires on_retriever_start and on_retriever_end via RunnableConfig."""
+    """create_retriever_tool fires on_retriever_start, on_retriever_end, on_tool_start, and on_tool_end via RunnableConfig."""
     handler = RecordingCallbackHandler()
     config: RunnableConfig = {"callbacks": [handler]}
-    state = {"current_query": "password policy", "question": "password"}
 
-    with patch.object(engine, "get_retriever", return_value=DummyVectorRetriever()):
-        result = engine.retrieve_kb(state, config=config)
+    kb_tool = create_retriever_tool(retriever=DummyVectorRetriever())
+    content, artifact = kb_tool.invoke({"query": "password policy"}, config=config)
 
     assert len(handler.retriever_starts) == 1
     assert handler.retriever_starts[0] == "password policy"
     assert len(handler.retriever_ends) == 1
     assert handler.retriever_ends[0][0].page_content == "Content for password policy"
+    assert len(handler.tool_starts) >= 1
+    assert len(handler.tool_ends) >= 1
 
+
+# ==============================================================================
+# 2. create_web_search_tool config propagation & callbacks
+# ==============================================================================
 
 def test_fix_single_llm_search_web_signature_and_config_forwarding():
-    """search_web accepts config: RunnableConfig | None and passes it to web_search_tool().invoke."""
-    sig = inspect.signature(engine.search_web)
-    assert "config" in sig.parameters, "search_web must accept a config parameter"
-
+    """create_web_search_tool accepts config: RunnableConfig and passes it to search_client.invoke."""
     mock_search = MagicMock()
     mock_search.invoke.return_value = {
         "answer": "GlobalProtect setup guide",
@@ -141,42 +114,39 @@ def test_fix_single_llm_search_web_signature_and_config_forwarding():
     }
 
     custom_config: RunnableConfig = {"tags": ["tavily-test"], "metadata": {"source": "web"}}
-    state = {"current_query": "pulse secure setup", "question": "pulse secure"}
+    web_tool = create_web_search_tool(search_client=mock_search)
 
-    with patch.object(engine, "web_search_tool", return_value=mock_search):
-        result = engine.search_web(state, config=custom_config)
+    content, artifact = web_tool.invoke({"query": "pulse secure setup"}, config=custom_config)
 
     mock_search.invoke.assert_called_once_with({"query": "pulse secure setup"}, config=custom_config)
-    assert result["source_used"] == "web"
-    assert len(result["citations"]) == 1
-    assert "Search answer: GlobalProtect setup guide" in result["web_results"]
+    assert len(artifact["citations"]) == 1
+    assert "Search answer: GlobalProtect setup guide" in content
+    assert len(artifact["retrieved_contexts"]) == 1
 
 
 def test_fix_single_llm_search_web_default_config_none():
-    """search_web defaults config to None when called without config."""
+    """create_web_search_tool defaults config to None when called without config."""
     mock_search = MagicMock()
     mock_search.invoke.return_value = {"results": []}
-    state = {"current_query": "zoom client install", "question": "zoom"}
 
-    with patch.object(engine, "web_search_tool", return_value=mock_search):
-        result = engine.search_web(state)
+    web_tool = create_web_search_tool(search_client=mock_search)
+    content, artifact = web_tool.invoke({"query": "zoom client install"})
 
     mock_search.invoke.assert_called_once_with({"query": "zoom client install"}, config=None)
-    assert result["source_used"] == "web"
+    assert artifact["citations"] == []
 
 
 def test_fix_single_llm_search_web_triggers_tool_callbacks():
-    """search_web fires on_tool_start and on_tool_end via RunnableConfig."""
+    """create_web_search_tool fires on_tool_start and on_tool_end via RunnableConfig."""
     handler = RecordingCallbackHandler()
     config: RunnableConfig = {"callbacks": [handler]}
-    state = {"current_query": "zoom client update", "question": "zoom"}
 
-    with patch.object(engine, "web_search_tool", return_value=dummy_web_search):
-        result = engine.search_web(state, config=config)
+    web_tool = create_web_search_tool(search_client=dummy_web_search)
+    content, artifact = web_tool.invoke({"query": "zoom client update"}, config=config)
 
-    assert len(handler.tool_starts) == 1
-    assert len(handler.tool_ends) == 1
-    assert result["source_used"] == "web"
+    assert len(handler.tool_starts) >= 1
+    assert len(handler.tool_ends) >= 1
+    assert "Web answer for zoom client update" in content
 
 
 # ==============================================================================
@@ -285,45 +255,111 @@ async def test_fix_single_llm_nodes_link_active_langfuse_prompt():
     with patch("app.rag.engine.get_workflow_prompt", return_value=rewrite_prompt):
         mock_llm = MagicMock()
         mock_llm.ainvoke = AsyncMock(return_value=MagicMock(content="new query"))
-        with patch.object(engine, "llm", return_value=mock_llm):
-            await engine.rewrite_query({"question": "q", "current_query": "q", "retry_count": 0})
-            mock_llm.ainvoke.assert_called_once_with(
-                "compiled-rag:rewrite_query",
-                config={"metadata": {"langfuse_prompt": rewrite_prompt}},
-            )
+        mock_classifier = MagicMock()
+        mock_classifier.route.return_value = MagicMock(route="kb")
+        mock_classifier.grade_kb.side_effect = [MagicMock(grade="weak"), MagicMock(grade="good")]
+        mock_classifier.grade_web.return_value = MagicMock(grade="weak")
+
+        kb_tool = MagicMock()
+        kb_tool.ainvoke = AsyncMock(return_value=("kb content", {"documents": [], "citations": []}))
+        web_tool = MagicMock()
+        web_tool.ainvoke = AsyncMock(return_value=("web content", {"retrieved_contexts": [], "citations": []}))
+
+        graph = create_agentic_rag_graph(mock_classifier, model=mock_llm, kb_tool=kb_tool, web_tool=web_tool)
+        await graph.ainvoke({
+            "question": "q",
+            "current_query": "",
+            "kb_docs": [],
+            "web_results": "",
+            "kb_grade": "",
+            "web_grade": "",
+            "answer": "",
+            "source_used": "",
+            "retry_count": 0,
+            "trace": [],
+            "citations": [],
+            "retrieved_contexts": [],
+        })
+        rewrite_call = [
+            c for c in mock_llm.ainvoke.call_args_list
+            if c[1].get("config", {}).get("metadata", {}).get("langfuse_prompt") == rewrite_prompt
+        ]
+        assert len(rewrite_call) >= 1
 
     # 5. generate_from_kb
     gen_kb_prompt = MockActivePrompt("rag:generate_kb")
     with patch("app.rag.engine.get_workflow_prompt", return_value=gen_kb_prompt):
         mock_llm = MagicMock()
         mock_llm.ainvoke = AsyncMock(return_value=MagicMock(content="answer"))
-        with patch.object(engine, "llm", return_value=mock_llm):
-            await engine.generate_from_kb({"question": "q", "kb_docs": []})
-            mock_llm.ainvoke.assert_called_once_with(
-                "compiled-rag:generate_kb",
-                config={"metadata": {"langfuse_prompt": gen_kb_prompt}},
-            )
+        mock_classifier = MagicMock()
+        mock_classifier.route.return_value = MagicMock(route="kb")
+        mock_classifier.grade_kb.return_value = MagicMock(grade="good")
+
+        kb_tool = MagicMock()
+        kb_tool.ainvoke = AsyncMock(return_value=("kb content", {"documents": [], "citations": []}))
+
+        graph = create_agentic_rag_graph(mock_classifier, model=mock_llm, kb_tool=kb_tool)
+        await graph.ainvoke({
+            "question": "q",
+            "current_query": "",
+            "kb_docs": [],
+            "web_results": "",
+            "kb_grade": "",
+            "web_grade": "",
+            "answer": "",
+            "source_used": "",
+            "retry_count": 0,
+            "trace": [],
+            "citations": [],
+            "retrieved_contexts": [],
+        })
+        assert mock_llm.ainvoke.call_count == 1
+        args, kwargs = mock_llm.ainvoke.call_args
+        assert args[0] == "compiled-rag:generate_kb"
+        assert kwargs["config"]["metadata"]["langfuse_prompt"] == gen_kb_prompt
 
     # 6. generate_from_web
     gen_web_prompt = MockActivePrompt("rag:generate_web")
     with patch("app.rag.engine.get_workflow_prompt", return_value=gen_web_prompt):
         mock_llm = MagicMock()
         mock_llm.ainvoke = AsyncMock(return_value=MagicMock(content="answer"))
-        with patch.object(engine, "llm", return_value=mock_llm):
-            await engine.generate_from_web({"question": "q", "web_results": "res"})
-            mock_llm.ainvoke.assert_called_once_with(
-                "compiled-rag:generate_web",
-                config={"metadata": {"langfuse_prompt": gen_web_prompt}},
-            )
+        mock_classifier = MagicMock()
+        mock_classifier.route.return_value = MagicMock(route="kb")
+        mock_classifier.grade_kb.return_value = MagicMock(grade="weak")
+        mock_classifier.grade_web.return_value = MagicMock(grade="good")
+
+        kb_tool = MagicMock()
+        kb_tool.ainvoke = AsyncMock(return_value=("kb content", {"documents": [], "citations": []}))
+        web_tool = MagicMock()
+        web_tool.ainvoke = AsyncMock(return_value=("web content", {"retrieved_contexts": [], "citations": []}))
+
+        graph = create_agentic_rag_graph(mock_classifier, model=mock_llm, kb_tool=kb_tool, web_tool=web_tool)
+        await graph.ainvoke({
+            "question": "q",
+            "current_query": "",
+            "kb_docs": [],
+            "web_results": "res",
+            "kb_grade": "",
+            "web_grade": "",
+            "answer": "",
+            "source_used": "",
+            "retry_count": 0,
+            "trace": [],
+            "citations": [],
+            "retrieved_contexts": [],
+        })
+        assert mock_llm.ainvoke.call_count == 1
+        args, kwargs = mock_llm.ainvoke.call_args
+        assert args[0] == "compiled-rag:generate_web"
+        assert kwargs["config"]["metadata"]["langfuse_prompt"] == gen_web_prompt
 
     # 7. direct_answer
     direct_prompt = MockActivePrompt("rag:direct_answer")
     with patch("app.rag.engine.get_workflow_prompt", return_value=direct_prompt):
         mock_llm = MagicMock()
         mock_llm.ainvoke = AsyncMock(return_value=MagicMock(content="answer"))
-        with patch.object(engine, "llm", return_value=mock_llm):
-            await engine.direct_answer({"question": "q"})
-            mock_llm.ainvoke.assert_called_once_with(
-                "compiled-rag:direct_answer",
-                config={"metadata": {"langfuse_prompt": direct_prompt}},
-            )
+        await engine.direct_answer({"question": "q"}, model=mock_llm)
+        mock_llm.ainvoke.assert_called_once_with(
+            "compiled-rag:direct_answer",
+            config={"metadata": {"langfuse_prompt": direct_prompt}},
+        )

@@ -4,24 +4,24 @@
 
 **Blocked by:** 01: Test Isolation Fixture Foundation, 03: Pure Engine Factory & Tool Decoupling, 04: Legacy Workflow Shims & Dictionary Deletion
 
-**Status:** open
+**Status:** closed
 
 ---
 
 ## Tasks
 
-- [ ] In `tests/test_retrieved_contexts.py`:
+- [x] In `tests/test_retrieved_contexts.py`:
   - Remove imports of deleted modules (`fix_single_llm`, `fix_single_jev`).
   - Remove direct calls to deleted synchronous functions (`engine.retrieve_kb`, `engine.search_web`).
   - Test context population on the graph nodes or via `create_agentic_rag_graph` and `WorkflowRunner`.
   - Ensure assertions verifying `AgentState.retrieved_contexts`, `generate_from_kb`, `generate_from_web`, and `insufficient` pass using the pure factory.
-- [ ] In `tests/test_retriever_search_spans.py`:
+- [x] In `tests/test_retriever_search_spans.py`:
   - Delete `test_strict_zero_coupling_between_llm_and_jev` (which parsed AST of deleted files).
   - Update `test_fix_single_llm_retrieve_kb_*` and `test_fix_single_llm_search_web_*` to test `create_retriever_tool()` and `create_web_search_tool()` directly, asserting callback firing (`on_retriever_start`, `on_retriever_end`, `on_tool_start`, `on_tool_end`) and config forwarding without calling deleted module functions in `engine.py`.
-- [ ] In `tests/test_llm_telemetry.py`:
+- [x] In `tests/test_llm_telemetry.py`:
   - Remove `from app.rag import fix_single_llm`.
   - Refactor tests to verify telemetry kwargs (`session_id`, `user_id`, `metadata`, `tags`, `callback`) forwarding via `WorkflowRunner.execute_with_state(ChatRequest(question="hello", workflow="fix_single_llm", ...))` or by invoking the workflow definition directly.
-- [ ] In `tests/test_jev_telemetry.py`:
+- [x] In `tests/test_jev_telemetry.py`:
   - Retain `test_estimate_jev_tokens` (validates heuristic token counting).
   - Remove `from app.rag import fix_single_jev`.
   - Refactor `test_ask_jev_*` tests to invoke `WorkflowRunner.execute_with_state(ChatRequest(question="hello", workflow="fix_single_jev", ...))` with mock `JevClassifierAdapter` choices.
