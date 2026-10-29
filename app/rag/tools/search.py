@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 import structlog
 
 from app.core.config import get_settings
-from app.rag.tools.base import DualOutputStructuredTool
+from app.rag.tools.base import _UNSET, DualOutputStructuredTool, get_invoke_config
 
 logger = structlog.get_logger(__name__)
 
@@ -84,7 +84,7 @@ def create_web_search_tool(
         if engine_mod is not None and hasattr(engine_mod, "web_search_tool"):
             candidate = getattr(engine_mod, "web_search_tool")
             default_func = getattr(engine_mod, "_default_web_search_tool", None)
-            if default_func is not None and candidate is not default_func:
+            if candidate is not None and (default_func is None or candidate is not default_func):
                 res = candidate() if callable(candidate) else candidate
                 if res is not None:
                     return res
@@ -99,27 +99,47 @@ def create_web_search_tool(
             include_raw_content=False,
         )
 
-    def _run(query: str, config: RunnableConfig | None = None) -> tuple[str, dict[str, Any]]:
+    def _run(query: str, config: RunnableConfig = None) -> tuple[str, dict[str, Any]]:
         structlog.contextvars.bind_contextvars(step="search_web")
         client = _get_active_client()
-        result = client.invoke({"query": query}, config=config)
+        effective_config = config
+        orig_config = get_invoke_config()
+        if orig_config is not _UNSET:
+            effective_config = orig_config
+
+        child_config = effective_config
+        if isinstance(client, BaseTool) and isinstance(effective_config, dict) and "callbacks" in effective_config:
+            child_config = {k: v for k, v in effective_config.items() if k != "callbacks"}
+            child_config["callbacks"] = []
+
+        result = client.invoke({"query": query}, config=child_config)
         artifact = {
             "citations": _extract_web_citations(result),
             "retrieved_contexts": _extract_web_contexts(result),
         }
         return _format_search_results(result), artifact
 
-    async def _arun(query: str, config: RunnableConfig | None = None) -> tuple[str, dict[str, Any]]:
+    async def _arun(query: str, config: RunnableConfig = None) -> tuple[str, dict[str, Any]]:
         structlog.contextvars.bind_contextvars(step="search_web")
         client = _get_active_client()
+        effective_config = config
+        orig_config = get_invoke_config()
+        if orig_config is not _UNSET:
+            effective_config = orig_config
+
+        child_config = effective_config
+        if isinstance(client, BaseTool) and isinstance(effective_config, dict) and "callbacks" in effective_config:
+            child_config = {k: v for k, v in effective_config.items() if k != "callbacks"}
+            child_config["callbacks"] = []
+
         if hasattr(client, "ainvoke"):
-            maybe_coro = client.ainvoke({"query": query}, config=config)
+            maybe_coro = client.ainvoke({"query": query}, config=child_config)
             if inspect.isawaitable(maybe_coro):
                 result = await maybe_coro
             else:
-                result = client.invoke({"query": query}, config=config)
+                result = client.invoke({"query": query}, config=child_config)
         else:
-            result = client.invoke({"query": query}, config=config)
+            result = client.invoke({"query": query}, config=child_config)
         artifact = {
             "citations": _extract_web_citations(result),
             "retrieved_contexts": _extract_web_contexts(result),

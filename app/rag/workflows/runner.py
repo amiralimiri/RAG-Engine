@@ -107,8 +107,16 @@ class WorkflowRunner:
         self,
         request: ChatRequest,
         streaming: bool = False,
+        callback: Any = None,
+        metadata: dict[str, Any] | None = None,
+        config: dict[str, Any] | None = None,
+        **kwargs: Any,
     ) -> tuple[WorkflowDefinition, str, Any, dict[str, Any], dict[str, Any]]:
         """Resolve workflow definition, initialize telemetry contextvars, and prepare initial state."""
+        if request.workflow not in self.registry and request.workflow in ("fix_single_llm", "fix_single_jev", "react_agent"):
+            from app.rag.workflows import register_default_workflows
+            register_default_workflows(self.registry)
+
         try:
             wf_def = self.registry.get(request.workflow)
         except KeyError:
@@ -118,16 +126,21 @@ class WorkflowRunner:
             uuid.uuid4().hex if streaming else None
         )
         telemetry_metadata = dict(wf_def.info.metadata) if getattr(wf_def.info, "metadata", None) else {}
+        if metadata:
+            telemetry_metadata.update(metadata)
         if streaming:
             telemetry_metadata["streaming"] = True
 
-        handler = get_langfuse_callback(
-            workflow_name=request.workflow,
-            session_id=request.session_id,
-            user_id=request.user_id,
-            trace_id=sanitized_tid,
-            metadata=telemetry_metadata,
-        )
+        if callback is not None:
+            handler = callback
+        else:
+            handler = get_langfuse_callback(
+                workflow_name=request.workflow,
+                session_id=request.session_id,
+                user_id=request.user_id,
+                trace_id=sanitized_tid,
+                metadata=telemetry_metadata,
+            )
 
         trace_id = extract_trace_id(handler) or sanitized_tid
         if handler is not None and not trace_id:
@@ -141,7 +154,7 @@ class WorkflowRunner:
                 except Exception:
                     pass
 
-        if not trace_id:
+        if not trace_id and (streaming or request.trace_id):
             ctx_tid = structlog.contextvars.get_contextvars().get("trace_id")
             trace_id = ctx_tid.replace("-", "").lower() if ctx_tid else uuid.uuid4().hex
 
@@ -156,19 +169,27 @@ class WorkflowRunner:
 
         initial_state = wf_def.to_initial_state(request, trace_id=trace_id)
 
-        config: dict[str, Any] = {}
-        if handler:
-            config["callbacks"] = [handler]
-        if trace_id:
-            config["metadata"] = {"trace_id": trace_id}
+        if config is not None:
+            run_config = dict(config)
+        else:
+            run_config = {}
+            if handler:
+                run_config["callbacks"] = [handler]
+            cfg_meta = {}
+            if trace_id:
+                cfg_meta["trace_id"] = trace_id
             if streaming:
-                config["metadata"]["streaming"] = True
-        elif streaming:
-            config["metadata"] = {"streaming": True}
-        thread_id = request.session_id or uuid.uuid4().hex
-        config["configurable"] = {"thread_id": thread_id}
+                cfg_meta["streaming"] = True
+            if metadata:
+                cfg_meta.update(metadata)
+            if cfg_meta:
+                run_config["metadata"] = cfg_meta
+            if kwargs.get("tags"):
+                run_config["tags"] = kwargs["tags"]
+            thread_id = request.session_id or uuid.uuid4().hex
+            run_config["configurable"] = {"thread_id": thread_id}
 
-        return wf_def, trace_id, handler, initial_state, config
+        return wf_def, trace_id, handler, initial_state, run_config
 
     def _finalize_execution(
         self,
@@ -181,12 +202,15 @@ class WorkflowRunner:
     ) -> ChatResponse:
         """Convert final state to ChatResponse, bind resolved trace context, and schedule online evaluation."""
         chat_response = wf_def.to_chat_response(final_state, trace_id=trace_id)
+        chat_response._raw_state = final_state
         resolved_tid = extract_trace_id(handler) or trace_id or chat_response.trace_id
 
         if resolved_tid:
             structlog.contextvars.bind_contextvars(trace_id=resolved_tid)
             if not chat_response.trace_id:
                 chat_response.trace_id = resolved_tid
+            if isinstance(final_state, dict) and "trace_id" not in final_state and request.trace_id:
+                final_state["trace_id"] = resolved_tid
 
         logger.info(
             "chat_query_completed",
@@ -255,14 +279,25 @@ class WorkflowRunner:
         self,
         request: ChatRequest,
         background_tasks: BackgroundTasks | None = None,
+        *,
+        callback: Any = None,
+        metadata: dict[str, Any] | None = None,
+        config: dict[str, Any] | None = None,
+        **kwargs: Any,
     ) -> ChatResponse:
         """Synchronously execute a registered workflow and return ChatResponse."""
         try:
-            wf_def, trace_id, handler, initial_state, config = self._prepare_execution(request)
+            wf_def, trace_id, handler, initial_state, run_config = self._prepare_execution(
+                request,
+                callback=callback,
+                metadata=metadata,
+                config=config,
+                **kwargs,
+            )
             graph = wf_def.get_compiled_graph()
 
             try:
-                final_state = graph.invoke(initial_state, config=config if config else None)
+                final_state = graph.invoke(initial_state, config=run_config if run_config else None)
                 if not isinstance(final_state, dict):
                     final_state = {"answer": str(final_state)}
             except Exception as exc:
@@ -289,17 +324,28 @@ class WorkflowRunner:
         self,
         request: ChatRequest,
         background_tasks: BackgroundTasks | None = None,
+        *,
+        callback: Any = None,
+        metadata: dict[str, Any] | None = None,
+        config: dict[str, Any] | None = None,
+        **kwargs: Any,
     ) -> ChatResponse:
         """Asynchronously execute a registered workflow and return ChatResponse."""
         try:
-            wf_def, trace_id, handler, initial_state, config = self._prepare_execution(request)
+            wf_def, trace_id, handler, initial_state, run_config = self._prepare_execution(
+                request,
+                callback=callback,
+                metadata=metadata,
+                config=config,
+                **kwargs,
+            )
             graph = wf_def.get_compiled_graph()
 
             try:
                 if hasattr(graph, "ainvoke") and callable(graph.ainvoke):
-                    final_state = await graph.ainvoke(initial_state, config=config if config else None)
+                    final_state = await graph.ainvoke(initial_state, config=run_config if run_config else None)
                 else:
-                    final_state = await run_in_threadpool(graph.invoke, initial_state, config=config if config else None)
+                    final_state = await run_in_threadpool(graph.invoke, initial_state, config=run_config if run_config else None)
 
                 if not isinstance(final_state, dict):
                     final_state = {"answer": str(final_state)}

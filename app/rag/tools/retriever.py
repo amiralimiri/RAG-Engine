@@ -8,7 +8,7 @@ from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field
 import structlog
 
-from app.rag.tools.base import DualOutputStructuredTool
+from app.rag.tools.base import _UNSET, DualOutputStructuredTool, get_invoke_config
 
 logger = structlog.get_logger(__name__)
 
@@ -58,10 +58,14 @@ def create_retriever_tool(
         from app.rag.knowledge import get_knowledge_store
         return get_knowledge_store().as_retriever()
 
-    def _run(query: str, config: RunnableConfig | None = None) -> tuple[str, dict[str, Any]]:
+    def _run(query: str, config: RunnableConfig = None) -> tuple[str, dict[str, Any]]:
         structlog.contextvars.bind_contextvars(step="retrieve_kb")
         active = _get_active_retriever()
-        docs = active.invoke(query, config=config)
+        effective_config = config
+        orig_config = get_invoke_config()
+        if orig_config is not _UNSET:
+            effective_config = orig_config
+        docs = active.invoke(query, config=effective_config)
         docs = docs or []
         citations = _extract_citations(docs)
         artifact = {
@@ -70,17 +74,21 @@ def create_retriever_tool(
         }
         return _format_docs(docs), artifact
 
-    async def _arun(query: str, config: RunnableConfig | None = None) -> tuple[str, dict[str, Any]]:
+    async def _arun(query: str, config: RunnableConfig = None) -> tuple[str, dict[str, Any]]:
         structlog.contextvars.bind_contextvars(step="retrieve_kb")
         active = _get_active_retriever()
+        effective_config = config
+        orig_config = get_invoke_config()
+        if orig_config is not _UNSET:
+            effective_config = orig_config
         if hasattr(active, "ainvoke"):
-            maybe_coro = active.ainvoke(query, config=config)
+            maybe_coro = active.ainvoke(query, config=effective_config)
             if inspect.isawaitable(maybe_coro):
                 docs = await maybe_coro
             else:
-                docs = active.invoke(query, config=config)
+                docs = active.invoke(query, config=effective_config)
         else:
-            docs = active.invoke(query, config=config)
+            docs = active.invoke(query, config=effective_config)
         docs = docs or []
         citations = _extract_citations(docs)
         artifact = {

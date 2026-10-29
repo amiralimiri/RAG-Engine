@@ -4,7 +4,6 @@ from typing import Any, Literal, cast
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import BaseTool
 from langchain_openai import ChatOpenAI
-from langchain_tavily import TavilySearch
 from langgraph.graph import END, START, StateGraph
 import structlog
 
@@ -22,8 +21,7 @@ logger = logging.getLogger(__name__)
 GENERATION_NODES: set[str] = {"generate_from_kb", "generate_from_web", "direct_answer"}
 
 _llm = None
-_web_search = None
-_COMPILED_GRAPHS: dict[str, Any] = {}
+web_search_tool: Any = None
 
 __all__ = [
     "GENERATION_NODES",
@@ -61,24 +59,6 @@ def llm():
     return _llm
 
 
-def _default_web_search_tool():
-    global _web_search
-    if _web_search is None:
-        settings = get_settings()
-        api_key = settings.tavily_api_key.get_secret_value() if settings.tavily_api_key else ""
-        _web_search = TavilySearch(
-            tavily_api_key=api_key,
-            max_results=5,
-            topic="general",
-            include_answer=True,
-            include_raw_content=False,
-        )
-    return _web_search
-
-
-web_search_tool = _default_web_search_tool
-
-
 def route_after_router(state: AgentState) -> Literal["retrieve_kb", "direct_answer"]:
     return "retrieve_kb" if state["source_used"] == "kb" else "direct_answer"
 
@@ -86,19 +66,17 @@ def route_after_router(state: AgentState) -> Literal["retrieve_kb", "direct_answ
 def retrieve_kb(state: AgentState, config: RunnableConfig | None = None, retriever: Any = None):
     structlog.contextvars.bind_contextvars(step="retrieve_kb")
     active_retriever = retriever if retriever is not None else get_retriever()
-    docs = active_retriever.invoke(state["current_query"], config=config)
-    docs = docs or []
-    citations = []
-    seen = set()
-    for d in docs:
-        src = d.metadata.get("source", "Private KB") if hasattr(d, "metadata") and d.metadata else "Private KB"
-        title = src.split("/")[-1].split("\\")[-1]
-        if title not in seen:
-            seen.add(title)
-            citations.append({"title": title, "url": "", "type": "private_kb"})
+    tool = create_retriever_tool(retriever=active_retriever)
+    raw_output = tool.invoke({"query": state["current_query"]}, config=config)
+    content, artifact = _unpack_tool_output(raw_output)
+
+    docs = artifact.get("documents", [])
+    citations = artifact.get("citations", [])
+    retrieved_contexts = [d.page_content for d in docs] if docs else []
+
     return {
         "kb_docs": docs,
-        "retrieved_contexts": [d.page_content for d in docs] if docs else [],
+        "retrieved_contexts": retrieved_contexts,
         "citations": citations,
         "trace": [f"Private KB retrieval → {len(docs)} chunks"],
     }
@@ -110,32 +88,18 @@ def after_kb(state: AgentState) -> Literal["generate_from_kb", "search_web"]:
 
 def search_web(state: AgentState, config: RunnableConfig | None = None):
     structlog.contextvars.bind_contextvars(step="search_web")
-    result = web_search_tool().invoke({"query": state["current_query"]}, config=config)
-    lines: list[str] = []
-    citations: list[dict[str, Any]] = []
-    web_contexts: list[str] = []
-    if isinstance(result, dict):
-        if result.get("answer"):
-            lines.append("Search answer: " + result["answer"])
-        for item in result.get("results", []):
-            title = item.get("title", "")
-            url = item.get("url", "")
-            content = item.get("content", "")
-            lines.append(f"Title: {title}\nURL: {url}\nContent: {content}")
-            citations.append({"title": title or url, "url": url, "type": "web"})
-            web_contexts.append(f"Title: {title}\nURL: {url}\nContent: {content}")
-    elif isinstance(result, str):
-        lines.append(result)
-        if result:
-            web_contexts.append(result)
-    elif result is not None:
-        lines.append(str(result))
-        web_contexts.append(str(result))
+    tool = create_web_search_tool()
+    raw_output = tool.invoke({"query": state["current_query"]}, config=config)
+    content, artifact = _unpack_tool_output(raw_output)
+
+    citations = artifact.get("citations", [])
+    contexts = artifact.get("retrieved_contexts", [])
+
     return {
-        "web_results": "\n\n".join(lines),
+        "web_results": content,
         "citations": citations,
         "source_used": "web",
-        "retrieved_contexts": web_contexts,
+        "retrieved_contexts": contexts,
         "trace": ["Web fallback → Tavily search"],
     }
 
@@ -383,19 +347,6 @@ def create_agentic_rag_graph(
     return wrap_safe_invoke(compiled)
 
 
-def _get_workflow_graph(workflow: str) -> Any:
-    if workflow not in _COMPILED_GRAPHS:
-        if workflow == "fix_single_llm":
-            from app.rag.classifiers import OpenAIClassifierAdapter
-            _COMPILED_GRAPHS[workflow] = create_agentic_rag_graph(OpenAIClassifierAdapter())
-        elif workflow == "fix_single_jev":
-            from app.rag.classifiers import JevClassifierAdapter
-            _COMPILED_GRAPHS[workflow] = create_agentic_rag_graph(JevClassifierAdapter())
-        else:
-            raise ValueError(f"Unknown workflow: {workflow}")
-    return _COMPILED_GRAPHS[workflow]
-
-
 def ask(
     question: str,
     workflow: str = "fix_single_llm",
@@ -407,53 +358,46 @@ def ask(
     **kwargs: Any,
 ) -> dict[str, Any]:
     """Unified entrypoint to query an agentic RAG workflow graph."""
-    target_graph = _get_workflow_graph(workflow)
+    from app.api.schemas import ChatRequest
+    from app.rag.workflows.runner import get_workflow_runner
 
-    context: dict[str, Any] = {"workflow": workflow}
-    if session_id:
-        context["session_id"] = session_id
-    if user_id:
-        context["user_id"] = user_id
+    runner = get_workflow_runner()
+
+    cfg: dict[str, Any] = {}
+    if callback:
+        cfg["callbacks"] = [callback]
+    tags = kwargs.get("tags")
+    if tags:
+        cfg["tags"] = tags
+    if metadata:
+        cfg["metadata"] = metadata
 
     extracted_tid = (
         extract_trace_id(callback)
         or (metadata.get("trace_id") if isinstance(metadata, dict) else None)
-        or structlog.contextvars.get_contextvars().get("trace_id")
     )
-    if extracted_tid:
-        context["trace_id"] = extracted_tid
 
-    structlog.contextvars.bind_contextvars(**context)
+    request = ChatRequest(
+        question=question,
+        workflow=workflow,
+        session_id=session_id,
+        user_id=user_id,
+        trace_id=extracted_tid,
+    )
 
-    initial: AgentState = {
-        "question": question,
-        "current_query": "",
-        "kb_docs": [],
-        "web_results": "",
-        "kb_grade": "",
-        "web_grade": "",
-        "answer": "",
-        "source_used": "",
-        "retry_count": 0,
-        "trace": [],
-        "citations": [],
-        "retrieved_contexts": [],
-    }
-    if extracted_tid:
-        initial["trace_id"] = extracted_tid
+    chat_response = runner.execute(
+        request,
+        callback=callback,
+        metadata=metadata,
+        config=cfg,
+        **kwargs,
+    )
 
-    config: dict[str, Any] = {}
-    if callback:
-        config["callbacks"] = [callback]
-    tags = kwargs.get("tags")
-    if tags:
-        config["tags"] = tags
-    if metadata:
-        config["metadata"] = metadata
-
-    result = target_graph.invoke(initial, config=config if config else None)
-    if not isinstance(result, dict):
-        result = {"answer": str(result)}
+    raw_state = getattr(chat_response, "_raw_state", None)
+    if isinstance(raw_state, dict):
+        result = dict(raw_state)
+    else:
+        result = chat_response.model_dump()
 
     if extracted_tid and "trace_id" not in result:
         result["trace_id"] = extracted_tid

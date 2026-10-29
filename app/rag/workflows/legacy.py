@@ -5,7 +5,6 @@ from __future__ import annotations
 import inspect
 from typing import TYPE_CHECKING, Any, Callable
 
-from app.rag import fix_single_llm, fix_single_jev
 from app.rag.workflows.base import EvalContext, WorkflowDefinition, WorkflowInfo
 from app.rag.workflows.registry import get_workflow_registry
 from app.rag.workflows.runner import DEFAULT_STEP_LABELS
@@ -232,20 +231,69 @@ def _sync_legacy_registry(workflow_id: str) -> None:
 class _LegacyAsksDict(dict):
     """Dictionary supporting backward compatibility with tests monkeypatching WORKFLOW_ASKS."""
 
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._initialized = False
+
+    def _ensure_defaults(self) -> None:
+        if not self._initialized:
+            self._initialized = True
+            from app.rag import fix_single_llm, fix_single_jev
+            if "fix_single_llm" not in self:
+                super().__setitem__("fix_single_llm", fix_single_llm.ask)
+            if "fix_single_jev" not in self:
+                super().__setitem__("fix_single_jev", fix_single_jev.ask)
+
+    def __getitem__(self, key: str) -> Any:
+        self._ensure_defaults()
+        return super().__getitem__(key)
+
+    def get(self, key: str, default: Any = None) -> Any:
+        self._ensure_defaults()
+        return super().get(key, default)
+
+    def __contains__(self, key: object) -> bool:
+        self._ensure_defaults()
+        return super().__contains__(key)
+
+    def __iter__(self):
+        self._ensure_defaults()
+        return super().__iter__()
+
+    def items(self):
+        self._ensure_defaults()
+        return super().items()
+
+    def values(self):
+        self._ensure_defaults()
+        return super().values()
+
+    def keys(self):
+        self._ensure_defaults()
+        return super().keys()
+
+    def __len__(self) -> int:
+        self._ensure_defaults()
+        return super().__len__()
+
     def __setitem__(self, key: str, value: Any) -> None:
+        self._ensure_defaults()
         super().__setitem__(key, value)
         _sync_legacy_registry(key)
 
     def __delitem__(self, key: str) -> None:
+        self._ensure_defaults()
         super().__delitem__(key)
         _sync_legacy_registry(key)
 
     def pop(self, key: str, *args: Any) -> Any:
+        self._ensure_defaults()
         res = super().pop(key, *args)
         _sync_legacy_registry(key)
         return res
 
     def update(self, *args: Any, **kwargs: Any) -> None:
+        self._ensure_defaults()
         super().update(*args, **kwargs)
         keys = list(dict(*args, **kwargs).keys())
         for k in keys:
@@ -255,20 +303,69 @@ class _LegacyAsksDict(dict):
 class _LegacyGraphsDict(dict):
     """Dictionary supporting backward compatibility with tests monkeypatching WORKFLOW_GRAPHS."""
 
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._initialized = False
+
+    def _ensure_defaults(self) -> None:
+        if not self._initialized:
+            self._initialized = True
+            from app.rag import fix_single_llm, fix_single_jev
+            if "fix_single_llm" not in self:
+                super().__setitem__("fix_single_llm", fix_single_llm.agent_graph)
+            if "fix_single_jev" not in self:
+                super().__setitem__("fix_single_jev", fix_single_jev.agent_graph)
+
+    def __getitem__(self, key: str) -> Any:
+        self._ensure_defaults()
+        return super().__getitem__(key)
+
+    def get(self, key: str, default: Any = None) -> Any:
+        self._ensure_defaults()
+        return super().get(key, default)
+
+    def __contains__(self, key: object) -> bool:
+        self._ensure_defaults()
+        return super().__contains__(key)
+
+    def __iter__(self):
+        self._ensure_defaults()
+        return super().__iter__()
+
+    def items(self):
+        self._ensure_defaults()
+        return super().items()
+
+    def values(self):
+        self._ensure_defaults()
+        return super().values()
+
+    def keys(self):
+        self._ensure_defaults()
+        return super().keys()
+
+    def __len__(self) -> int:
+        self._ensure_defaults()
+        return super().__len__()
+
     def __setitem__(self, key: str, value: Any) -> None:
+        self._ensure_defaults()
         super().__setitem__(key, value)
         _sync_legacy_registry(key)
 
     def __delitem__(self, key: str) -> None:
+        self._ensure_defaults()
         super().__delitem__(key)
         _sync_legacy_registry(key)
 
     def pop(self, key: str, *args: Any) -> Any:
+        self._ensure_defaults()
         res = super().pop(key, *args)
         _sync_legacy_registry(key)
         return res
 
     def update(self, *args: Any, **kwargs: Any) -> None:
+        self._ensure_defaults()
         super().update(*args, **kwargs)
         keys = list(dict(*args, **kwargs).keys())
         for k in keys:
@@ -286,23 +383,19 @@ def reset_legacy_defaults() -> None:
         "fix_single_llm": fix_single_llm.ask,
         "fix_single_jev": fix_single_jev.ask,
     })
+    WORKFLOW_ASKS._initialized = True
     super(_LegacyGraphsDict, WORKFLOW_GRAPHS).clear()
     super(_LegacyGraphsDict, WORKFLOW_GRAPHS).update({
         "fix_single_llm": fix_single_llm.agent_graph,
         "fix_single_jev": fix_single_jev.agent_graph,
     })
+    WORKFLOW_GRAPHS._initialized = True
     register_default_workflows(registry)
 
 
-WORKFLOW_ASKS: _LegacyAsksDict = _LegacyAsksDict({
-    "fix_single_llm": fix_single_llm.ask,
-    "fix_single_jev": fix_single_jev.ask,
-})
+WORKFLOW_ASKS: _LegacyAsksDict = _LegacyAsksDict()
 
-WORKFLOW_GRAPHS: _LegacyGraphsDict = _LegacyGraphsDict({
-    "fix_single_llm": fix_single_llm.agent_graph,
-    "fix_single_jev": fix_single_jev.agent_graph,
-})
+WORKFLOW_GRAPHS: _LegacyGraphsDict = _LegacyGraphsDict()
 
 __all__ = [
     "_LegacyUnifiedWorkflowAdapter",
