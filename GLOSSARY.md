@@ -8,9 +8,20 @@ Canonical domain terminology for the Enterprise IT Support Agentic RAG system.
 A self-corrective Retrieval-Augmented Generation architecture powered by LangGraph that dynamically routes user inquiries, retrieves private enterprise knowledge from Pinecone vector databases, grades retrieval evidence, rewrites queries when ambiguous, falls back to external web search via Tavily when private evidence is weak, and generates grounded IT support responses.
 
 ### Workflow Backend
-One of multiple standalone LangGraph execution graphs selectable per request:
-- `fix_single_llm`: Relies on standard OpenAI structured outputs (`deepseek-v4-flash`) for routing and grading decisions.
-- `fix_single_jev`: Utilizes TypeSafe Classifier (`typesafe/jev-1.13`) for deterministic, low-latency categorical routing and grading.
+The execution persona selected per request, determining which classifier adapter drives decision routing and evidence grading:
+- `fix_single_llm`: Relies on standard OpenAI structured outputs (`deepseek-v4-flash`) via `OpenAIClassifierAdapter`.
+- `fix_single_jev`: Utilizes TypeSafe Classifier (`typesafe/jev-1.13`) via `JevClassifierAdapter` for deterministic categorical decisions and custom token telemetry.
+
+### Workflow Engine
+The unified, deep LangGraph execution pipeline (`app/rag/engine.py`) that orchestrates the self-corrective RAG lifecycle (routing, retrieval, grading, query rewriting, and generation). Exposes a small interface (`ask` and `create_agentic_rag_graph`) while hiding state transitions, citation formatting, and streaming token dispatch.
+
+### Workflow Classifier (Classifier Seam)
+A strongly-typed decision protocol (`app/rag/classifiers.py`) defining discrete methods (`route`, `grade_kb`, `grade_web`) required by the Workflow Engine to make routing and evidence sufficiency decisions.
+
+### Classifier Adapter
+A concrete adapter satisfying the `WorkflowClassifier` seam:
+- `OpenAIClassifierAdapter`: Satisfies the seam using Pydantic JSON mode structured outputs.
+- `JevClassifierAdapter`: Satisfies the seam using TypeSafe Classifier SDK while encapsulating token estimation and Langfuse span creation.
 
 ### Trace & Reasoning Steps
 The sequence of discrete LangGraph nodes traversed during query resolution (e.g., `retrieve` -> `grade_evidence` -> `generate`). Serialized in chat responses as `trace: list[str]`.
