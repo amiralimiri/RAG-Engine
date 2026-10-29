@@ -8,6 +8,7 @@ from app.rag.workflows.registry import (
     get_workflow_registry,
     register_workflow,
 )
+from app.rag.workflows.runner import WorkflowRunner, get_workflow_runner
 from app.rag.workflows.self_corrective import SelfCorrectiveRagWorkflow
 
 
@@ -48,6 +49,8 @@ __all__ = [
     "WorkflowRegistry",
     "get_workflow_registry",
     "register_workflow",
+    "WorkflowRunner",
+    "get_workflow_runner",
     "SelfCorrectiveRagWorkflow",
     "ReActAgentWorkflow",
     "register_default_workflows",
