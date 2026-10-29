@@ -42,6 +42,10 @@ class Settings(BaseSettings):
     top_k: int = 4
     max_retries: int = 1
 
+    # Chunking & Ingestion Settings
+    chunk_size: int = Field(default=900, ge=1)
+    chunk_overlap: int = Field(default=120, ge=0)
+
     langfuse_public_key: str | None = None
     langfuse_secret_key: SecretStr | None = None
     langfuse_host: str = "https://cloud.langfuse.com"

@@ -15,11 +15,11 @@ Define pluggable strategy protocols for document parsing and text chunking in `a
 
 **Blocked by:** None (can start immediately in parallel with Ticket 01)
 
-**Status:** ready-for-agent
+**Status:** completed
 
-- [ ] Red: Create `tests/rag/test_parsers_chunkers.py` asserting `CompositeDocumentParser` correctly identifies and parses `.pdf`, `.md`, `.txt`, and `.docx` files both synchronously and asynchronously.
-- [ ] Red: Add test asserting unsupported file extensions raise a clear `ValueError`.
-- [ ] Red: Add test asserting `RecursiveCharacterChunker` splits large documents into chunks preserving metadata (`source`, `start_index`) with configured overlap.
-- [ ] Green: Implement `DocumentParser` protocol and concrete format parsers in `app/rag/knowledge/parsers.py`.
-- [ ] Green: Implement `DocumentChunker` protocol and `RecursiveCharacterChunker` in `app/rag/knowledge/chunkers.py`.
-- [ ] Refactor: Export parsers and chunkers cleanly in `app/rag/knowledge/__init__.py`.
+- [x] Red: Create `tests/rag/test_parsers_chunkers.py` asserting `CompositeDocumentParser` correctly identifies and parses `.pdf`, `.md`, `.txt`, and `.docx` files both synchronously and asynchronously.
+- [x] Red: Add test asserting unsupported file extensions raise a clear `ValueError`.
+- [x] Red: Add test asserting `RecursiveCharacterChunker` splits large documents into chunks preserving metadata (`source`, `start_index`) with configured overlap.
+- [x] Green: Implement `DocumentParser` protocol and concrete format parsers in `app/rag/knowledge/parsers.py`.
+- [x] Green: Implement `DocumentChunker` protocol and `RecursiveCharacterChunker` in `app/rag/knowledge/chunkers.py`.
+- [x] Refactor: Export parsers and chunkers cleanly in `app/rag/knowledge/__init__.py`.
