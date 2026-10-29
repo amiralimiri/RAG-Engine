@@ -1,45 +1,44 @@
-# Technical Specification: Multi-Workflow Extensibility Platform
+# Technical Specification: Knowledge Store Seam and Unified Document Indexing Pipeline
 
-- **ADR Reference:** `docs/adr/0007-multi-workflow-extensibility-platform.md`
-- **Specification Document:** `docs/specs/0007-multi-workflow-extensibility-platform-spec.md`
-- **Target Version:** `0.7.0`
-- **Status:** Implemented
+- **ADR Reference:** `docs/adr/0009-knowledge-store-seam-and-document-indexing-pipeline.md`
+- **Specification Document:** `docs/specs/0009-knowledge-store-seam-and-document-indexing-pipeline-spec.md`
+- **Target Version:** `0.9.0`
+- **Status:** Ready for Implementation
 
 ---
 
 ## 1. Problem Statement
 
-Following ADR 0006, the self-corrective RAG engine consolidated its 10-node topology and established the `WorkflowClassifier` seam (`app/rag/classifiers.py`), allowing both `fix_single_llm` and `fix_single_jev` to share graph definitions.
+Following ADR 0006, ADR 0007, and ADR 0008, the agentic RAG platform established a unified 10-node StateGraph engine, pluggable classifier adapters, an extensible multi-workflow registry, and a standardized dual-output `BaseTool` layer.
 
-However, the architecture remains rigidly coupled to a single fixed-graph topology:
-1. **Module-Level Routing Coupling**: `app/api/routes.py` hardcodes module-level dictionaries (`WORKFLOW_ASKS`, `WORKFLOW_GRAPHS`), generation node names (`GENERATION_NODES`), and step labels (`STEP_LABELS`).
-2. **Monolithic State Schema**: The execution runtime explicitly assumes all workflows run on `AgentState` (`kb_docs`, `web_grade`, `retry_count`, `citations`), preventing developers from introducing conversational ReAct agents, multi-turn chat agents with memory, or multimodal pipelines.
-3. **Hardwired Tool Invocations**: Knowledge base retrieval (`retrieve_kb`) and search (`search_web`) are bespoke graph functions in `engine.py`, unavailable as structured `BaseTool` instances for autonomous tool-calling agents.
-4. **Single-Turn API Contract**: `ChatRequest` only accepts a single `question: str`, omitting conversational history (`messages`) or attachments.
-5. **Streaming Leakage**: SSE token streaming assumes every workflow emits text directly from three fixed generation nodes, leaking raw JSON tool-calling deltas to the frontend when autonomous agents invoke tools.
+However, document ingestion and vector storage remain architecturally fragmented and shallow:
+1. **Shallow Ingestion Layer**: `app/services/ingestion.py` exposes only two thin procedural helpers (`load_file` and `chunk_documents`), leaving all orchestration to callers. Callers such as the HTTP upload route (`app/api/routes.py:upload_file`) and bulk CLI ingesters (`ingest_sample_kb.py`) are forced to manually coordinate file reading, document loading, chunk splitting, threadpool dispatch, batch slicing, and vectorstore calls.
+2. **Coupled Storage and Index Lifecycle**: `app/rag/vectorstore.py` tightly couples callers to `PineconeVectorStore` and cloud Pinecone SDKs. Its `ensure_index()` method executes blocking sleep loops (`while not pc.has_index: time.sleep(1)`) and destructively deletes indexes when embedding dimensions mismatch.
+3. **Asymmetric Testability & Impossible Offline Testing**: Because vector storage is bound to cloud Pinecone and global module singletons (`_vectorstore`, `_embeddings`), testing ingestion or retrieval requires a live Pinecone API key or invasive monkeypatching of third-party network clients.
+4. **Non-Idempotent Vector Ingestion**: Re-indexing an existing file assigns random chunk IDs, duplicating vector entries in Pinecone and degrading retrieval accuracy.
+5. **Rigid Parsing and Chunking**: File extension handling and text chunking parameters (`chunk_size=900, chunk_overlap=120`) are hardcoded, preventing developers from testing alternative parsers or semantic chunkers without directly modifying library code.
+6. **Seam Leakage in Retriever Tool**: `app/rag/tools/retriever.py` contains reflection hacks inspecting `sys.modules["app.rag.engine"]` to bypass global state when monkeypatched in legacy tests.
 
-To support rapid development of new agentic workflows, the platform must provide an open-closed architecture where workflows encapsulate their own state schemas, graph compilation, tool bindings, streaming filters, and evaluation extractors.
+To achieve maximum modularity, callers require a deep document indexing pipeline behind a single-method interface, and workflows require an independent vector store protocol seam with an in-memory double for fast, offline testing.
 
 ---
 
 ## 2. Architectural Solution
 
-Establish an extensible multi-workflow architecture comprised of five foundational modules:
+Establish a unified knowledge subsystem in `app/rag/knowledge/` providing clean CQRS separation between the write pipeline (`DocumentIndexer`) and the read/retrieval storage seam (`VectorStoreAdapter`).
 
-1. **`app/rag/workflows/base.py` (`WorkflowDefinition` & `WorkflowInfo`)**:
-   - A runtime-checkable `Protocol` defining the workflow lifecycle contract: metadata, graph retrieval, bidirectional state conversion, evaluation context extraction, and error fallback handling.
-2. **`app/rag/workflows/registry.py` (`WorkflowRegistry`)**:
-   - A thread-safe registry providing lazy graph compilation, singleton caching, workflow discovery, and optional startup pre-warming.
-3. **`app/rag/tools/` (Modular Tool Abstraction Layer)**:
-   - Standalone LangChain `BaseTool` factories with structured Pydantic `args_schema` (`KnowledgeSearchInput`, `WebSearchInput`) and automatic Langfuse telemetry propagation.
-4. **`app/rag/workflows/self_corrective.py` (`SelfCorrectiveRagWorkflow`)**:
-   - A single parameterized workflow class hosting both `fix_single_llm` and `fix_single_jev` via their respective ADR 0006 classifier adapters.
-5. **`app/rag/workflows/react_agent.py` (`ReActAgentWorkflow`)**:
-   - A reference autonomous tool-calling agent using `langgraph.prebuilt.create_react_agent` with in-memory checkpointer persistence (`MemorySaver`) via `session_id` -> `thread_id` mapping.
-6. **Transport Layer Modernization (`app/api/routes.py` & `app/api/schemas.py`)**:
-   - Additive `ChatRequest` fields (`messages`, `attachments`), enriched `GET /api/workflows` capability introspection, and tool-call token filtering in the SSE stream generator.
-7. **Conformance Test Harness (`tests/rag/test_workflow_contracts.py`)**:
-   - A reusable `BaseWorkflowContractTest` class guaranteeing compliance with state adaptation, telemetry, and error-handling standards.
+1. **Independent `VectorStoreAdapter` Protocol Seam (`app/rag/knowledge/base.py`)**:
+   - Define a strongly-typed Python `Protocol` specifying dual synchronous and native asynchronous storage methods: `add_documents` / `aadd_documents`, `similarity_search` / `asimilarity_search`, and `as_retriever`.
+   - Provide concrete `PineconeVectorStoreAdapter` and `InMemoryVectorStoreAdapter` implementations.
+   - Provide an injectable factory `get_knowledge_store(settings=None, store_type=None)` managing singleton lifecycle and test overrides.
+2. **Deep Write-Path Indexing Pipeline (`app/rag/knowledge/indexer.py`)**:
+   - Encapsulate file parsing, chunk splitting, batch scheduling, deterministic SHA-256 chunk ID generation, and vector persistence behind a single-method `DocumentIndexer` interface (`index_file`, `aindex_file`, `index_batch`, `aindex_batch`).
+3. **Pluggable Parser and Chunker Strategy Protocols (`parsers.py`, `chunkers.py`)**:
+   - `DocumentParser`: Pluggable strategy with format registry (PDF, MD, TXT, DOCX).
+   - `DocumentChunker`: Pluggable strategy driven by application settings.
+4. **Caller Modernization & Backward Compatibility Shims**:
+   - Migrate `app/api/routes.py:upload_file`, `ingest_sample_kb.py`, and `app/rag/tools/retriever.py`.
+   - Preserve `app/rag/vectorstore.py` and `app/services/ingestion.py` as backward-compatibility delegation shims.
 
 ---
 

@@ -64,3 +64,21 @@ A normalized data structure (`EvalContext`) extracted from arbitrary workflow st
 
 ### Thread ID (Checkpointer Lifecycle)
 The LangGraph configuration key (`configurable: {"thread_id": session_id}`) tying stateful, multi-turn conversational agents to durable in-memory (`MemorySaver`) or external checkpointer storage.
+
+### Knowledge Store (Storage Seam)
+A strongly-typed protocol seam (`VectorStoreAdapter`) defining the storage and similarity retrieval contract for enterprise documents. Decouples vector persistence from concrete database vendors.
+
+### Vector Store Adapter
+A concrete adapter satisfying the `VectorStoreAdapter` storage seam:
+- `PineconeVectorStoreAdapter`: Production implementation connecting to Pinecone Serverless.
+- `InMemoryVectorStoreAdapter`: In-memory implementation providing deterministic similarity search without network dependencies for fast unit testing.
+
+### Document Indexer
+The deep write-path module (`app/rag/knowledge/indexer.py`) coordinating document loading, chunking strategy dispatch, embedding generation, batch scheduling, and vector persistence behind a high-leverage entrypoint (`index_file`, `index_batch`).
+_Avoid_: Ingestion helper, upload processor, ad-hoc batch loader
+
+### Document Parser
+A pluggable strategy protocol (`DocumentParser`) responsible for reading a raw file path and returning a normalized list of LangChain `Document` objects based on supported file formats.
+
+### Document Chunker
+A pluggable strategy protocol (`DocumentChunker`) partitioning parsed documents into retrieval-optimized text segments with preserved metadata and configurable overlap.
