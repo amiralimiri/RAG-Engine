@@ -19,11 +19,11 @@ Implement `PineconeVectorStoreAdapter` in `app/rag/knowledge/vectorstore.py` sat
 **Blocked by:** 
 - Ticket 01: VectorStoreAdapter Protocol & Offline In-Memory Double
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Red: Add test in `tests/rag/test_knowledge_store.py` asserting `PineconeVectorStoreAdapter` conforms to `VectorStoreAdapter` protocol.
-- [ ] Red: Add test mocking Pinecone client asserting dimension mismatch raises `ConfigurationError` without deleting the index.
-- [ ] Red: Add test asserting `get_knowledge_store(store_type="memory")` returns `InMemoryVectorStoreAdapter`, and `store_type="pinecone"` returns `PineconeVectorStoreAdapter`.
-- [ ] Green: Implement `PineconeVectorStoreAdapter` in `app/rag/knowledge/vectorstore.py`.
-- [ ] Green: Implement thread-safe `get_knowledge_store` factory with override support.
-- [ ] Refactor: Export `PineconeVectorStoreAdapter` and `get_knowledge_store` in `app/rag/knowledge/__init__.py`.
+- [x] Red: Add test in `tests/rag/test_knowledge_store.py` asserting `PineconeVectorStoreAdapter` conforms to `VectorStoreAdapter` protocol.
+- [x] Red: Add test mocking Pinecone client asserting dimension mismatch raises `ConfigurationError` without deleting the index.
+- [x] Red: Add test asserting `get_knowledge_store(store_type="memory")` returns `InMemoryVectorStoreAdapter`, and `store_type="pinecone"` returns `PineconeVectorStoreAdapter`.
+- [x] Green: Implement `PineconeVectorStoreAdapter` in `app/rag/knowledge/vectorstore.py`.
+- [x] Green: Implement thread-safe `get_knowledge_store` factory with override support.
+- [x] Refactor: Export `PineconeVectorStoreAdapter` and `get_knowledge_store` in `app/rag/knowledge/__init__.py`.

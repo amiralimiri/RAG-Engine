@@ -38,6 +38,7 @@ class Settings(BaseSettings):
     
     pinecone_index_name: str = "industry-agentic-rag-kb"
     pinecone_namespace: str = "company-it-kb"
+    vector_store_type: str = "pinecone"
     
     top_k: int = 4
     max_retries: int = 1

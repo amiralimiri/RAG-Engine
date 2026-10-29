@@ -30,6 +30,10 @@ class VectorStoreAdapter(Protocol):
         ...
 
 
+class ConfigurationError(Exception):
+    """Raised when knowledge store or vector index configuration is invalid."""
+
+
 class IndexingResult(BaseModel):
     """Normalized outcome returned by DocumentIndexer operations."""
 
