@@ -30,7 +30,7 @@ Migrate all first-party callers and tools to the new `app/rag/knowledge/` subsys
 - Ticket 03: Deep DocumentIndexer Write Pipeline with Deterministic Upserts
 - Ticket 04: Pinecone Vector Store Adapter & Non-Destructive Validation
 
-**Status:** completed
+**Status:** closed
 
 - [x] Red: Add test in `tests/api/test_routes_upload.py` asserting `POST /api/upload` uses `DocumentIndexer` and returns HTTP 200 with index results against `InMemoryVectorStoreAdapter`.
 - [x] Red: Add regression test asserting legacy imports from `app.rag.vectorstore` and `app.services.ingestion` execute without error.

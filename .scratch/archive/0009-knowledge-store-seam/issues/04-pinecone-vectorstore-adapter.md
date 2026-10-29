@@ -19,7 +19,7 @@ Implement `PineconeVectorStoreAdapter` in `app/rag/knowledge/vectorstore.py` sat
 **Blocked by:** 
 - Ticket 01: VectorStoreAdapter Protocol & Offline In-Memory Double
 
-**Status:** done
+**Status:** closed
 
 - [x] Red: Add test in `tests/rag/test_knowledge_store.py` asserting `PineconeVectorStoreAdapter` conforms to `VectorStoreAdapter` protocol.
 - [x] Red: Add test mocking Pinecone client asserting dimension mismatch raises `ConfigurationError` without deleting the index.

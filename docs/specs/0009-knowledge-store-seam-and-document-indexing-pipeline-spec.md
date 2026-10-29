@@ -2,7 +2,7 @@
 
 - **ADR Reference:** `docs/adr/0009-knowledge-store-seam-and-document-indexing-pipeline.md`
 - **Target Version:** `0.9.0`
-- **Status:** Draft / Ready for Implementation
+- **Status:** Completed
 
 ---
 

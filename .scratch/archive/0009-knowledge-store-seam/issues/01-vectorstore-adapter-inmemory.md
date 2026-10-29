@@ -20,7 +20,7 @@ Equip `InMemoryVectorStoreAdapter` with:
 
 **Blocked by:** None (can start immediately)
 
-**Status:** completed
+**Status:** closed
 
 - [x] Red: Create `tests/rag/test_knowledge_store.py` asserting `InMemoryVectorStoreAdapter` satisfies `isinstance(adapter, VectorStoreAdapter)`.
 - [x] Red: Add test for synchronous `add_documents` and `similarity_search` verifying exact cosine similarity ranking and top-k filtering with deterministic offline embeddings.

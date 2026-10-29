@@ -23,7 +23,7 @@ Implement the deep write-path indexing pipeline in `app/rag/knowledge/indexer.py
 - Ticket 01: VectorStoreAdapter Protocol & Offline In-Memory Double
 - Ticket 02: Pluggable Document Parsing and Chunking Strategy Protocols
 
-**Status:** done
+**Status:** closed
 
 - [x] Red: Create `tests/rag/test_document_indexer.py` asserting `index_file` and `aindex_file` successfully parse, chunk, and index a document into `InMemoryVectorStoreAdapter`.
 - [x] Red: Add test asserting `IndexingResult` returns accurate document counts, chunk counts, and created vector IDs.

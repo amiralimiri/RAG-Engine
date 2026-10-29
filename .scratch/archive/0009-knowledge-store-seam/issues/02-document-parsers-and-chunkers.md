@@ -15,7 +15,7 @@ Define pluggable strategy protocols for document parsing and text chunking in `a
 
 **Blocked by:** None (can start immediately in parallel with Ticket 01)
 
-**Status:** completed
+**Status:** closed
 
 - [x] Red: Create `tests/rag/test_parsers_chunkers.py` asserting `CompositeDocumentParser` correctly identifies and parses `.pdf`, `.md`, `.txt`, and `.docx` files both synchronously and asynchronously.
 - [x] Red: Add test asserting unsupported file extensions raise a clear `ValueError`.

@@ -15,3 +15,7 @@ Single-context (`GLOSSARY.md` + `docs/adr/` at the repo root). See `docs/agents/
 ### Tool abstractions
 
 Dual-output `BaseTool` seams and test doubles. See `docs/agents/tool-abstractions.md`.
+
+### Knowledge store & indexing
+
+VectorStoreAdapter protocol seam, deterministic chunk hashing, and offline test doubles. See `docs/agents/knowledge-store.md`.
