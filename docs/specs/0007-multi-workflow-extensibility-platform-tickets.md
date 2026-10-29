@@ -55,7 +55,7 @@
 | Ticket | Title | Target Files | Blockers | Status |
 |---|---|---|---|---|
 | **Ticket 01** | Core Workflow Interfaces & Additive Schemas | `app/rag/workflows/base.py`, `app/api/schemas.py`, `tests/rag/test_base_workflow.py` | None | `completed` |
-| **Ticket 02** | Reusable Tool Abstraction Layer (`BaseTool`) | `app/rag/tools/retriever.py`, `app/rag/tools/search.py`, `app/rag/tools/__init__.py`, `tests/rag/test_tools.py` | None | `ready` |
+| **Ticket 02** | Reusable Tool Abstraction Layer (`BaseTool`) | `app/rag/tools/retriever.py`, `app/rag/tools/search.py`, `app/rag/tools/__init__.py`, `tests/rag/test_tools.py` | None | `completed` |
 | **Ticket 03** | Central Thread-Safe `WorkflowRegistry` | `app/rag/workflows/registry.py`, `tests/rag/test_registry.py` | None (Ticket 01 completed) | `ready` |
 | **Ticket 04** | Reusable Conformance Test Harness | `tests/rag/test_workflow_contracts.py` | None (Ticket 01 completed) | `ready` |
 | **Ticket 05** | Parameterized `SelfCorrectiveRagWorkflow` | `app/rag/workflows/self_corrective.py`, `app/rag/workflows/__init__.py`, `tests/rag/test_self_corrective_contract.py` | Ticket 01, Ticket 03, Ticket 04 | `blocked` |
@@ -109,18 +109,18 @@ Establish the structural contracts that all workflow implementations must satisf
   - `app/rag/tools/__init__.py`
   - `tests/rag/test_tools.py`
 - **Blockers:** None
-- **Status:** `ready`
+- **Status:** `completed`
 
 ### What to build:
 Extract private knowledge base retrieval and Tavily web search into modular `BaseTool` instances with explicit Pydantic `args_schema` models. Ensure all tools propagate `RunnableConfig` for automatic Langfuse callback logging.
 
 ### Acceptance Criteria:
-- [ ] `KnowledgeSearchInput` defined with `query: str = Field(description="Search query to find internal documentation")`.
-- [ ] `create_retriever_tool(retriever=None) -> BaseTool` returns a LangChain tool named `"knowledge_base_search"` that queries Pinecone (or custom retriever) and formats page content with source metadata.
-- [ ] `WebSearchInput` defined with `query: str = Field(description="Search query for live external internet search")`.
-- [ ] `create_web_search_tool() -> BaseTool` returns a LangChain tool named `"web_search"` wrapping Tavily general search.
-- [ ] `app/rag/tools/__init__.py` re-exports the factory functions.
-- [ ] Unit tests verify tool schema validation, execution results, and metadata propagation.
+- [x] `KnowledgeSearchInput` defined with `query: str = Field(description="Search query to find internal documentation")`.
+- [x] `create_retriever_tool(retriever=None) -> BaseTool` returns a LangChain tool named `"knowledge_base_search"` that queries Pinecone (or custom retriever) and formats page content with source metadata.
+- [x] `WebSearchInput` defined with `query: str = Field(description="Search query for live external internet search")`.
+- [x] `create_web_search_tool() -> BaseTool` returns a LangChain tool named `"web_search"` wrapping Tavily general search.
+- [x] `app/rag/tools/__init__.py` re-exports the factory functions.
+- [x] Unit tests verify tool schema validation, execution results, and metadata propagation.
 
 ---
 
