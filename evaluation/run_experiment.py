@@ -19,19 +19,18 @@ if str(project_root) not in sys.path:
 from deepeval.metrics import AnswerRelevancyMetric, FaithfulnessMetric
 from deepeval.test_case import LLMTestCase
 
+from app.api.schemas import ChatRequest
 from app.core.config import get_settings
 from app.core.telemetry import get_langfuse_client
-from app.rag import fix_single_jev, fix_single_llm
+from app.rag.workflows.registry import get_workflow_registry
+from app.rag.workflows.runner import WorkflowRunner, get_workflow_runner
 from evaluation.judge import judge
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("experiment_runner")
 settings = get_settings()
 
-WORKFLOWS: dict[str, Callable[[str], dict[str, Any]]] = {
-    "fix_single_llm": fix_single_llm.ask,
-    "fix_single_jev": fix_single_jev.ask,
-}
+WORKFLOWS: dict[str, Callable[[str], dict[str, Any]]] = {}
 
 DEFAULT_BENCHMARK_PATH = Path("data/gold_benchmarks.json")
 DEFAULT_DATASET_NAME = "it-support-benchmark"
@@ -100,15 +99,21 @@ def seed_golden_dataset(
 
 def run_workflow_benchmark(
     workflow_name: str,
-    workflow_fn: Callable[[str], dict[str, Any]],
-    dataset: Any,
+    workflow_fn: Optional[Callable[[str], dict[str, Any]]] = None,
+    dataset: Any = None,
     client: Any = None,
     run_timestamp: Optional[int] = None,
+    runner: Optional[WorkflowRunner] = None,
 ) -> dict[str, Any]:
     """Runs a single workflow against all benchmark items in the dataset."""
     ts = run_timestamp or int(time.time())
     run_name = f"{workflow_name}-run-{ts}"
     logger.info("=== Running Experiment for Workflow: %s (%s) ===", workflow_name, run_name)
+
+    active_runner = runner or get_workflow_runner()
+    wf_def = None
+    if workflow_fn is None:
+        wf_def = active_runner.registry.get(workflow_name)
 
     items = getattr(dataset, "items", dataset) if dataset else []
     total_latencies: list[float] = []
@@ -124,14 +129,24 @@ def run_workflow_benchmark(
             question = inp.get("question", "") if isinstance(inp, dict) else str(inp)
 
         start_t = time.perf_counter()
-        result = workflow_fn(question)
-        latency = time.perf_counter() - start_t
-        total_latencies.append(latency)
+        if workflow_fn is not None:
+            result = workflow_fn(question)
+            latency = time.perf_counter() - start_t
+            answer = result.get("answer", "")
+            source_used = result.get("source_used", "")
+            contexts = result.get("retrieved_contexts", [])
+            trace_id = result.get("trace_id")
+        else:
+            req = ChatRequest(question=question, workflow=workflow_name)
+            chat_resp, final_state = active_runner.execute_with_state(req)
+            latency = time.perf_counter() - start_t
+            eval_ctx = wf_def.extract_eval_context(final_state) if wf_def is not None else None
+            answer = chat_resp.answer or ""
+            source_used = (eval_ctx.source_used if eval_ctx else None) or chat_resp.source_used or ""
+            contexts = (eval_ctx.retrieved_contexts if eval_ctx else None) or []
+            trace_id = chat_resp.trace_id
 
-        answer = result.get("answer", "")
-        source_used = result.get("source_used", "")
-        contexts = result.get("retrieved_contexts", [])
-        trace_id = result.get("trace_id")
+        total_latencies.append(latency)
 
         # Faithfulness metric (only if retrieved contexts exist and source is not direct)
         faith_val = None
@@ -252,16 +267,18 @@ def main(argv: Optional[list[str]] = None) -> list[dict[str, Any]]:
         )
         dataset = load_gold_benchmarks(args.benchmark_file)
 
-    target_workflows = [w.strip() for w in args.workflows.split(",") if w.strip() in WORKFLOWS]
+    available_registry_ids = set(get_workflow_registry().list_ids())
+    available_ids = available_registry_ids | set(WORKFLOWS.keys())
+    target_workflows = [w.strip() for w in args.workflows.split(",") if w.strip() in available_ids]
     if not target_workflows:
-        logger.error("No valid workflows selected. Available: %s", list(WORKFLOWS.keys()))
+        logger.error("No valid workflows selected. Available: %s", sorted(available_ids))
         return []
 
     results_table = []
     run_timestamp = int(time.time())
 
     for wf_name in target_workflows:
-        wf_fn = WORKFLOWS[wf_name]
+        wf_fn = WORKFLOWS.get(wf_name)
         summary = run_workflow_benchmark(
             workflow_name=wf_name,
             workflow_fn=wf_fn,

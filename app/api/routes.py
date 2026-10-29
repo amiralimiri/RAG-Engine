@@ -12,7 +12,6 @@ from app.core.config import get_settings
 from app.core.telemetry import extract_trace_id, flush_telemetry, get_langfuse_callback, get_langfuse_client
 from app.rag.knowledge import SUPPORTED_EXTENSIONS, get_document_indexer
 from app.rag.workflows import get_workflow_registry
-from app.rag.workflows.legacy import WORKFLOW_ASKS, WORKFLOW_GRAPHS
 from app.rag.workflows.runner import _background_tasks, get_workflow_runner
 from app.services.evaluation import run_online_evaluation_task, score_trace_metric
 

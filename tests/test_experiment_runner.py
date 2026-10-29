@@ -217,6 +217,64 @@ def test_run_benchmark_skips_faithfulness_for_direct_source():
         assert summary["Avg Relevancy"] == 0.92
 
 
+def test_run_benchmark_workflow_execution_via_runner():
+    from evaluation.run_experiment import run_workflow_benchmark
+    from app.api.schemas import ChatResponse
+    from app.rag.workflows.base import EvalContext
+
+    mock_client = MagicMock()
+    mock_dataset = MagicMock()
+
+    mock_item = MagicMock()
+    mock_item.input = {"question": "How do I configure VPN?"}
+    mock_item.link = MagicMock()
+    mock_dataset.items = [mock_item]
+
+    mock_runner = MagicMock()
+    mock_wf_def = MagicMock()
+    mock_runner.registry.get.return_value = mock_wf_def
+    mock_chat_response = ChatResponse(
+        workflow="fix_single_llm",
+        answer="Install VPN client.",
+        source_used="vectorstore",
+        trace_id="tr-runner-123",
+    )
+    final_state = {"answer": "Install VPN client.", "source_used": "vectorstore"}
+    mock_runner.execute_with_state.return_value = (mock_chat_response, final_state)
+    mock_wf_def.extract_eval_context.return_value = EvalContext(
+        source_used="vectorstore",
+        retrieved_contexts=["VPN setup guide"],
+    )
+
+    with patch("evaluation.run_experiment.FaithfulnessMetric") as mock_fm_cls, \
+         patch("evaluation.run_experiment.AnswerRelevancyMetric") as mock_arm_cls:
+
+        mock_fm = MagicMock()
+        mock_fm.score = 0.98
+        mock_fm_cls.return_value = mock_fm
+
+        mock_arm = MagicMock()
+        mock_arm.score = 0.94
+        mock_arm_cls.return_value = mock_arm
+
+        summary = run_workflow_benchmark(
+            workflow_name="fix_single_llm",
+            dataset=mock_dataset,
+            client=mock_client,
+            runner=mock_runner,
+        )
+
+        assert summary["Workflow"] == "fix_single_llm"
+        assert summary["Items Evaluated"] == 1
+        assert summary["Avg Faithfulness"] == 0.98
+        assert summary["Avg Relevancy"] == 0.94
+        assert summary["Avg Latency (s)"] >= 0.0
+
+        mock_runner.registry.get.assert_called_once_with("fix_single_llm")
+        mock_runner.execute_with_state.assert_called_once()
+        mock_wf_def.extract_eval_context.assert_called_once_with(final_state)
+
+
 def test_format_summary_table():
     from evaluation.run_experiment import format_summary_table
 

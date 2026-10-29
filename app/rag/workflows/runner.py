@@ -116,8 +116,8 @@ class WorkflowRunner:
         return is_tool_call_chunk(chunk)
 
     def _resolve_workflow(self, workflow_name: str) -> WorkflowDefinition:
-        """Resolve workflow definition from registry, auto-registering defaults if unpopulated."""
-        if workflow_name not in self.registry and workflow_name in ("fix_single_llm", "fix_single_jev", "react_agent"):
+        """Resolve workflow definition from registry, auto-registering defaults if empty."""
+        if len(self.registry) == 0:
             from app.rag.workflows import register_default_workflows
             register_default_workflows(self.registry)
 
