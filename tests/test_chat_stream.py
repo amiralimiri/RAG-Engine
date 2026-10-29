@@ -21,12 +21,17 @@ from unittest.mock import AsyncMock, MagicMock
 import httpx
 import pytest
 from fastapi.testclient import TestClient
+from langchain_core.documents import Document
+from langchain_core.language_models.fake_chat_models import FakeListChatModel
 from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, ToolMessage
 from langchain_core.messages.tool import ToolCallChunk
+from langchain_core.tools import BaseTool
 
 from app.main import app
 from app.api.routes import WORKFLOW_ASKS, WORKFLOW_GRAPHS
+from app.rag.classifiers import FakeClassifierAdapter
 from app.rag.workflows import get_workflow_registry
+from app.rag.workflows.self_corrective import SelfCorrectiveRagWorkflow
 
 
 # ── helpers & transports ──────────────────────────────────────────────────
@@ -182,6 +187,7 @@ def mock_telemetry_defaults(monkeypatch):
     monkeypatch.setattr("app.api.routes.extract_trace_id", lambda handler: getattr(handler, "last_trace_id", "trace-default"))
     monkeypatch.setattr("app.api.routes.flush_telemetry", lambda: None)
     monkeypatch.setattr("app.api.routes.run_online_evaluation_task", AsyncMock())
+    monkeypatch.setattr("app.services.prompts.get_langfuse_client", lambda: None)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -974,3 +980,240 @@ class TestMultiWorkflowStreamingE2E:
         assert len(captured_configs) == 2
         assert captured_configs[0].get("configurable", {}).get("thread_id") == shared_session_id
         assert captured_configs[1].get("configurable", {}).get("thread_id") == shared_session_id
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 9. Unified BaseTool Streaming Regression Tests (ADR-0008 Ticket 05)
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+@pytest.mark.asyncio
+class TestUnifiedBaseToolStreamingRegression:
+    """End-to-end streaming regression verifying the unified BaseTool abstraction seam."""
+
+    async def test_streaming_with_injected_kb_tool_dual_output_artifact(self, monkeypatch):
+        """Verify SSE step events, token streaming, and terminal metadata citations from injected kb_tool artifact."""
+        fake_llm = FakeListChatModel(responses=["Follow the official VPN guidelines to connect."])
+        monkeypatch.setattr("app.rag.engine.llm", lambda: fake_llm)
+
+        eval_task_called = asyncio.Event()
+        captured_eval = {}
+
+        async def fake_eval(**kwargs):
+            nonlocal captured_eval
+            captured_eval = kwargs
+            eval_task_called.set()
+
+        monkeypatch.setattr("app.api.routes.run_online_evaluation_task", fake_eval)
+
+        kb_doc = Document(page_content="Official company VPN setup guide.", metadata={"source": "docs/network/vpn_setup.md"})
+        kb_tool = MagicMock(spec=BaseTool)
+        kb_tool.ainvoke = AsyncMock(
+            return_value=(
+                "[Source: docs/network/vpn_setup.md]\nOfficial company VPN setup guide.",
+                {
+                    "documents": [kb_doc],
+                    "citations": [{"title": "vpn_setup.md", "url": "", "type": "private_kb"}],
+                },
+            )
+        )
+
+        classifier = FakeClassifierAdapter(route_decision="kb", kb_grade="good")
+        workflow = SelfCorrectiveRagWorkflow(
+            id="stream_kb_seam_wf",
+            name="Stream KB Seam Workflow",
+            classifier=classifier,
+            kb_tool=kb_tool,
+        )
+
+        registry = get_workflow_registry()
+        registry.register(workflow)
+
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as ac:
+            async with ac.stream(
+                "POST",
+                "/api/chat/stream",
+                json={"question": "How do I setup VPN?", "workflow": "stream_kb_seam_wf", "stream_steps": True},
+            ) as resp:
+                assert resp.status_code == 200
+                lines = [line async for line in resp.aiter_lines()]
+
+        events = parse_sse_lines(lines)
+
+        # 1. Step transitions
+        step_events = [e for e in events if e["event"] == "step"]
+        steps = [s["data"]["step"] for s in step_events]
+        assert "route_question" in steps
+        assert "retrieve_kb" in steps
+        assert "grade_kb" in steps
+        assert "generate_from_kb" in steps
+
+        # 2. Token delta delivery
+        token_events = [e for e in events if e["event"] == "token"]
+        assert len(token_events) >= 1
+        full_text = "".join(t["data"]["delta"] for t in token_events)
+        assert "Follow the official VPN guidelines to connect." in full_text
+
+        # 3. Terminal metadata directly reflecting tool artifact
+        meta_events = [e for e in events if e["event"] == "metadata"]
+        assert len(meta_events) == 1
+        meta = meta_events[0]["data"]
+        assert meta["workflow"] == "stream_kb_seam_wf"
+        assert meta["source_used"] == "vectorstore"
+        assert meta["citations"] == [{"title": "vpn_setup.md", "url": "", "type": "private_kb"}]
+        assert any("Private KB retrieval" in t for t in meta["trace"])
+
+        # 4. Async online evaluation received retrieved_contexts from artifact
+        await asyncio.wait_for(eval_task_called.wait(), timeout=2.0)
+        assert captured_eval["retrieved_contexts"] == ["Official company VPN setup guide."]
+        assert captured_eval["source_used"] == "vectorstore"
+
+    async def test_streaming_with_injected_web_tool_dual_output_artifact(self, monkeypatch):
+        """Verify SSE streaming flow when falling back to injected web_tool, extracting citations and context from artifact."""
+        fake_llm = FakeListChatModel(responses=["Install Docker via official apt repository."])
+        monkeypatch.setattr("app.rag.engine.llm", lambda: fake_llm)
+
+        eval_task_called = asyncio.Event()
+        captured_eval = {}
+
+        async def fake_eval(**kwargs):
+            nonlocal captured_eval
+            captured_eval = kwargs
+            eval_task_called.set()
+
+        monkeypatch.setattr("app.api.routes.run_online_evaluation_task", fake_eval)
+
+        kb_tool = MagicMock(spec=BaseTool)
+        kb_tool.ainvoke = AsyncMock(return_value=("No internal KB docs found", {"documents": [], "citations": []}))
+
+        web_tool = MagicMock(spec=BaseTool)
+        web_tool.ainvoke = AsyncMock(
+            return_value=(
+                "Tavily search answer: Run apt-get install docker-ce.",
+                {
+                    "citations": [{"title": "Docker Install Docs", "url": "https://docs.docker.com/engine/install", "type": "web"}],
+                    "retrieved_contexts": ["Title: Docker Install Docs\nURL: https://docs.docker.com/engine/install\nContent: Run apt-get install docker-ce."],
+                },
+            )
+        )
+
+        classifier = FakeClassifierAdapter(route_decision="kb", kb_grade="weak", web_grade="good")
+        workflow = SelfCorrectiveRagWorkflow(
+            id="stream_web_seam_wf",
+            name="Stream Web Seam Workflow",
+            classifier=classifier,
+            kb_tool=kb_tool,
+            web_tool=web_tool,
+        )
+
+        registry = get_workflow_registry()
+        registry.register(workflow)
+
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as ac:
+            async with ac.stream(
+                "POST",
+                "/api/chat/stream",
+                json={"question": "How do I install Docker?", "workflow": "stream_web_seam_wf", "stream_steps": True},
+            ) as resp:
+                assert resp.status_code == 200
+                lines = [line async for line in resp.aiter_lines()]
+
+        events = parse_sse_lines(lines)
+
+        # 1. Step transitions include web fallback sequence
+        step_events = [e for e in events if e["event"] == "step"]
+        steps = [s["data"]["step"] for s in step_events]
+        assert "retrieve_kb" in steps
+        assert "search_web" in steps
+        assert "grade_web" in steps
+        assert "generate_from_web" in steps
+
+        # 2. Token delivery
+        tokens = "".join(e["data"]["delta"] for e in events if e["event"] == "token")
+        assert "Install Docker via official apt repository." in tokens
+
+        # 3. Terminal metadata contains web citations from tool artifact
+        meta = [e["data"] for e in events if e["event"] == "metadata"][0]
+        assert meta["workflow"] == "stream_web_seam_wf"
+        assert meta["source_used"] == "web_search"
+        assert meta["citations"] == [{"title": "Docker Install Docs", "url": "https://docs.docker.com/engine/install", "type": "web"}]
+        assert any("Web fallback" in t for t in meta["trace"])
+
+        # 4. Evaluation context contains web retrieved_contexts
+        await asyncio.wait_for(eval_task_called.wait(), timeout=2.0)
+        assert captured_eval["retrieved_contexts"] == ["Title: Docker Install Docs\nURL: https://docs.docker.com/engine/install\nContent: Run apt-get install docker-ce."]
+        assert captured_eval["source_used"] == "web_search"
+
+    async def test_streaming_transparent_tool_error_propagation(self, monkeypatch):
+        """Verify that provider exception raised inside an async tool node propagates and yields SSE error frame."""
+        kb_tool = MagicMock(spec=BaseTool)
+        kb_tool.ainvoke = AsyncMock(side_effect=ConnectionError("Vectorstore Pinecone connection timed out"))
+
+        classifier = FakeClassifierAdapter(route_decision="kb")
+        workflow = SelfCorrectiveRagWorkflow(
+            id="stream_err_seam_wf",
+            name="Stream Error Seam Workflow",
+            classifier=classifier,
+            kb_tool=kb_tool,
+        )
+
+        registry = get_workflow_registry()
+        registry.register(workflow)
+
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as ac:
+            async with ac.stream(
+                "POST",
+                "/api/chat/stream",
+                json={"question": "Trigger provider timeout", "workflow": "stream_err_seam_wf"},
+            ) as resp:
+                assert resp.status_code == 200
+                lines = [line async for line in resp.aiter_lines()]
+
+        events = parse_sse_lines(lines)
+        error_events = [e for e in events if e["event"] == "error"]
+        assert len(error_events) == 1
+        err_payload = error_events[0]["data"]
+        assert err_payload["code"] == 500
+        assert "Vectorstore Pinecone connection timed out" in err_payload["message"]
+
+    async def test_streaming_legacy_retriever_adapter_compatibility(self, monkeypatch):
+        """Verify that passing legacy retriever adapter into SelfCorrectiveRagWorkflow streams end-to-end flawlessly."""
+        fake_llm = FakeListChatModel(responses=["Legacy adapter streaming answer."])
+        monkeypatch.setattr("app.rag.engine.llm", lambda: fake_llm)
+
+        mock_retriever = MagicMock()
+        legacy_doc = Document(page_content="Legacy knowledge doc.", metadata={"source": "docs/legacy_stream.pdf"})
+        mock_retriever.ainvoke = AsyncMock(return_value=[legacy_doc])
+        mock_retriever.invoke = MagicMock(return_value=[legacy_doc])
+
+        classifier = FakeClassifierAdapter(route_decision="kb", kb_grade="good")
+        workflow = SelfCorrectiveRagWorkflow(
+            id="stream_legacy_adapter_wf",
+            name="Stream Legacy Adapter Workflow",
+            classifier=classifier,
+            retriever=mock_retriever,
+        )
+
+        registry = get_workflow_registry()
+        registry.register(workflow)
+
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as ac:
+            async with ac.stream(
+                "POST",
+                "/api/chat/stream",
+                json={"question": "Legacy adapter question", "workflow": "stream_legacy_adapter_wf", "stream_steps": True},
+            ) as resp:
+                assert resp.status_code == 200
+                lines = [line async for line in resp.aiter_lines()]
+
+        events = parse_sse_lines(lines)
+        steps = [s["data"]["step"] for s in events if s["event"] == "step"]
+        assert "retrieve_kb" in steps
+
+        tokens = "".join(t["data"]["delta"] for t in events if t["event"] == "token")
+        assert "Legacy adapter streaming answer." in tokens
+
+        meta = [e["data"] for e in events if e["event"] == "metadata"][0]
+        assert meta["workflow"] == "stream_legacy_adapter_wf"
+        assert meta["source_used"] == "vectorstore"
+        assert meta["citations"] == [{"title": "legacy_stream.pdf", "url": "", "type": "private_kb"}]

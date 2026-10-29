@@ -5,9 +5,9 @@ Verify end-to-end integration across the streaming transport layer (`chat_stream
 
 **Blocked by:** 04-self-corrective-workflow-tools
 
-**Status:** ready-for-agent
+**Status:** completed
 
-- [ ] Verify `tests/test_chat_stream.py` passes all streaming scenarios (step events, token streaming, citation payloads) with the async tool nodes.
-- [ ] Verify `tests/test_e2e_observability.py` passes all Langfuse span emissions and evaluation context hooks.
-- [ ] Run full test suite: `pytest -v` across all unit, rag, api, and e2e tests with zero regressions.
-- [ ] Ensure git status is clean and all scratch tickets are completed.
+- [x] Verify `tests/test_chat_stream.py` passes all streaming scenarios (step events, token streaming, citation payloads) with the async tool nodes.
+- [x] Verify `tests/test_e2e_observability.py` passes all Langfuse span emissions and evaluation context hooks.
+- [x] Run full test suite: `pytest -v` across all unit, rag, api, and e2e tests with zero regressions.
+- [x] Ensure git status is clean and all scratch tickets are completed.
