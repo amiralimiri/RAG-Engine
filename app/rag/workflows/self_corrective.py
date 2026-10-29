@@ -5,6 +5,8 @@ from __future__ import annotations
 import threading
 from typing import TYPE_CHECKING, Any
 
+from langchain_core.tools import BaseTool
+
 from app.rag.classifiers import WorkflowClassifier
 from app.rag.engine import create_agentic_rag_graph
 from app.rag.workflows.base import EvalContext, WorkflowDefinition, WorkflowInfo
@@ -41,6 +43,9 @@ class SelfCorrectiveRagWorkflow:
         name: str,
         classifier: WorkflowClassifier,
         retriever: Any = None,
+        *,
+        kb_tool: BaseTool | None = None,
+        web_tool: BaseTool | None = None,
         description: str | None = None,
         step_labels: dict[str, str] | None = None,
         generation_nodes: set[str] | None = None,
@@ -48,6 +53,8 @@ class SelfCorrectiveRagWorkflow:
     ) -> None:
         self.classifier = classifier
         self.retriever = retriever
+        self.kb_tool = kb_tool
+        self.web_tool = web_tool
         desc = description or f"Self-corrective RAG workflow powered by {classifier.__class__.__name__}."
         classifier_meta = "openai_json" if "OpenAI" in classifier.__class__.__name__ else "typesafe_jev"
         default_metadata = {
@@ -75,6 +82,8 @@ class SelfCorrectiveRagWorkflow:
                 self._compiled_graph = create_agentic_rag_graph(
                     classifier=self.classifier,
                     retriever=self.retriever,
+                    kb_tool=self.kb_tool,
+                    web_tool=self.web_tool,
                 )
             return self._compiled_graph
 
