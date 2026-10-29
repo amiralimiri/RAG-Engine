@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncGenerator
+from datetime import datetime, timezone
+import json
 from typing import TYPE_CHECKING, Any
 import uuid
 
@@ -16,8 +18,11 @@ if TYPE_CHECKING:
     from app.api.schemas import (
         ChatRequest,
         ChatResponse,
+        StreamErrorEvent,
+        StreamMetadataEvent,
+        StreamStepEvent,
+        StreamTokenEvent,
     )
-
 from app.core.telemetry import (
     extract_trace_id,
     flush_telemetry,
@@ -29,6 +34,59 @@ from app.services.evaluation import run_online_evaluation_task
 
 logger = structlog.get_logger(__name__)
 
+DEFAULT_STEP_LABELS: dict[str, str] = {
+    "route_question": "Analyzing inquiry & routing...",
+    "retrieve_kb": "Searching internal knowledge base...",
+    "grade_kb": "Evaluating evidence sufficiency...",
+    "search_web": "Consulting external technical documentation...",
+    "grade_web": "Verifying web source credibility...",
+    "rewrite_query": "Refining search terms...",
+    "generate_from_kb": "Synthesizing answer from knowledge base...",
+    "generate_from_web": "Drafting answer from external documentation...",
+    "direct_answer": "Formulating direct response...",
+    "insufficient": "Assessing fallback options...",
+}
+
+DEFAULT_GENERATION_NODES: set[str] = {"generate_from_kb", "generate_from_web", "direct_answer"}
+
+# Module-level background evaluation task set with completion callbacks to prevent premature GC
+_background_tasks: set[asyncio.Task[Any]] = set()
+
+
+def format_sse(event: str, data: dict[str, Any] | BaseModel) -> str:
+    """Format SSE frame with event name and JSON data payload."""
+    if isinstance(data, BaseModel):
+        payload = data.model_dump(mode="json")
+    else:
+        payload = data
+    return f"event: {event}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
+
+def is_tool_call_chunk(chunk: Any) -> bool:
+    """Filter out token deltas when chunk contains tool call chunks or structured calls."""
+    if chunk is None:
+        return False
+    if bool(getattr(chunk, "tool_call_chunks", None)):
+        return True
+    if bool(getattr(chunk, "tool_calls", None)):
+        return True
+    if isinstance(chunk, dict) and (bool(chunk.get("tool_call_chunks")) or bool(chunk.get("tool_calls"))):
+        return True
+
+    msg = getattr(chunk, "message", None)
+    if msg is not None:
+        if bool(getattr(msg, "tool_call_chunks", None)):
+            return True
+        if bool(getattr(msg, "tool_calls", None)):
+            return True
+        if isinstance(msg, dict) and (bool(msg.get("tool_call_chunks")) or bool(msg.get("tool_calls"))):
+            return True
+    elif isinstance(chunk, dict) and isinstance(chunk.get("message"), dict):
+        msg_dict = chunk["message"]
+        if bool(msg_dict.get("tool_call_chunks")) or bool(msg_dict.get("tool_calls")):
+            return True
+    return False
+
 
 class WorkflowRunner:
     """Deep module coordinating workflow execution, token streaming, telemetry, and evaluation."""
@@ -37,9 +95,18 @@ class WorkflowRunner:
         self.registry = registry if registry is not None else get_workflow_registry()
         self._background_tasks: set[asyncio.Task[Any]] = set()
 
+    def format_sse(self, event: str, data: dict[str, Any] | BaseModel) -> str:
+        """Format an event frame into SSE string protocol."""
+        return format_sse(event, data)
+
+    def is_tool_call_chunk(self, chunk: Any) -> bool:
+        """Filter out token deltas when chunk contains tool call chunks or structured calls."""
+        return is_tool_call_chunk(chunk)
+
     def _prepare_execution(
         self,
         request: ChatRequest,
+        streaming: bool = False,
     ) -> tuple[WorkflowDefinition, str, Any, dict[str, Any], dict[str, Any]]:
         """Resolve workflow definition, initialize telemetry contextvars, and prepare initial state."""
         try:
@@ -47,8 +114,12 @@ class WorkflowRunner:
         except KeyError:
             raise HTTPException(status_code=400, detail=f"Unknown workflow: {request.workflow}")
 
-        sanitized_tid = request.trace_id.replace("-", "").lower() if request.trace_id else None
+        sanitized_tid = request.trace_id.replace("-", "").lower() if request.trace_id else (
+            uuid.uuid4().hex if streaming else None
+        )
         telemetry_metadata = dict(wf_def.info.metadata) if getattr(wf_def.info, "metadata", None) else {}
+        if streaming:
+            telemetry_metadata["streaming"] = True
 
         handler = get_langfuse_callback(
             workflow_name=request.workflow,
@@ -90,6 +161,10 @@ class WorkflowRunner:
             config["callbacks"] = [handler]
         if trace_id:
             config["metadata"] = {"trace_id": trace_id}
+            if streaming:
+                config["metadata"]["streaming"] = True
+        elif streaming:
+            config["metadata"] = {"streaming": True}
         thread_id = request.session_id or uuid.uuid4().hex
         config["configurable"] = {"thread_id": thread_id}
 
@@ -161,6 +236,8 @@ class WorkflowRunner:
                             retrieved_contexts=retrieved_contexts,
                         )
                     )
+                    _background_tasks.add(task)
+                    task.add_done_callback(_background_tasks.discard)
                     self._background_tasks.add(task)
                     task.add_done_callback(self._background_tasks.discard)
                 else:
@@ -246,12 +323,229 @@ class WorkflowRunner:
         finally:
             flush_telemetry()
 
-    async def stream(
+    def stream(
+        self,
+        request: ChatRequest,
+    ) -> AsyncGenerator[str, None]:
+        """Validate workflow and return an asynchronous generator yielding pre-formatted SSE frames."""
+        try:
+            self.registry.get(request.workflow)
+        except KeyError:
+            raise HTTPException(status_code=400, detail=f"Unknown workflow: {request.workflow}")
+
+        return self._stream_generator(request)
+
+    async def _stream_generator(
         self,
         request: ChatRequest,
     ) -> AsyncGenerator[str, None]:
         """Consume LangGraph astream_events v2 and yield pre-formatted SSE event strings."""
-        raise NotImplementedError("stream() will be implemented in Ticket 02")
+        from app.api.schemas import (
+            StreamErrorEvent,
+            StreamMetadataEvent,
+            StreamStepEvent,
+            StreamTokenEvent,
+        )
+
+        wf_def: WorkflowDefinition | None = None
+        handler: Any = None
+        trace_id: str | None = None
+        initial_state: dict[str, Any] = {}
+        config: dict[str, Any] = {}
+
+        accumulated_trace: list[str] = []
+        final_output: dict[str, Any] = {}
+        tokens_delivered = 0
+        answer_chunks: list[str] = []
+
+        try:
+            wf_def, trace_id, handler, initial_state, config = self._prepare_execution(request, streaming=True)
+            graph = wf_def.get_compiled_graph()
+            step_labels = (wf_def.info.step_labels if wf_def and wf_def.info else None) or DEFAULT_STEP_LABELS
+            generation_nodes = (wf_def.info.generation_nodes if wf_def and wf_def.info else None) or DEFAULT_GENERATION_NODES
+            stream_steps = getattr(request, "stream_steps", True)
+
+            async for event in graph.astream_events(initial_state, version="v2", config=config if config else None):
+                ev_type = event.get("event")
+                node_name = event.get("metadata", {}).get("langgraph_node")
+
+                # 1. Step transitions
+                if stream_steps and ev_type == "on_chain_start" and node_name in step_labels:
+                    yield self.format_sse(
+                        "step",
+                        StreamStepEvent(
+                            step=node_name,
+                            label=step_labels[node_name],
+                            timestamp=datetime.now(timezone.utc).timestamp(),
+                        ),
+                    )
+
+                # 2. Whitelisted Token Delta Streaming (Filtered: tool calls & empty strings suppressed)
+                elif ev_type == "on_chat_model_stream" and node_name in generation_nodes:
+                    chunk = event.get("data", {}).get("chunk")
+                    delta_content = ""
+                    if chunk is not None and not self.is_tool_call_chunk(chunk):
+                        if isinstance(chunk, dict):
+                            content = chunk.get("content", "")
+                        else:
+                            content = getattr(chunk, "content", "")
+                        if isinstance(content, str):
+                            delta_content = content
+                        elif isinstance(content, list):
+                            delta_content = "".join(
+                                c.get("text", "") if isinstance(c, dict) else (getattr(c, "text", "") or str(c))
+                                for c in content
+                            )
+                        else:
+                            delta_content = str(content) if content else ""
+
+                    if delta_content:
+                        tokens_delivered += 1
+                        answer_chunks.append(delta_content)
+                        yield self.format_sse("token", StreamTokenEvent(delta=delta_content))
+
+                # 3. State capture on node completion
+                elif ev_type == "on_chain_end":
+                    node_output = event.get("data", {}).get("output")
+                    if isinstance(node_output, dict):
+                        if "trace" in node_output and isinstance(node_output["trace"], list):
+                            for t in node_output["trace"]:
+                                if t not in accumulated_trace:
+                                    accumulated_trace.append(t)
+                        if "messages" in node_output and isinstance(node_output["messages"], list):
+                            if "messages" not in final_output:
+                                final_output["messages"] = list(initial_state.get("messages", []))
+                            for m in node_output["messages"]:
+                                if m not in final_output["messages"]:
+                                    final_output["messages"].append(m)
+                        for k, v in node_output.items():
+                            if k != "messages":
+                                final_output[k] = v
+
+            # 4. Fallback for non-streaming terminal nodes (e.g. 'insufficient') that set static answer
+            if tokens_delivered == 0:
+                fallback_answer = final_output.get("answer")
+                if not fallback_answer and wf_def is not None:
+                    try:
+                        candidate_resp = wf_def.to_chat_response(final_output)
+                        fallback_answer = candidate_resp.answer
+                    except Exception:
+                        pass
+                if fallback_answer:
+                    static_answer = str(fallback_answer)
+                    tokens_delivered += 1
+                    answer_chunks.append(static_answer)
+                    yield self.format_sse("token", StreamTokenEvent(delta=static_answer))
+
+            # 5. Terminal Metadata Event
+            resolved_tid = extract_trace_id(handler) or trace_id
+            if wf_def is not None:
+                chat_resp = wf_def.to_chat_response(final_output, trace_id=resolved_tid)
+                eval_ctx = wf_def.extract_eval_context(final_output)
+                final_trace = accumulated_trace or chat_resp.trace
+                final_source_used = chat_resp.source_used or (
+                    getattr(eval_ctx, "source_used", None)
+                    or (eval_ctx.get("source_used") if isinstance(eval_ctx, dict) else None)
+                    or "direct"
+                )
+                final_citations = chat_resp.citations
+                final_rewritten_query = chat_resp.rewritten_query or final_output.get("current_query", request.question)
+                final_answer = chat_resp.answer or str(final_output.get("answer") or "".join(answer_chunks))
+                final_retrieved_contexts = (
+                    getattr(eval_ctx, "retrieved_contexts", None)
+                    or (eval_ctx.get("retrieved_contexts") if isinstance(eval_ctx, dict) else None)
+                    or []
+                )
+            else:
+                final_trace = accumulated_trace or final_output.get("trace", [])
+                final_source_used = final_output.get("source_used", "direct")
+                final_citations = final_output.get("citations", [])
+                final_rewritten_query = final_output.get("current_query", request.question)
+                final_answer = str(final_output.get("answer") or "".join(answer_chunks))
+                final_retrieved_contexts = final_output.get("retrieved_contexts") or []
+
+            metadata_dict = {
+                "trace_id": resolved_tid,
+                "workflow": request.workflow,
+                "source_used": final_source_used,
+                "citations": final_citations,
+                "trace": final_trace,
+                "rewritten_query": final_rewritten_query,
+            }
+            try:
+                yield self.format_sse("metadata", StreamMetadataEvent(**metadata_dict))
+            except Exception:
+                yield self.format_sse("metadata", metadata_dict)
+
+            # Safeguard background evaluation task
+            if resolved_tid:
+                eval_task = asyncio.create_task(
+                    run_online_evaluation_task(
+                        trace_id=resolved_tid,
+                        question=request.question,
+                        answer=final_answer,
+                        source_used=final_source_used,
+                        retrieved_contexts=final_retrieved_contexts,
+                    )
+                )
+                _background_tasks.add(eval_task)
+                eval_task.add_done_callback(_background_tasks.discard)
+                self._background_tasks.add(eval_task)
+                eval_task.add_done_callback(self._background_tasks.discard)
+
+            logger.info(
+                "chat_query_completed",
+                workflow=request.workflow,
+                question=request.question,
+                source_used=final_source_used,
+                trace=final_trace,
+                trace_id=resolved_tid,
+            )
+
+        except (asyncio.CancelledError, GeneratorExit):
+            disconnect_trace = (
+                accumulated_trace
+                or (final_output.get("trace") if isinstance(final_output.get("trace"), list) else [])
+            )
+            logger.warning(
+                "Streaming cancelled by client disconnect",
+                trace_id=trace_id,
+                workflow=request.workflow,
+                question=request.question,
+                source_used="client_disconnected",
+                trace=disconnect_trace + ["Stream aborted by client disconnect"],
+            )
+            raise
+
+        except Exception as exc:
+            logger.exception("Error during graph execution stream: %s", exc)
+            if wf_def is not None:
+                try:
+                    fallback_state = wf_def.handle_error(exc, final_output or initial_state)
+                    logger.info(
+                        "workflow_error_fallback_invoked",
+                        workflow=request.workflow,
+                        fallback_answer=fallback_state.get("answer"),
+                    )
+                except Exception as fallback_exc:
+                    logger.error("Error in workflow.handle_error: %s", fallback_exc)
+
+            err_dict = {"message": f"Inference stream failed: {str(exc)}", "code": 500}
+            try:
+                yield self.format_sse("error", StreamErrorEvent(**err_dict))
+            except Exception:
+                yield self.format_sse("error", err_dict)
+
+        finally:
+            if handler and hasattr(handler, "flush") and callable(handler.flush):
+                try:
+                    handler.flush()
+                except Exception:
+                    pass
+            try:
+                flush_telemetry()
+            except Exception:
+                pass
 
 
 _default_runner: WorkflowRunner | None = None
@@ -265,3 +559,15 @@ def get_workflow_runner(registry: WorkflowRegistry | None = None) -> WorkflowRun
     if _default_runner is None:
         _default_runner = WorkflowRunner()
     return _default_runner
+
+
+__all__ = [
+    "DEFAULT_GENERATION_NODES",
+    "DEFAULT_STEP_LABELS",
+    "WorkflowRunner",
+    "_background_tasks",
+    "format_sse",
+    "get_workflow_runner",
+    "is_tool_call_chunk",
+]
+

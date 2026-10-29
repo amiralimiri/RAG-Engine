@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 import uuid
@@ -11,10 +12,26 @@ from fastapi import BackgroundTasks, HTTPException
 import pytest
 import structlog
 
-from app.api.schemas import ChatMessage, ChatRequest, ChatResponse
+from app.api.schemas import (
+    ChatMessage,
+    ChatRequest,
+    ChatResponse,
+    StreamErrorEvent,
+    StreamMetadataEvent,
+    StreamStepEvent,
+    StreamTokenEvent,
+)
 from app.rag.workflows.base import EvalContext, WorkflowDefinition, WorkflowInfo
 from app.rag.workflows.registry import WorkflowRegistry, get_workflow_registry
-from app.rag.workflows.runner import WorkflowRunner, get_workflow_runner
+from app.rag.workflows.runner import (
+    DEFAULT_GENERATION_NODES,
+    DEFAULT_STEP_LABELS,
+    WorkflowRunner,
+    _background_tasks,
+    format_sse,
+    get_workflow_runner,
+    is_tool_call_chunk,
+)
 
 
 class MockWorkflow:
@@ -430,3 +447,448 @@ def test_online_evaluation_no_event_loop_sync_safe():
     # Let's ensure running execute with background_tasks=None does not raise RuntimeError.
     response = runner.execute(request, background_tasks=None)
     assert response.answer == "Mock Answer"
+
+
+def parse_sse_events(raw_chunks: list[str]) -> list[dict[str, Any]]:
+    """Parse raw SSE chunks into list of dicts with event and data."""
+    events = []
+    for chunk in raw_chunks:
+        ev_name = None
+        data_lines = []
+        for line in chunk.splitlines():
+            if line.startswith("event:"):
+                ev_name = line[len("event:"):].strip()
+            elif line.startswith("data:"):
+                data_lines.append(line[len("data:"):].strip())
+        if ev_name:
+            payload_str = "\n".join(data_lines)
+            try:
+                data = json.loads(payload_str)
+            except json.JSONDecodeError:
+                data = payload_str
+            events.append({"event": ev_name, "data": data})
+    return events
+
+
+# ==============================================================================
+# 7. SSE Formatting & Tool Delta Filtering Helpers
+# ==============================================================================
+
+
+def test_format_sse_helper():
+    """Verify format_sse handles dict and BaseModel instances identically."""
+    # Dict payload
+    res_dict = format_sse("custom", {"foo": "bar", "num": 42})
+    assert res_dict == 'event: custom\ndata: {"foo": "bar", "num": 42}\n\n'
+
+    # BaseModel payload
+    step_event = StreamStepEvent(step="retrieve_kb", label="Searching internal knowledge base...")
+    res_model = format_sse("step", step_event)
+    assert res_model.startswith("event: step\ndata: {")
+    assert '"step": "retrieve_kb"' in res_model
+    assert '"label": "Searching internal knowledge base..."' in res_model
+    assert res_model.endswith("\n\n")
+
+    # WorkflowRunner method delegation
+    runner = WorkflowRunner()
+    res_runner = runner.format_sse("token", StreamTokenEvent(delta="test token"))
+    assert res_runner == 'event: token\ndata: {"delta": "test token"}\n\n'
+
+
+def test_is_tool_call_chunk_filtering():
+    """Verify is_tool_call_chunk correctly identifies all variants of tool call chunks."""
+    runner = WorkflowRunner()
+
+    # None and empty objects
+    assert not is_tool_call_chunk(None)
+    assert not runner.is_tool_call_chunk(None)
+
+    plain_chunk = MagicMock(spec=["content"])
+    plain_chunk.content = "regular conversational delta"
+    assert not is_tool_call_chunk(plain_chunk)
+    assert not runner.is_tool_call_chunk(plain_chunk)
+
+    # Object with tool_call_chunks attribute
+    tool_chunk1 = MagicMock()
+    tool_chunk1.tool_call_chunks = [{"name": "web_search", "args": "python"}]
+    assert is_tool_call_chunk(tool_chunk1)
+    assert runner.is_tool_call_chunk(tool_chunk1)
+
+    # Object with tool_calls attribute
+    tool_chunk2 = MagicMock()
+    tool_chunk2.tool_call_chunks = None
+    tool_chunk2.tool_calls = [{"name": "retrieve_kb", "args": {"query": "vpn"}}]
+    assert is_tool_call_chunk(tool_chunk2)
+
+    # Dict with tool_call_chunks or tool_calls
+    assert is_tool_call_chunk({"tool_call_chunks": [{"index": 0}]})
+    assert is_tool_call_chunk({"tool_calls": [{"id": "call_1"}]})
+    assert not is_tool_call_chunk({"content": "conversational content"})
+
+    # Object with .message wrapper
+    wrapped_mock = MagicMock()
+    wrapped_mock.tool_call_chunks = None
+    wrapped_mock.tool_calls = None
+    inner_msg = MagicMock()
+    inner_msg.tool_call_chunks = [{"name": "tool_x"}]
+    wrapped_mock.message = inner_msg
+    assert is_tool_call_chunk(wrapped_mock)
+
+    # Dict with inner message dict
+    assert is_tool_call_chunk({"message": {"tool_calls": [{"name": "search"}]}})
+    assert not is_tool_call_chunk({"message": {"content": "normal reply"}})
+
+
+# ==============================================================================
+# 8. WorkflowRunner.stream Streaming Pipeline
+# ==============================================================================
+
+
+def test_stream_unknown_workflow_raises_http_400():
+    """Calling stream with unknown workflow raises HTTPException 400 before generator begins."""
+    runner = WorkflowRunner()
+    request = ChatRequest(question="What is RAG?", workflow="non_existent_wf")
+
+    with pytest.raises(HTTPException) as exc_info:
+        runner.stream(request)
+
+    assert exc_info.value.status_code == 400
+    assert "Unknown workflow: non_existent_wf" in exc_info.value.detail
+
+
+@pytest.mark.asyncio
+async def test_stream_emits_whitelisted_steps_filtered_tokens_and_metadata():
+    """Verify stream pipeline emits typed step, token, and metadata SSE events with delta filtering."""
+    custom_registry = WorkflowRegistry()
+    mock_wf = MockWorkflow(
+        "stream_test_wf",
+        step_labels={"step_1": "Analyzing question...", "step_2": "Synthesizing answer..."},
+    )
+
+    async def mock_events(*args, **kwargs):
+        # 1. Whitelisted step
+        yield {"event": "on_chain_start", "metadata": {"langgraph_node": "step_1"}, "data": {}}
+
+        # 2. Non-whitelisted step (should be ignored)
+        yield {"event": "on_chain_start", "metadata": {"langgraph_node": "internal_private_step"}, "data": {}}
+
+        # 3. Tool call chunk during generation (filtered out)
+        tool_chunk = MagicMock()
+        tool_chunk.tool_call_chunks = [{"name": "private_kb"}]
+        tool_chunk.content = ""
+        yield {"event": "on_chat_model_stream", "metadata": {"langgraph_node": "generate"}, "data": {"chunk": tool_chunk}}
+
+        # 4. Empty text chunk during generation (filtered out)
+        empty_chunk = MagicMock()
+        empty_chunk.tool_call_chunks = None
+        empty_chunk.tool_calls = None
+        empty_chunk.message = None
+        empty_chunk.content = ""
+        yield {"event": "on_chat_model_stream", "metadata": {"langgraph_node": "generate"}, "data": {"chunk": empty_chunk}}
+
+        # 5. Non-generation node stream chunk (filtered out)
+        other_node_chunk = MagicMock()
+        other_node_chunk.tool_call_chunks = None
+        other_node_chunk.content = "should be ignored"
+        yield {"event": "on_chat_model_stream", "metadata": {"langgraph_node": "other_node"}, "data": {"chunk": other_node_chunk}}
+
+        # 6. Real conversational text tokens
+        text_chunk_1 = MagicMock()
+        text_chunk_1.tool_call_chunks = None
+        text_chunk_1.tool_calls = None
+        text_chunk_1.message = None
+        text_chunk_1.content = "Hello "
+        yield {"event": "on_chat_model_stream", "metadata": {"langgraph_node": "generate"}, "data": {"chunk": text_chunk_1}}
+
+        text_chunk_2 = MagicMock()
+        text_chunk_2.tool_call_chunks = None
+        text_chunk_2.tool_calls = None
+        text_chunk_2.message = None
+        text_chunk_2.content = "World!"
+        yield {"event": "on_chat_model_stream", "metadata": {"langgraph_node": "generate"}, "data": {"chunk": text_chunk_2}}
+
+        # 7. Chain end event
+        yield {
+            "event": "on_chain_end",
+            "metadata": {"langgraph_node": "generate"},
+            "data": {
+                "output": {
+                    "trace": ["step_1", "generate"],
+                    "citations": [{"title": "network_guide.pdf", "url": "", "type": "private_kb"}],
+                    "answer": "Hello World!",
+                    "current_query": "rewritten query",
+                }
+            },
+        }
+
+    mock_wf.mock_graph.astream_events = mock_events
+    custom_registry.register(mock_wf)
+
+    runner = WorkflowRunner(registry=custom_registry)
+    request = ChatRequest(
+        question="How do I connect?",
+        workflow="stream_test_wf",
+        session_id="sess-stream",
+        trace_id="stream-trace-001",
+    )
+
+    frames = [frame async for frame in runner.stream(request)]
+    events = parse_sse_events(frames)
+
+    # 1. Step event verification
+    step_events = [e for e in events if e["event"] == "step"]
+    assert len(step_events) == 1
+    assert step_events[0]["data"]["step"] == "step_1"
+    assert step_events[0]["data"]["label"] == "Analyzing question..."
+    assert "timestamp" in step_events[0]["data"]
+
+    # 2. Token events verification
+    token_events = [e for e in events if e["event"] == "token"]
+    assert len(token_events) == 2
+    assert token_events[0]["data"]["delta"] == "Hello "
+    assert token_events[1]["data"]["delta"] == "World!"
+
+    # 3. Metadata event verification
+    meta_events = [e for e in events if e["event"] == "metadata"]
+    assert len(meta_events) == 1
+    meta = meta_events[0]["data"]
+    assert meta["workflow"] == "stream_test_wf"
+    assert meta["trace_id"] == "streamtrace001"
+    assert meta["trace"] == ["step_1", "generate"]
+    assert meta["citations"][0]["title"] == "network_guide.pdf"
+    assert meta["rewritten_query"] == "rewritten query"
+
+
+@pytest.mark.asyncio
+async def test_stream_honors_stream_steps_false():
+    """Verify setting stream_steps=False suppresses step event emissions."""
+    custom_registry = WorkflowRegistry()
+    mock_wf = MockWorkflow("no_steps_wf", step_labels={"step_1": "Analyzing..."})
+
+    async def mock_events(*args, **kwargs):
+        yield {"event": "on_chain_start", "metadata": {"langgraph_node": "step_1"}, "data": {}}
+        yield {
+            "event": "on_chat_model_stream",
+            "metadata": {"langgraph_node": "generate"},
+            "data": {"chunk": {"content": "Direct token."}},
+        }
+        yield {
+            "event": "on_chain_end",
+            "metadata": {"langgraph_node": "generate"},
+            "data": {"output": {"answer": "Direct token."}},
+        }
+
+    mock_wf.mock_graph.astream_events = mock_events
+    custom_registry.register(mock_wf)
+
+    runner = WorkflowRunner(registry=custom_registry)
+    request = ChatRequest(
+        question="No steps please",
+        workflow="no_steps_wf",
+        stream_steps=False,
+    )
+
+    frames = [frame async for frame in runner.stream(request)]
+    events = parse_sse_events(frames)
+
+    # Verify zero step events
+    step_events = [e for e in events if e["event"] == "step"]
+    assert len(step_events) == 0
+
+    token_events = [e for e in events if e["event"] == "token"]
+    assert len(token_events) == 1
+    assert token_events[0]["data"]["delta"] == "Direct token."
+
+
+@pytest.mark.asyncio
+async def test_stream_fallback_static_answer_synthesis():
+    """When zero token chunks are streamed from terminal nodes, fallback static answer is emitted as a token."""
+    custom_registry = WorkflowRegistry()
+    mock_wf = MockWorkflow("fallback_wf")
+
+    async def mock_events(*args, **kwargs):
+        # Chain completes without yielding any on_chat_model_stream events (e.g. insufficient node)
+        yield {"event": "on_chain_start", "metadata": {"langgraph_node": "step_1"}, "data": {}}
+        yield {
+            "event": "on_chain_end",
+            "metadata": {"langgraph_node": "step_1"},
+            "data": {
+                "output": {
+                    "answer": "Static answer synthesized by terminal node.",
+                    "source_used": "insufficient_evidence",
+                    "trace": ["step_1", "insufficient"],
+                }
+            },
+        }
+
+    mock_wf.mock_graph.astream_events = mock_events
+    custom_registry.register(mock_wf)
+
+    runner = WorkflowRunner(registry=custom_registry)
+    request = ChatRequest(question="Zero tokens?", workflow="fallback_wf")
+
+    frames = [frame async for frame in runner.stream(request)]
+    events = parse_sse_events(frames)
+
+    token_events = [e for e in events if e["event"] == "token"]
+    assert len(token_events) == 1
+    assert token_events[0]["data"]["delta"] == "Static answer synthesized by terminal node."
+
+    meta_events = [e for e in events if e["event"] == "metadata"]
+    assert len(meta_events) == 1
+    assert meta_events[0]["data"]["source_used"] == "insufficient_evidence"
+
+
+@pytest.mark.asyncio
+async def test_stream_unhandled_exception_calls_handle_error_and_yields_stream_error_event():
+    """Graph execution error during stream triggers workflow handle_error and yields typed StreamErrorEvent."""
+    custom_registry = WorkflowRegistry()
+    mock_wf = MockWorkflow("err_stream_wf")
+
+    async def mock_events_failing(*args, **kwargs):
+        yield {"event": "on_chain_start", "metadata": {"langgraph_node": "step_1"}, "data": {}}
+        raise RuntimeError("Vector database stream timeout")
+
+    mock_wf.mock_graph.astream_events = mock_events_failing
+    handle_error_spy = MagicMock(wraps=mock_wf.handle_error)
+    mock_wf.handle_error = handle_error_spy
+    custom_registry.register(mock_wf)
+
+    runner = WorkflowRunner(registry=custom_registry)
+    request = ChatRequest(question="Will streaming fail?", workflow="err_stream_wf")
+
+    frames = [frame async for frame in runner.stream(request)]
+    events = parse_sse_events(frames)
+
+    # Verify handle_error was invoked
+    assert handle_error_spy.called
+
+    # Verify error frame
+    error_events = [e for e in events if e["event"] == "error"]
+    assert len(error_events) == 1
+    err = error_events[0]["data"]
+    assert err["code"] == 500
+    assert "Vector database stream timeout" in err["message"]
+
+
+@pytest.mark.asyncio
+async def test_stream_client_cancellation_logging():
+    """Verify asyncio.CancelledError and GeneratorExit log structured cancellation and re-raise."""
+    custom_registry = WorkflowRegistry()
+    mock_wf = MockWorkflow("cancel_wf")
+
+    async def mock_events_cancelled(*args, **kwargs):
+        yield {"event": "on_chain_start", "metadata": {"langgraph_node": "step_1"}, "data": {}}
+        raise asyncio.CancelledError()
+
+    mock_wf.mock_graph.astream_events = mock_events_cancelled
+    custom_registry.register(mock_wf)
+
+    runner = WorkflowRunner(registry=custom_registry)
+    request = ChatRequest(question="Cancel test?", workflow="cancel_wf")
+
+    with patch("app.rag.workflows.runner.logger.warning") as mock_log_warn:
+        with pytest.raises(asyncio.CancelledError):
+            _ = [frame async for frame in runner.stream(request)]
+
+        assert mock_log_warn.called
+        call_kwargs = mock_log_warn.call_args[1]
+        assert call_kwargs["source_used"] == "client_disconnected"
+        assert call_kwargs["workflow"] == "cancel_wf"
+
+    # Also test GeneratorExit
+    async def mock_events_gen_exit(*args, **kwargs):
+        yield {"event": "on_chain_start", "metadata": {"langgraph_node": "step_1"}, "data": {}}
+        raise GeneratorExit()
+
+    mock_wf.mock_graph.astream_events = mock_events_gen_exit
+    with patch("app.rag.workflows.runner.logger.warning") as mock_log_warn_gen:
+        with pytest.raises(GeneratorExit):
+            _ = [frame async for frame in runner.stream(request)]
+
+        assert mock_log_warn_gen.called
+        call_kwargs = mock_log_warn_gen.call_args[1]
+        assert call_kwargs["source_used"] == "client_disconnected"
+
+
+@pytest.mark.asyncio
+async def test_stream_finally_block_flushes_telemetry():
+    """Verify flush_telemetry and handler flush are invoked in finally block across success and failure."""
+    custom_registry = WorkflowRegistry()
+    mock_wf = MockWorkflow("telemetry_stream_wf")
+
+    async def mock_events(*args, **kwargs):
+        yield {"event": "on_chain_start", "metadata": {"langgraph_node": "step_1"}, "data": {}}
+        yield {
+            "event": "on_chain_end",
+            "metadata": {"langgraph_node": "step_1"},
+            "data": {"output": {"answer": "Telemetry test."}},
+        }
+
+    mock_wf.mock_graph.astream_events = mock_events
+    custom_registry.register(mock_wf)
+
+    runner = WorkflowRunner(registry=custom_registry)
+    request = ChatRequest(question="Telemetry test", workflow="telemetry_stream_wf")
+
+    mock_handler = MagicMock()
+    mock_handler.flush = MagicMock()
+
+    with patch("app.rag.workflows.runner.get_langfuse_callback", return_value=mock_handler):
+        with patch("app.rag.workflows.runner.flush_telemetry") as mock_flush:
+            _ = [frame async for frame in runner.stream(request)]
+            assert mock_flush.called
+            assert mock_handler.flush.called
+
+
+@pytest.mark.asyncio
+async def test_stream_background_evaluation_task_safeguarded():
+    """Verify background evaluation task is created, added to _background_tasks, and discarded on finish."""
+    custom_registry = WorkflowRegistry()
+    mock_wf = MockWorkflow("stream_eval_wf")
+
+    async def mock_events(*args, **kwargs):
+        yield {
+            "event": "on_chain_end",
+            "metadata": {"langgraph_node": "step_1"},
+            "data": {
+                "output": {
+                    "answer": "Stream eval response",
+                    "source_used": "vectorstore",
+                    "retrieved_contexts": ["ctx 1"],
+                }
+            },
+        }
+
+    mock_wf.mock_graph.astream_events = mock_events
+    custom_registry.register(mock_wf)
+
+    runner = WorkflowRunner(registry=custom_registry)
+    request = ChatRequest(
+        question="Eval stream?",
+        workflow="stream_eval_wf",
+        trace_id="eval-stream-trace",
+    )
+
+    with patch("app.rag.workflows.runner.run_online_evaluation_task", new_callable=AsyncMock) as mock_eval_task:
+        # Give mock task a small sleep so we can verify it was in the task set
+        async def slow_eval(*args, **kwargs):
+            await asyncio.sleep(0.01)
+
+        mock_eval_task.side_effect = slow_eval
+
+        frames = [frame async for frame in runner.stream(request)]
+        events = parse_sse_events(frames)
+        assert len(events) >= 1
+
+        # Verify task is currently safeguarded in runner._background_tasks and module _background_tasks
+        assert len(runner._background_tasks) >= 1
+        assert len(_background_tasks) >= 1
+
+        # Await tasks to complete
+        await asyncio.gather(*list(runner._background_tasks), return_exceptions=True)
+
+        # After completion callbacks, sets should be clean
+        assert len(runner._background_tasks) == 0
+        assert len(_background_tasks) == 0
+
