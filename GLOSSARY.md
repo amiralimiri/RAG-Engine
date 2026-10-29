@@ -52,7 +52,12 @@ The central thread-safe registry (`app/rag/workflows/registry.py`) managing work
 Bidirectional mapping methods (`to_initial_state` and `to_chat_response`) on `WorkflowDefinition` that convert between transport-level API schemas (`ChatRequest`, `ChatResponse`) and workflow-private graph states (e.g. `AgentState` or LangGraph message lists).
 
 ### Tool Abstraction Layer
-A collection of reusable LangChain `BaseTool` implementations (`app/rag/tools/`) with typed Pydantic input schemas (`args_schema`) and automatic Langfuse telemetry propagation, consumable by both fixed DAGs and autonomous ReAct agents.
+The standardized collection of LangChain `BaseTool` implementations (`app/rag/tools/`) providing typed Pydantic input schemas, native asynchronous (`ainvoke`) execution, and dual-output (`content_and_artifact`) contracts consumable identically by fixed DAG nodes and autonomous ReAct agents.
+_Avoid_: Helper functions, search clients, ad-hoc retrievers
+
+### Tool Artifact
+The strongly-typed structured payload returned alongside human-readable tool prose in `response_format="content_and_artifact"`, encapsulating raw data (`list[Document]`, citations list, external URLs) for direct consumption by workflow state nodes without string re-parsing.
+_Avoid_: Raw tool output, metadata dictionary
 
 ### Evaluation Context
 A normalized data structure (`EvalContext`) extracted from arbitrary workflow states containing `source_used` and `retrieved_contexts`, enabling online evaluation tasks to grade answers across diverse topologies without assuming fixed vectorstore structures.
