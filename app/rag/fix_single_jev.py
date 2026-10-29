@@ -32,12 +32,34 @@ def ask(
     **kwargs: Any,
 ) -> dict[str, Any]:
     """Execute the fix_single_jev agentic RAG workflow via WorkflowRunner."""
-    return engine_ask(
-        question,
+    from app.api.schemas import ChatRequest
+    from app.core.telemetry import extract_trace_id
+    from app.rag.workflows.runner import get_workflow_runner
+
+    extracted_tid = extract_trace_id(callback) or (metadata.get("trace_id") if isinstance(metadata, dict) else None)
+    cfg: dict[str, Any] = {}
+    if callback:
+        cfg["callbacks"] = [callback]
+    if kwargs.get("tags"):
+        cfg["tags"] = kwargs["tags"]
+    if metadata:
+        cfg["metadata"] = metadata
+
+    request = ChatRequest(
+        question=question,
         workflow="fix_single_jev",
         session_id=session_id,
         user_id=user_id,
-        metadata=metadata,
+        trace_id=extracted_tid,
+    )
+    chat_response, final_state = get_workflow_runner().execute_with_state(
+        request,
         callback=callback,
+        metadata=metadata,
+        config=cfg,
         **kwargs,
     )
+    result = dict(final_state) if isinstance(final_state, dict) else chat_response.model_dump()
+    if extracted_tid and "trace_id" not in result:
+        result["trace_id"] = extracted_tid
+    return result

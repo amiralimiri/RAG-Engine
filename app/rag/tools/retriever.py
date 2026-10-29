@@ -58,7 +58,7 @@ def create_retriever_tool(
         from app.rag.knowledge import get_knowledge_store
         return get_knowledge_store().as_retriever()
 
-    def _run(query: str, config: RunnableConfig = None) -> tuple[str, dict[str, Any]]:
+    def _run(query: str, config: RunnableConfig | None = None) -> tuple[str, dict[str, Any]]:
         structlog.contextvars.bind_contextvars(step="retrieve_kb")
         active = _get_active_retriever()
         effective_config = config
@@ -74,7 +74,7 @@ def create_retriever_tool(
         }
         return _format_docs(docs), artifact
 
-    async def _arun(query: str, config: RunnableConfig = None) -> tuple[str, dict[str, Any]]:
+    async def _arun(query: str, config: RunnableConfig | None = None) -> tuple[str, dict[str, Any]]:
         structlog.contextvars.bind_contextvars(step="retrieve_kb")
         active = _get_active_retriever()
         effective_config = config

@@ -99,7 +99,7 @@ def create_web_search_tool(
             include_raw_content=False,
         )
 
-    def _run(query: str, config: RunnableConfig = None) -> tuple[str, dict[str, Any]]:
+    def _run(query: str, config: RunnableConfig | None = None) -> tuple[str, dict[str, Any]]:
         structlog.contextvars.bind_contextvars(step="search_web")
         client = _get_active_client()
         effective_config = config
@@ -107,19 +107,14 @@ def create_web_search_tool(
         if orig_config is not _UNSET:
             effective_config = orig_config
 
-        child_config = effective_config
-        if isinstance(client, BaseTool) and isinstance(effective_config, dict) and "callbacks" in effective_config:
-            child_config = {k: v for k, v in effective_config.items() if k != "callbacks"}
-            child_config["callbacks"] = []
-
-        result = client.invoke({"query": query}, config=child_config)
+        result = client.invoke({"query": query}, config=effective_config)
         artifact = {
             "citations": _extract_web_citations(result),
             "retrieved_contexts": _extract_web_contexts(result),
         }
         return _format_search_results(result), artifact
 
-    async def _arun(query: str, config: RunnableConfig = None) -> tuple[str, dict[str, Any]]:
+    async def _arun(query: str, config: RunnableConfig | None = None) -> tuple[str, dict[str, Any]]:
         structlog.contextvars.bind_contextvars(step="search_web")
         client = _get_active_client()
         effective_config = config
@@ -127,19 +122,14 @@ def create_web_search_tool(
         if orig_config is not _UNSET:
             effective_config = orig_config
 
-        child_config = effective_config
-        if isinstance(client, BaseTool) and isinstance(effective_config, dict) and "callbacks" in effective_config:
-            child_config = {k: v for k, v in effective_config.items() if k != "callbacks"}
-            child_config["callbacks"] = []
-
         if hasattr(client, "ainvoke"):
-            maybe_coro = client.ainvoke({"query": query}, config=child_config)
+            maybe_coro = client.ainvoke({"query": query}, config=effective_config)
             if inspect.isawaitable(maybe_coro):
                 result = await maybe_coro
             else:
-                result = client.invoke({"query": query}, config=child_config)
+                result = client.invoke({"query": query}, config=effective_config)
         else:
-            result = client.invoke({"query": query}, config=child_config)
+            result = client.invoke({"query": query}, config=effective_config)
         artifact = {
             "citations": _extract_web_citations(result),
             "retrieved_contexts": _extract_web_contexts(result),

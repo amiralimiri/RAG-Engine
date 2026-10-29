@@ -35,6 +35,7 @@ class _LegacyUnifiedWorkflowAdapter:
             generation_nodes=set(DEFAULT_GENERATION_NODES),
             metadata={"classifier": classifier_meta, "retrieval_strategy": "self_corrective"},
         )
+        self._compiled_graph: Any = None
 
     def _call_ask_fn(
         self,
@@ -68,6 +69,9 @@ class _LegacyUnifiedWorkflowAdapter:
                 return self.ask_fn(question)
 
     def get_compiled_graph(self) -> Any:
+        if self._compiled_graph is not None:
+            return self._compiled_graph
+
         adapter_self = self
 
         class _UnifiedGraph:
@@ -101,7 +105,8 @@ class _LegacyUnifiedWorkflowAdapter:
                     return adapter_self.graph.astream_events(*args, **kwargs)
                 raise NotImplementedError("Legacy ask workflow does not implement streaming.")
 
-        return _UnifiedGraph()
+        self._compiled_graph = _UnifiedGraph()
+        return self._compiled_graph
 
     def to_initial_state(self, request: Any, trace_id: str | None = None) -> dict[str, Any]:
         if isinstance(request, dict):
@@ -119,6 +124,17 @@ class _LegacyUnifiedWorkflowAdapter:
 
         return {
             "question": question,
+            "current_query": "",
+            "kb_docs": [],
+            "kb_grade": "",
+            "web_results": "",
+            "web_grade": "",
+            "retry_count": 0,
+            "answer": "",
+            "source_used": "",
+            "citations": [],
+            "trace": [],
+            "retrieved_contexts": [],
             "session_id": session_id,
             "user_id": user_id,
             "trace_id": trace_id or req_tid,

@@ -72,7 +72,7 @@ def retrieve_kb(state: AgentState, config: RunnableConfig | None = None, retriev
 
     docs = artifact.get("documents", [])
     citations = artifact.get("citations", [])
-    retrieved_contexts = [d.page_content for d in docs] if docs else []
+    retrieved_contexts = [d.page_content for d in docs] if docs else ([content] if content else [])
 
     return {
         "kb_docs": docs,
@@ -88,12 +88,40 @@ def after_kb(state: AgentState) -> Literal["generate_from_kb", "search_web"]:
 
 def search_web(state: AgentState, config: RunnableConfig | None = None):
     structlog.contextvars.bind_contextvars(step="search_web")
+    candidate = web_search_tool() if callable(web_search_tool) else web_search_tool
+    if candidate is not None:
+        raw_output = candidate.invoke({"query": state["current_query"]}, config=config)
+        if isinstance(raw_output, tuple) and len(raw_output) == 2:
+            content, artifact = raw_output
+        elif hasattr(raw_output, "artifact") and getattr(raw_output, "artifact") is not None:
+            content, artifact = getattr(raw_output, "content", ""), getattr(raw_output, "artifact")
+        else:
+            from app.rag.tools.search import _extract_web_citations, _extract_web_contexts, _format_search_results
+            content = _format_search_results(raw_output)
+            artifact = {
+                "citations": _extract_web_citations(raw_output),
+                "retrieved_contexts": _extract_web_contexts(raw_output),
+            }
+        citations = artifact.get("citations", [])
+        contexts = artifact.get("retrieved_contexts", [])
+        if not contexts and content:
+            contexts = [content]
+        return {
+            "web_results": content,
+            "citations": citations,
+            "source_used": "web",
+            "retrieved_contexts": contexts,
+            "trace": ["Web fallback → Tavily search"],
+        }
+
     tool = create_web_search_tool()
     raw_output = tool.invoke({"query": state["current_query"]}, config=config)
     content, artifact = _unpack_tool_output(raw_output)
 
     citations = artifact.get("citations", [])
     contexts = artifact.get("retrieved_contexts", [])
+    if not contexts and content:
+        contexts = [content]
 
     return {
         "web_results": content,
@@ -385,7 +413,7 @@ def ask(
         trace_id=extracted_tid,
     )
 
-    chat_response = runner.execute(
+    chat_response, final_state = runner.execute_with_state(
         request,
         callback=callback,
         metadata=metadata,
@@ -393,9 +421,8 @@ def ask(
         **kwargs,
     )
 
-    raw_state = getattr(chat_response, "_raw_state", None)
-    if isinstance(raw_state, dict):
-        result = dict(raw_state)
+    if isinstance(final_state, dict):
+        result = dict(final_state)
     else:
         result = chat_response.model_dump()
 
