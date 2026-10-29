@@ -44,10 +44,18 @@ class SelfCorrectiveRagWorkflow:
         description: str | None = None,
         step_labels: dict[str, str] | None = None,
         generation_nodes: set[str] | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> None:
         self.classifier = classifier
         self.retriever = retriever
         desc = description or f"Self-corrective RAG workflow powered by {classifier.__class__.__name__}."
+        classifier_meta = "openai_json" if "OpenAI" in classifier.__class__.__name__ else "typesafe_jev"
+        default_metadata = {
+            "classifier": classifier_meta,
+            "retrieval_strategy": "self_corrective",
+        }
+        if metadata:
+            default_metadata.update(metadata)
         self.info = WorkflowInfo(
             id=id,
             name=name,
@@ -56,6 +64,7 @@ class SelfCorrectiveRagWorkflow:
             supports_streaming=True,
             step_labels=step_labels or dict(DEFAULT_STEP_LABELS),
             generation_nodes=generation_nodes or set(DEFAULT_GENERATION_NODES),
+            metadata=default_metadata,
         )
         self._lock = threading.RLock()
         self._compiled_graph = None
@@ -84,6 +93,7 @@ class SelfCorrectiveRagWorkflow:
             "citations": [],
             "trace_id": trace_id or request.trace_id,
             "retrieved_contexts": [],
+            "attachments": request.attachments or [],
         }
 
     def to_chat_response(self, final_state: dict[str, Any], trace_id: str | None = None) -> ChatResponse:

@@ -25,6 +25,10 @@ class WorkflowInfo(BaseModel):
         default_factory=set,
         description="Set of graph node identifiers whose LLM outputs should stream tokens to the client",
     )
+    metadata: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Metadata tags for workflow capabilities and telemetry",
+    )
 
 
 class EvalContext(BaseModel):

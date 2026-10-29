@@ -33,7 +33,12 @@ from app.rag import fix_single_llm, fix_single_jev
 from app.rag.vectorstore import add_documents 
 from app.services.ingestion import load_file, chunk_documents, SUPPORTED
 from app.services.evaluation import score_trace_metric, run_online_evaluation_task
-from app.rag.workflows import WorkflowDefinition, get_workflow_registry
+from app.rag.workflows import (
+    EvalContext,
+    WorkflowDefinition,
+    WorkflowInfo,
+    get_workflow_registry,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -52,18 +57,165 @@ STEP_LABELS: dict[str, str] = {
 
 GENERATION_NODES: set[str] = {"generate_from_kb", "generate_from_web", "direct_answer"}
 
-WORKFLOW_ASKS = {
+
+class _LegacyUnifiedWorkflowAdapter:
+    """Adapts monkeypatched legacy ask functions and graphs into WorkflowDefinition."""
+
+    def __init__(
+        self,
+        workflow_id: str,
+        ask_fn: Callable[..., Any] | None = None,
+        graph: Any = None,
+    ) -> None:
+        self.workflow_id = workflow_id
+        self.ask_fn = ask_fn
+        self.graph = graph
+        classifier_meta = "openai_json" if workflow_id == "fix_single_llm" else "typesafe_jev"
+        self.info = WorkflowInfo(
+            id=workflow_id,
+            name=f"Legacy Adapted {workflow_id}",
+            description="Legacy monkeypatched workflow adapter",
+            step_labels=dict(STEP_LABELS),
+            generation_nodes=set(GENERATION_NODES),
+            metadata={"classifier": classifier_meta, "retrieval_strategy": "self_corrective"},
+        )
+
+    def get_compiled_graph(self) -> Any:
+        adapter_self = self
+
+        class _UnifiedGraph:
+            def invoke(self, state: dict[str, Any], config: dict[str, Any] | None = None) -> dict[str, Any]:
+                if adapter_self.ask_fn is not None and callable(adapter_self.ask_fn):
+                    callbacks = (config or {}).get("callbacks", [])
+                    callback = callbacks[0] if callbacks else None
+                    metadata = (config or {}).get("metadata", {})
+                    configurable = (config or {}).get("configurable", {})
+                    return adapter_self.ask_fn(
+                        state.get("question", ""),
+                        session_id=configurable.get("thread_id") or state.get("session_id"),
+                        user_id=state.get("user_id"),
+                        metadata=metadata,
+                        callback=callback,
+                    )
+                if adapter_self.graph is not None and hasattr(adapter_self.graph, "invoke"):
+                    return adapter_self.graph.invoke(state, config=config)
+                return {"answer": ""}
+
+            def astream_events(self, *args: Any, **kwargs: Any) -> Any:
+                if adapter_self.graph is not None and hasattr(adapter_self.graph, "astream_events"):
+                    return adapter_self.graph.astream_events(*args, **kwargs)
+                raise NotImplementedError("Legacy ask workflow does not implement streaming.")
+
+        return _UnifiedGraph()
+
+    def to_initial_state(self, request: ChatRequest, trace_id: str | None = None) -> dict[str, Any]:
+        return {
+            "question": request.question,
+            "session_id": request.session_id,
+            "user_id": request.user_id,
+            "trace_id": trace_id or request.trace_id,
+            "attachments": request.attachments or [],
+        }
+
+    def to_chat_response(self, final_state: dict[str, Any], trace_id: str | None = None) -> ChatResponse:
+        resolved_tid = trace_id or final_state.get("trace_id")
+        return ChatResponse(
+            workflow=self.workflow_id,
+            answer=final_state.get("answer") or "",
+            source_used=final_state.get("source_used") or "direct",
+            trace=final_state.get("trace") or [],
+            citations=final_state.get("citations") or [],
+            rewritten_query=final_state.get("current_query") or final_state.get("question"),
+            trace_id=resolved_tid,
+        )
+
+    def extract_eval_context(self, final_state: dict[str, Any]) -> EvalContext:
+        return EvalContext(
+            source_used=final_state.get("source_used") or "direct",
+            retrieved_contexts=final_state.get("retrieved_contexts") or [],
+        )
+
+    def handle_error(self, exc: Exception, current_state: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "answer": f"Inference error: {exc}",
+            "source_used": "direct",
+            "trace": [f"Error: {str(exc)}"],
+            "citations": [],
+            "retrieved_contexts": [],
+            "question": current_state.get("question", ""),
+        }
+
+
+def _sync_legacy_registry(workflow_id: str) -> None:
+    registry = get_workflow_registry()
+    from app.rag import fix_single_llm, fix_single_jev
+    from app.rag.workflows import register_default_workflows
+
+    is_llm_orig = (
+        workflow_id == "fix_single_llm"
+        and WORKFLOW_ASKS.get("fix_single_llm") is fix_single_llm.ask
+        and WORKFLOW_GRAPHS.get("fix_single_llm") is fix_single_llm.agent_graph
+    )
+    is_jev_orig = (
+        workflow_id == "fix_single_jev"
+        and WORKFLOW_ASKS.get("fix_single_jev") is fix_single_jev.ask
+        and WORKFLOW_GRAPHS.get("fix_single_jev") is fix_single_jev.agent_graph
+    )
+
+    if is_llm_orig or is_jev_orig:
+        register_default_workflows(registry)
+    else:
+        ask_fn = WORKFLOW_ASKS.get(workflow_id)
+        orig_ask = fix_single_llm.ask if workflow_id == "fix_single_llm" else fix_single_jev.ask
+        effective_ask = ask_fn if ask_fn is not orig_ask else None
+
+        graph = WORKFLOW_GRAPHS.get(workflow_id)
+        orig_graph = fix_single_llm.agent_graph if workflow_id == "fix_single_llm" else fix_single_jev.agent_graph
+        effective_graph = graph if graph is not orig_graph else None
+
+        registry.register(
+            _LegacyUnifiedWorkflowAdapter(
+                workflow_id=workflow_id,
+                ask_fn=effective_ask,
+                graph=effective_graph or graph,
+            ),
+            override=True,
+        )
+
+
+class _LegacyAsksDict(dict):
+    """Dictionary supporting backward compatibility with tests monkeypatching WORKFLOW_ASKS."""
+
+    def __setitem__(self, key: str, value: Any) -> None:
+        super().__setitem__(key, value)
+        _sync_legacy_registry(key)
+
+    def __delitem__(self, key: str) -> None:
+        super().__delitem__(key)
+        _sync_legacy_registry(key)
+
+
+class _LegacyGraphsDict(dict):
+    """Dictionary supporting backward compatibility with tests monkeypatching WORKFLOW_GRAPHS."""
+
+    def __setitem__(self, key: str, value: Any) -> None:
+        super().__setitem__(key, value)
+        _sync_legacy_registry(key)
+
+    def __delitem__(self, key: str) -> None:
+        super().__delitem__(key)
+        _sync_legacy_registry(key)
+
+
+WORKFLOW_ASKS = _LegacyAsksDict({
     "fix_single_llm": fix_single_llm.ask,
     "fix_single_jev": fix_single_jev.ask,
-}
+})
 
-WORKFLOW_GRAPHS = {
+WORKFLOW_GRAPHS = _LegacyGraphsDict({
     "fix_single_llm": fix_single_llm.agent_graph,
     "fix_single_jev": fix_single_jev.agent_graph,
-}
-
-_ORIGINAL_ASKS = dict(WORKFLOW_ASKS)
-_ORIGINAL_GRAPHS = dict(WORKFLOW_GRAPHS)
+})
 
 
 router = APIRouter(prefix="/api")
@@ -116,55 +268,30 @@ def list_workflows():
     registry = get_workflow_registry()
     details = registry.list_info()
     ids = sorted(registry.list_ids())
-    for wid in WORKFLOW_ASKS:
-        if wid not in ids:
-            ids.append(wid)
     return WorkflowListResponse(
         default=ChatRequest.model_fields["workflow"].default or "fix_single_jev",
-        workflows=sorted(set(ids)),
+        workflows=ids,
         details=details,
     )
 
 
-def _is_legacy_override(workflow_id: str) -> bool:
-    """Detect monkeypatched legacy workflow entries (backward compat with prior tests)."""
-    return (
-        workflow_id in WORKFLOW_ASKS and WORKFLOW_ASKS[workflow_id] is not _ORIGINAL_ASKS.get(workflow_id)
-    ) or (
-        workflow_id in WORKFLOW_GRAPHS and WORKFLOW_GRAPHS[workflow_id] is not _ORIGINAL_GRAPHS.get(workflow_id)
-    )
-
-
-def _resolve_workflow(workflow_id: str) -> WorkflowDefinition | None:
-    """Resolve a registered workflow definition, honoring legacy overrides for backward compatibility."""
-    registry = get_workflow_registry()
-    if workflow_id in registry.list_ids() and not _is_legacy_override(workflow_id):
-        return registry.get(workflow_id)
-    return None
-
-
 @router.post("/chat", response_model=ChatResponse)
 def chat(payload: ChatRequest, background_tasks: BackgroundTasks):
-    wf_def = _resolve_workflow(payload.workflow)
-    ask = WORKFLOW_ASKS.get(payload.workflow)
-    
-    if wf_def is None and ask is None:
+    registry = get_workflow_registry()
+    try:
+        wf_def = registry.get(payload.workflow)
+    except KeyError:
         raise HTTPException(status_code=400, detail=f"Unknown workflow: {payload.workflow}")
 
-    classifier_meta = "openai_json" if payload.workflow == "fix_single_llm" else "typesafe_jev"
-    if payload.workflow == "react_agent":
-        classifier_meta = "react_agent"
-
     sanitized_tid = payload.trace_id.replace("-", "").lower() if payload.trace_id else None
+    telemetry_metadata = dict(wf_def.info.metadata) if getattr(wf_def.info, "metadata", None) else {}
+
     handler = get_langfuse_callback(
         workflow_name=payload.workflow,
         session_id=payload.session_id,
         user_id=payload.user_id,
         trace_id=sanitized_tid,
-        metadata={
-            "classifier": classifier_meta,
-            "retrieval_strategy": "self_corrective" if payload.workflow != "react_agent" else "react_agent",
-        },
+        metadata=telemetry_metadata,
     )
     trace_id = extract_trace_id(handler)
     if handler is not None and not trace_id:
@@ -187,56 +314,7 @@ def chat(payload: ChatRequest, background_tasks: BackgroundTasks):
         context_bindings["user_id"] = payload.user_id
     structlog.contextvars.bind_contextvars(**context_bindings)
 
-    # Legacy fallback path when explicitly monkeypatched in tests
-    if wf_def is None and ask is not None:
-        try:
-            result = ask(
-                payload.question,
-                session_id=payload.session_id,
-                user_id=payload.user_id,
-                metadata={"trace_id": trace_id} if trace_id else None,
-                callback=handler,
-            )
-            trace_id = extract_trace_id(handler) or trace_id or (result.get("trace_id") if isinstance(result, dict) else None)
-            if trace_id:
-                structlog.contextvars.bind_contextvars(trace_id=trace_id)
-
-            logger.info(
-                "chat_query_completed",
-                workflow=payload.workflow,
-                question=payload.question,
-                source_used=result["source_used"],
-                trace=result.get("trace", []),
-                trace_id=trace_id,
-            )
-
-            if trace_id:
-                background_tasks.add_task(
-                    run_online_evaluation_task,
-                    trace_id=trace_id,
-                    question=payload.question,
-                    answer=result["answer"],
-                    source_used=result["source_used"],
-                    retrieved_contexts=result.get("retrieved_contexts", []),
-                )
-
-            return ChatResponse(
-                workflow=payload.workflow,
-                answer=result["answer"],
-                source_used=result["source_used"],
-                trace=result.get("trace", []),
-                citations=result.get("citations", []),
-                rewritten_query=result.get("current_query", payload.question),
-                trace_id=trace_id,
-            )
-
-        except HTTPException:
-            raise
-        except Exception as exc:
-            logger.exception("Error in chat pipeline: %s", exc)
-            raise HTTPException(status_code=500, detail=f"Inference error: {exc}") from exc
-
-    # Modern WorkflowRegistry path
+    # All executions delegate strictly to WorkflowRegistry
     try:
         initial_state = wf_def.to_initial_state(payload, trace_id=trace_id)
         graph = wf_def.get_compiled_graph()
@@ -507,7 +585,11 @@ async def chat_event_generator(
         if workflow_def is not None:
             try:
                 fallback_state = workflow_def.handle_error(exc, final_output or initial_state)
-                final_output.update(fallback_state)
+                logger.info(
+                    "workflow_error_fallback_invoked",
+                    workflow=workflow,
+                    fallback_answer=fallback_state.get("answer"),
+                )
             except Exception as fallback_exc:
                 logger.error("Error in workflow.handle_error: %s", fallback_exc)
 
@@ -531,25 +613,24 @@ async def chat_event_generator(
 
 @router.post("/chat/stream")
 async def chat_stream(payload: ChatRequest):
-    wf_def = _resolve_workflow(payload.workflow)
-    legacy_graph = WORKFLOW_GRAPHS.get(payload.workflow)
-
-    if wf_def is None and legacy_graph is None:
+    registry = get_workflow_registry()
+    try:
+        wf_def = registry.get(payload.workflow)
+    except KeyError:
         raise HTTPException(status_code=400, detail=f"Unknown workflow: {payload.workflow}")
 
-    graph = legacy_graph if wf_def is None else wf_def.get_compiled_graph()
+    graph = wf_def.get_compiled_graph()
 
     sanitized_tid = payload.trace_id.replace("-", "").lower() if payload.trace_id else uuid.uuid4().hex
-    classifier_meta = "openai_json" if payload.workflow == "fix_single_llm" else "typesafe_jev"
-    if payload.workflow == "react_agent":
-        classifier_meta = "react_agent"
+    telemetry_metadata = dict(wf_def.info.metadata) if getattr(wf_def.info, "metadata", None) else {}
+    telemetry_metadata["streaming"] = True
 
     handler = get_langfuse_callback(
         workflow_name=payload.workflow,
         session_id=payload.session_id,
         user_id=payload.user_id,
         trace_id=sanitized_tid,
-        metadata={"classifier": classifier_meta, "streaming": True},
+        metadata=telemetry_metadata,
     )
     trace_id = extract_trace_id(handler) or sanitized_tid
 
@@ -563,23 +644,7 @@ async def chat_stream(payload: ChatRequest):
         context_bindings["user_id"] = payload.user_id
     structlog.contextvars.bind_contextvars(**context_bindings)
 
-    if wf_def is not None:
-        initial_state = wf_def.to_initial_state(payload, trace_id=trace_id)
-    else:
-        initial_state = {
-            "question": payload.question,
-            "current_query": "",
-            "kb_docs": [],
-            "web_results": "",
-            "kb_grade": "",
-            "web_grade": "",
-            "answer": "",
-            "source_used": "",
-            "retry_count": 0,
-            "trace": [],
-            "citations": [],
-            "trace_id": trace_id,
-        }
+    initial_state = wf_def.to_initial_state(payload, trace_id=trace_id)
 
     config: dict[str, Any] = {}
     if handler:

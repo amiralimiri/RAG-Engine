@@ -20,7 +20,6 @@ class Attachment(BaseModel):
     filename: str = Field(..., description="Name of the attached file")
     content_type: str = Field(..., description="MIME content type")
     url: str | None = Field(default=None, description="Optional remote URL to resource")
-    data: str | None = Field(default=None, description="Optional base64-encoded file payload")
 
 
 class ChatRequest(BaseModel):

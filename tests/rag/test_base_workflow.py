@@ -119,7 +119,7 @@ def test_chat_message_and_attachment_schemas():
         url="https://example.com/screenshot.png",
     )
     assert att.filename == "screenshot.png"
-    assert att.data is None
+    assert att.url == "https://example.com/screenshot.png"
 
 
 def test_chat_request_backward_compatibility():
@@ -139,7 +139,7 @@ def test_chat_request_additive_features():
             ChatMessage(role="assistant", content="Hello! How can I help?"),
         ],
         attachments=[
-            Attachment(filename="log.txt", content_type="text/plain", data="some-logs"),
+            Attachment(filename="log.txt", content_type="text/plain", url="https://example.com/log.txt"),
         ],
     )
     assert len(req.messages) == 2

@@ -35,6 +35,17 @@ def _format_search_results(result: Any) -> str:
     return "\n\n".join(lines) if lines else "No relevant web search results found."
 
 
+def _extract_web_citations(result: Any) -> list[dict[str, Any]]:
+    citations = []
+    if isinstance(result, dict):
+        for item in result.get("results", []):
+            title = item.get("title", "")
+            url = item.get("url", "")
+            if not any(c.get("url") == url for c in citations):
+                citations.append({"title": title or url, "url": url, "type": "web"})
+    return citations
+
+
 def create_web_search_tool(
     search_client: Any = None,
     name: str = "web_search",
@@ -59,20 +70,20 @@ def create_web_search_tool(
             include_raw_content=False,
         )
 
-    def _run(query: str, config: RunnableConfig | None = None) -> str:
+    def _run(query: str, config: RunnableConfig | None = None) -> tuple[str, list[dict[str, Any]]]:
         structlog.contextvars.bind_contextvars(step="search_web")
         client = _get_active_client()
         result = client.invoke({"query": query}, config=config)
-        return _format_search_results(result)
+        return _format_search_results(result), _extract_web_citations(result)
 
-    async def _arun(query: str, config: RunnableConfig | None = None) -> str:
+    async def _arun(query: str, config: RunnableConfig | None = None) -> tuple[str, list[dict[str, Any]]]:
         structlog.contextvars.bind_contextvars(step="search_web")
         client = _get_active_client()
         if hasattr(client, "ainvoke"):
             result = await client.ainvoke({"query": query}, config=config)
         else:
             result = client.invoke({"query": query}, config=config)
-        return _format_search_results(result)
+        return _format_search_results(result), _extract_web_citations(result)
 
     return StructuredTool.from_function(
         func=_run,
@@ -80,6 +91,7 @@ def create_web_search_tool(
         name=name,
         description=description,
         args_schema=WebSearchInput,
+        response_format="content_and_artifact",
     )
 
 

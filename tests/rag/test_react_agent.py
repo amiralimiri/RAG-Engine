@@ -108,7 +108,7 @@ def test_react_agent_to_chat_response_citations_and_source():
     response = wf.to_chat_response(final_state, trace_id="trace_777")
     assert response.workflow == "react_agent"
     assert response.answer == "You can download OpenVPN following our internal guide."
-    assert response.source_used == "hybrid"
+    assert response.source_used == "react_agent"
     assert len(response.citations) == 2
     assert response.citations[0]["title"] == "vpn_setup.md"
     assert response.citations[0]["type"] == "private_kb"

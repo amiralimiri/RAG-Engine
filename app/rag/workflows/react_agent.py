@@ -54,11 +54,18 @@ class ReActAgentWorkflow:
         step_labels: dict[str, str] | None = None,
         generation_nodes: set[str] | None = None,
         system_prompt: str | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> None:
         self.llm = llm
         self.tools = tools
         self.checkpointer = checkpointer
         self.system_prompt = system_prompt or DEFAULT_REACT_PROMPT
+        default_metadata = {
+            "classifier": "react_agent",
+            "retrieval_strategy": "react_agent",
+        }
+        if metadata:
+            default_metadata.update(metadata)
         self.info = WorkflowInfo(
             id=id,
             name=name,
@@ -67,6 +74,7 @@ class ReActAgentWorkflow:
             supports_streaming=True,
             step_labels=step_labels or dict(DEFAULT_REACT_STEP_LABELS),
             generation_nodes=generation_nodes or set(DEFAULT_REACT_GENERATION_NODES),
+            metadata=default_metadata,
         )
         self._lock = threading.RLock()
         self._compiled_graph = None
@@ -118,6 +126,7 @@ class ReActAgentWorkflow:
             "question": request.question,
             "session_id": request.session_id,
             "trace_id": trace_id or request.trace_id,
+            "attachments": request.attachments or [],
         }
 
     def to_chat_response(self, final_state: dict[str, Any], trace_id: str | None = None) -> ChatResponse:
@@ -162,7 +171,19 @@ class ReActAgentWorkflow:
                 if content_str not in retrieved_contexts:
                     retrieved_contexts.append(content_str)
 
-                if tool_name == "knowledge_base_search":
+                # 1. Prefer structured artifact if attached to tool output
+                artifact = getattr(m, "artifact", None)
+                if isinstance(artifact, list) and artifact:
+                    for item in artifact:
+                        if isinstance(item, dict):
+                            if not any(
+                                (c.get("title") and c.get("title") == item.get("title"))
+                                or (c.get("url") and c.get("url") == item.get("url"))
+                                for c in citations
+                            ):
+                                citations.append(item)
+                # 2. Fallback to regex scraping only if tool did not attach structured artifact
+                elif tool_name == "knowledge_base_search":
                     for src in re.findall(r"\[Source:\s*([^\]]+)\]", content_str):
                         title = src.split("/")[-1].split("\\")[-1]
                         if not any(c.get("title") == title for c in citations):
@@ -172,14 +193,16 @@ class ReActAgentWorkflow:
                         if not any(c.get("url") == url for c in citations):
                             citations.append({"title": title or url, "url": url, "type": "web"})
 
-        if "knowledge_base_search" in tools_called and "web_search" in tools_called:
-            source_used = "hybrid"
+        if final_state.get("source_used") in ("error", "error_fallback"):
+            source_used = "error"
+        elif "knowledge_base_search" in tools_called and "web_search" in tools_called:
+            source_used = "react_agent"
         elif "knowledge_base_search" in tools_called:
             source_used = "vectorstore"
         elif "web_search" in tools_called:
             source_used = "web_search"
         elif tools_called:
-            source_used = "tool_calling"
+            source_used = "react_agent"
         else:
             source_used = final_state.get("source_used") or "direct"
 
@@ -209,6 +232,8 @@ class ReActAgentWorkflow:
                 if isinstance(m, ToolMessage) or getattr(m, "type", "") == "tool":
                     retrieved.append(str(m.content))
         source = final_state.get("source_used") or ("react_agent" if retrieved else "direct")
+        if source in ("error", "error_fallback"):
+            source = "direct"
         return EvalContext(source_used=source, retrieved_contexts=retrieved)
 
     def handle_error(self, exc: Exception, current_state: dict[str, Any]) -> dict[str, Any]:
@@ -219,11 +244,12 @@ class ReActAgentWorkflow:
         return {
             "messages": [AIMessage(content=err_msg)],
             "answer": err_msg,
-            "source_used": "error_fallback",
+            "source_used": "error",
             "trace": [f"ReAct Agent Error: {str(exc)}"],
             "citations": [],
             "retrieved_contexts": [],
             "question": current_state.get("question", ""),
+            "attachments": current_state.get("attachments", []),
         }
 
 

@@ -27,6 +27,16 @@ def _format_docs(docs: list[Document]) -> str:
     return "\n\n".join(formatted)
 
 
+def _extract_citations(docs: list[Document]) -> list[dict[str, Any]]:
+    citations = []
+    for doc in docs:
+        source = doc.metadata.get("source", "unknown") if hasattr(doc, "metadata") and doc.metadata else "unknown"
+        title = source.split("/")[-1].split("\\")[-1]
+        if not any(c.get("title") == title for c in citations):
+            citations.append({"title": title, "url": "", "type": "private_kb"})
+    return citations
+
+
 def create_retriever_tool(
     retriever: Any = None,
     name: str = "knowledge_base_search",
@@ -43,20 +53,20 @@ def create_retriever_tool(
         from app.rag.vectorstore import get_retriever
         return get_retriever()
 
-    def _run(query: str, config: RunnableConfig | None = None) -> str:
+    def _run(query: str, config: RunnableConfig | None = None) -> tuple[str, list[dict[str, Any]]]:
         structlog.contextvars.bind_contextvars(step="retrieve_kb")
         active = _get_active_retriever()
         docs = active.invoke(query, config=config)
-        return _format_docs(docs)
+        return _format_docs(docs), _extract_citations(docs)
 
-    async def _arun(query: str, config: RunnableConfig | None = None) -> str:
+    async def _arun(query: str, config: RunnableConfig | None = None) -> tuple[str, list[dict[str, Any]]]:
         structlog.contextvars.bind_contextvars(step="retrieve_kb")
         active = _get_active_retriever()
         if hasattr(active, "ainvoke"):
             docs = await active.ainvoke(query, config=config)
         else:
             docs = active.invoke(query, config=config)
-        return _format_docs(docs)
+        return _format_docs(docs), _extract_citations(docs)
 
     return StructuredTool.from_function(
         func=_run,
@@ -64,6 +74,7 @@ def create_retriever_tool(
         name=name,
         description=description,
         args_schema=KnowledgeSearchInput,
+        response_format="content_and_artifact",
     )
 
 

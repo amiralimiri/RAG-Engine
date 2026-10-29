@@ -272,6 +272,12 @@ class FakeClassifierAdapter:
         return _normalize_grade(res)
 
 
+def _fallback_evidence_grade(exc: Exception) -> EvidenceGrade:
+    """Safe fallback evidence grade when structured grader invocation fails."""
+    logger.warning("evidence_grade_structured_parsing_failed", error=str(exc))
+    return EvidenceGrade(grade="weak")
+
+
 class OpenAIClassifierAdapter:
     """Production classifier adapter backed by ChatOpenAI structured outputs."""
 
@@ -299,16 +305,10 @@ class OpenAIClassifierAdapter:
         prompt_obj = get_workflow_prompt("rag:router:llm")
         prompt = prompt_obj.compile(question=question)
         run_cfg = _build_prompt_config(prompt_obj, config)
-        try:
-            decision = cast(RouteDecision, router.invoke(prompt, config=run_cfg))
-            if isinstance(decision, dict):
-                decision = RouteDecision(**decision)
-            return decision
-        except Exception as e:
-            err_str = str(e).lower()
-            if "direct" in err_str:
-                return RouteDecision(route="direct")
-            return RouteDecision(route="kb")
+        decision = cast(RouteDecision, router.invoke(prompt, config=run_cfg))
+        if isinstance(decision, dict):
+            decision = RouteDecision(**decision)
+        return decision
 
     def grade_kb(
         self,
@@ -335,10 +335,7 @@ class OpenAIClassifierAdapter:
                 grade = EvidenceGrade(**grade)
             return grade
         except Exception as e:
-            err_str = str(e).lower()
-            if "good" in err_str:
-                return EvidenceGrade(grade="good")
-            return EvidenceGrade(grade="weak")
+            return _fallback_evidence_grade(e)
 
     def grade_web(
         self,
@@ -361,10 +358,7 @@ class OpenAIClassifierAdapter:
                 grade = EvidenceGrade(**grade)
             return grade
         except Exception as e:
-            err_str = str(e).lower()
-            if "good" in err_str:
-                return EvidenceGrade(grade="good")
-            return EvidenceGrade(grade="weak")
+            return _fallback_evidence_grade(e)
 
 
 class JevClassifierAdapter:
