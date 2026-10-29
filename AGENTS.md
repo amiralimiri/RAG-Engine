@@ -19,3 +19,7 @@ Dual-output `BaseTool` seams and test doubles. See `docs/agents/tool-abstraction
 ### Knowledge store & indexing
 
 VectorStoreAdapter protocol seam, deterministic chunk hashing, and offline test doubles. See `docs/agents/knowledge-store.md`.
+
+### Workflow execution & pipeline
+
+WorkflowRunner execution pipeline, dependency injection, and streaming guardrails. See `docs/agents/workflow-execution.md`.
