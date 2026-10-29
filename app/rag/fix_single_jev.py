@@ -1,17 +1,26 @@
-import asyncio
-from app.core.concurrency import wrap_safe_invoke
 import logging
 from typing import Any, Literal, cast
 from langchain_core.runnables import RunnableConfig
 from langchain_openai import ChatOpenAI
 from langchain_tavily import TavilySearch
-from langgraph.graph import StateGraph, START, END
-from langchain_typesafe import Noul, Choice, TypeSafeClassifier
+from langchain_typesafe import Choice, TypeSafeClassifier
 import structlog
 
 from app.core.config import get_settings
-from app.core.telemetry import get_langfuse_client, extract_trace_id
-from app.rag.state import AgentState, RouteDecision, EvidenceGrade
+from app.core.telemetry import extract_trace_id, get_langfuse_client
+from app.rag.classifiers import (
+    JevClassifierAdapter,
+    _build_prompt_config,
+    _estimate_jev_tokens,
+)
+from app.rag.engine import (
+    GENERATION_NODES,
+    ask as engine_ask,
+    create_agentic_rag_graph,
+    llm as engine_llm,
+    web_search_tool as engine_web_search,
+)
+from app.rag.state import AgentState, EvidenceGrade, RouteDecision
 from app.rag.vectorstore import get_retriever
 from app.services.prompts import get_workflow_prompt
 
@@ -26,68 +35,26 @@ _web_search = None
 def llm():
     global _llm
     if _llm is None:
-        _llm = ChatOpenAI(
-            model=settings.llm_model,
-            base_url=settings.llm_base_url,
-            api_key=settings.llm_api_key,
-            temperature=0,
-            stream_usage=True,
-        )
+        _llm = engine_llm()
     return _llm
 
 
 def jev():
     global _jev
     if _jev is None:
-        # beta
         _jev = TypeSafeClassifier(
             api_key=settings.jev_api_key,
             base_url=settings.jev_base_url,
-            model=settings.jev_model
+            model=settings.jev_model,
         )
     return _jev
+
 
 def web_search_tool():
     global _web_search
     if _web_search is None:
-        _web_search = TavilySearch(
-            tavily_api_key=settings.tavily_api_key.get_secret_value(),
-            max_results=5,
-            topic="general",
-            include_answer=True,
-            include_raw_content=False,
-        )
+        _web_search = engine_web_search()
     return _web_search
-
-
-def _build_prompt_config(prompt_obj: Any, config: RunnableConfig | None = None) -> RunnableConfig:
-    """Build or merge a RunnableConfig linking prompt metadata to LangChain observations."""
-    prompt_meta: dict[str, Any] = {}
-    if prompt_obj is not None:
-        if getattr(prompt_obj, "is_fallback", False) is True:
-            prompt_meta = {
-                "prompt_name": getattr(prompt_obj, "name", ""),
-                "prompt_fallback": True,
-            }
-        else:
-            prompt_meta = {"langfuse_prompt": prompt_obj}
-
-    cfg: RunnableConfig = dict(config) if config else {}
-    existing_meta = dict(cfg.get("metadata") or {})
-    existing_meta.update(prompt_meta)
-    cfg["metadata"] = existing_meta
-    return cfg
-
-
-def _estimate_jev_tokens(prompt_text: str, output_text: str) -> dict[str, int]:
-    """Heuristic rule-of-thumb: 1 token ~= 4 characters."""
-    input_tokens = max(1, len(prompt_text) // 4)
-    output_tokens = max(1, len(output_text) // 4)
-    return {
-        "input": input_tokens,
-        "output": output_tokens,
-        "total": input_tokens + output_tokens,
-    }
 
 
 def _record_jev_generation(
@@ -104,7 +71,6 @@ def _record_jev_generation(
             return
         current_settings = get_settings()
 
-        # Retrieve active trace_id from explicit argument, config (callbacks or metadata), or structlog contextvars
         active_trace_id = trace_id
         if not active_trace_id and config and isinstance(config, dict):
             callbacks = config.get("callbacks") or []
@@ -179,8 +145,39 @@ def _record_jev_generation(
     except Exception as exc:
         logger.debug("Failed to record JEV generation span: %s", exc)
 
-########################## Node 1 — Route the Question ##########################
 
+# Canonical 10-node StateGraph built via unified engine
+classifier = JevClassifierAdapter()
+agent_graph = create_agentic_rag_graph(classifier)
+
+
+def build_graph():
+    return create_agentic_rag_graph(JevClassifierAdapter())
+
+
+def ask(
+    question: str,
+    *,
+    session_id: str | None = None,
+    user_id: str | None = None,
+    metadata: dict | None = None,
+    tags: list[str] | None = None,
+    callback: Any | None = None,
+) -> dict:
+    target_graph = globals().get("agent_graph", agent_graph)
+    return engine_ask(
+        question,
+        workflow="fix_single_jev",
+        graph=target_graph,
+        session_id=session_id,
+        user_id=user_id,
+        metadata=metadata,
+        tags=tags,
+        callback=callback,
+    )
+
+
+# Backward-compatibility node functions
 def route_question_jev(state: AgentState, config: RunnableConfig | None = None):
     structlog.contextvars.bind_contextvars(step="route_question")
     prompt_client = get_workflow_prompt("rag:router:jev")
@@ -190,9 +187,7 @@ def route_question_jev(state: AgentState, config: RunnableConfig | None = None):
         "state": question,
         "questions": {
             "route": Choice(
-                instructions=(
-                    "Which path should this enterprise IT support question take?"
-                ),
+                instructions="Which path should this enterprise IT support question take?",
                 criteria={
                     "kb": (
                         "Questions about company IT policies, VPN, password reset, "
@@ -204,9 +199,9 @@ def route_question_jev(state: AgentState, config: RunnableConfig | None = None):
                         "Only greetings, thanks, or casual chat that needs no "
                         "company knowledge."
                     ),
-                }
+                },
             )
-        }
+        },
     })
 
     decision = result.choices["route"].choice
@@ -219,21 +214,17 @@ def route_question_jev(state: AgentState, config: RunnableConfig | None = None):
         prompt_client=prompt_client,
         config=config,
     )
-    # confidence = result.choices["route"].confidence
-    # print(f"[Router] {decision} (confidence: {confidence:.3f})")
 
     return {
-        "current_query": state['question'],
+        "current_query": state["question"],
         "source_used": decision,
         "trace": [f"Router → {decision.upper()}"],
     }
-    
-    
+
+
 def route_after_router(state: AgentState) -> Literal["retrieve_kb", "direct_answer"]:
     return "retrieve_kb" if state["source_used"] == "kb" else "direct_answer"
 
-
-########################## Node 2 — Retrieve from the Private KB ##########################
 
 def retrieve_kb(state: AgentState, config: RunnableConfig | None = None):
     structlog.contextvars.bind_contextvars(step="retrieve_kb")
@@ -245,62 +236,7 @@ def retrieve_kb(state: AgentState, config: RunnableConfig | None = None):
     }
 
 
-########################## Node 3 — Grade Private KB Evidence ##########################
-
 def grade_kb_jev(state: AgentState, config: RunnableConfig | None = None):
-    structlog.contextvars.bind_contextvars(step="grade_kb")
-    prompt_client = get_workflow_prompt("rag:grade_kb:jev")
-    context = "\n\n".join(
-        f"Source: {d.metadata.get('source', 'unknown')}\n{d.page_content}"
-        for d in state["kb_docs"]
-    )
-    prompt_state = (
-        f"Question: {state['question']}\n\n"
-        f"Private company KB evidence:\n{context}"
-    )
-
-    result = jev().invoke({
-        "state": prompt_state,
-        "questions": {
-            "grade": Choice(
-                instructions=(
-                    "Is the provided private company KB evidence sufficient to "
-                    "answer the question confidently and specifically?"
-                ),
-                criteria={
-                    "good": (
-                        "The evidence directly and specifically answers the "
-                        "question, allowing a confident, concrete response."
-                    ),
-                    "weak": (
-                        "The evidence is missing, incomplete, tangential, or too "
-                        "vague to answer the question confidently and specifically."
-                    ),
-                }
-            )
-        }
-    })
-
-    grade = result.choices["grade"].choice
-    trace_id = state.get("trace_id")
-    _record_jev_generation(
-        "jev_kb_grader",
-        prompt_state,
-        grade,
-        trace_id=trace_id,
-        prompt_client=prompt_client,
-        config=config,
-    )
-    # confidence = result.choices["grade"].confidence
-    # print(f"[KB Grader] {grade} (confidence: {confidence:.3f})")
-
-    return {
-        "kb_grade": grade,
-        "trace": [f"KB evidence grade → {grade.upper()}"],
-    }
-
-
-def grade_kb_jev_2(state: AgentState, config: RunnableConfig | None = None):
     structlog.contextvars.bind_contextvars(step="grade_kb")
     prompt_client = get_workflow_prompt("rag:grade_kb:jev")
     context = "\n\n".join(
@@ -333,9 +269,9 @@ def grade_kb_jev_2(state: AgentState, config: RunnableConfig | None = None):
                         "relevant to the retrieval query — not enough to answer "
                         "the ORIGINAL user question specifically and confidently."
                     ),
-                }
+                },
             )
-        }
+        },
     })
 
     grade = result.choices["grade"].choice
@@ -348,20 +284,19 @@ def grade_kb_jev_2(state: AgentState, config: RunnableConfig | None = None):
         prompt_client=prompt_client,
         config=config,
     )
-    # confidence = result.choices["grade"].confidence
-    # print(f"[KB Grader] {grade} (confidence: {confidence:.3f})")
 
     return {
         "kb_grade": grade,
         "trace": [f"KB evidence grade → {grade.upper()}"],
     }
-    
-    
+
+
+grade_kb_jev_2 = grade_kb_jev
+
+
 def after_kb(state: AgentState) -> Literal["generate_from_kb", "search_web"]:
     return "generate_from_kb" if state["kb_grade"] == "good" else "search_web"
 
-
-########################## Node 4 — Tavily Web Search Fallback ##########################
 
 def search_web(state: AgentState, config: RunnableConfig | None = None):
     structlog.contextvars.bind_contextvars(step="search_web")
@@ -388,58 +323,7 @@ def search_web(state: AgentState, config: RunnableConfig | None = None):
     }
 
 
-########################## Node 5 — Grade Web Evidence ##########################
-
 def grade_web_jev(state: AgentState, config: RunnableConfig | None = None):
-    structlog.contextvars.bind_contextvars(step="grade_web")
-    prompt_client = get_workflow_prompt("rag:grade_web:jev")
-    prompt_state = (
-        f"Question: {state['question']}\n\n"
-        f"Web evidence:\n{state['web_results']}"
-    )
-    result = jev().invoke({
-        "state": prompt_state,
-        "questions": {
-            "grade": Choice(
-                instructions=(
-                    "Is the provided web evidence sufficient and directly "
-                    "relevant to answer the question confidently?"
-                ),
-                criteria={
-                    "good": (
-                        "The web evidence is sufficient and directly relevant, "
-                        "allowing a confident, specific answer to the question."
-                    ),
-                    "weak": (
-                        "The web evidence is missing, incomplete, tangential, or "
-                        "not directly relevant — not enough to answer the "
-                        "question confidently."
-                    ),
-                }
-            )
-        }
-    })
-
-    grade = result.choices["grade"].choice
-    trace_id = state.get("trace_id")
-    _record_jev_generation(
-        "jev_web_grader",
-        prompt_state,
-        grade,
-        trace_id=trace_id,
-        prompt_client=prompt_client,
-        config=config,
-    )
-    # confidence = result.choices["grade"].confidence
-    # print(f"[Web Grader] {grade} (confidence: {confidence:.3f})")
-
-    return {
-        "web_grade": grade,
-        "trace": [f"Web evidence grade → {grade.upper()}"],
-    }
-
-
-def grade_web_jev_2(state: AgentState, config: RunnableConfig | None = None):
     structlog.contextvars.bind_contextvars(step="grade_web")
     prompt_client = get_workflow_prompt("rag:grade_web:jev")
     prompt_state = (
@@ -468,9 +352,9 @@ def grade_web_jev_2(state: AgentState, config: RunnableConfig | None = None):
                         "only matches the search query — not enough to answer "
                         "the ORIGINAL user question specifically and confidently."
                     ),
-                }
+                },
             )
-        }
+        },
     })
 
     grade = result.choices["grade"].choice
@@ -483,15 +367,16 @@ def grade_web_jev_2(state: AgentState, config: RunnableConfig | None = None):
         prompt_client=prompt_client,
         config=config,
     )
-    # confidence = result.choices["grade"].confidence
-    # print(f"[Web Grader] {grade} (confidence: {confidence:.3f})")
 
     return {
         "web_grade": grade,
         "trace": [f"Web evidence grade → {grade.upper()}"],
     }
-    
-    
+
+
+grade_web_jev_2 = grade_web_jev
+
+
 def after_web(state: AgentState) -> Literal["generate_from_web", "rewrite_query", "insufficient"]:
     if state["web_grade"] == "good":
         return "generate_from_web"
@@ -499,8 +384,6 @@ def after_web(state: AgentState) -> Literal["generate_from_web", "rewrite_query"
         return "rewrite_query"
     return "insufficient"
 
-
-########################## Node 6 — Rewrite the Query ##########################
 
 def rewrite_query_2(state: AgentState, config: RunnableConfig | None = None):
     structlog.contextvars.bind_contextvars(step="rewrite_query")
@@ -521,14 +404,12 @@ def rewrite_query_2(state: AgentState, config: RunnableConfig | None = None):
 rewrite_query = rewrite_query_2
 
 
-GENERATION_NODES = {"generate_from_kb", "generate_from_web", "direct_answer"}
-
-
-########################## Node 7 — Generate from Private KB ##########################
-
 async def generate_from_kb(state: AgentState, config: RunnableConfig | None = None):
     structlog.contextvars.bind_contextvars(step="generate_from_kb")
-    context = "\n\n".join(f"[Source: {d.metadata.get('source','unknown')}]\n{d.page_content}" for d in state["kb_docs"])
+    context = "\n\n".join(
+        f"[Source: {d.metadata.get('source', 'unknown')}]\n{d.page_content}"
+        for d in state["kb_docs"]
+    )
     prompt_obj = get_workflow_prompt("rag:generate_kb")
     prompt = prompt_obj.compile(
         question=state["question"],
@@ -556,8 +437,6 @@ async def generate_from_kb(state: AgentState, config: RunnableConfig | None = No
     }
 
 
-########################## Node 8 — Generate from Web Search ##########################
-
 async def generate_from_web(state: AgentState, config: RunnableConfig | None = None):
     structlog.contextvars.bind_contextvars(step="generate_from_web")
     prompt_obj = get_workflow_prompt("rag:generate_web")
@@ -576,8 +455,6 @@ async def generate_from_web(state: AgentState, config: RunnableConfig | None = N
     }
 
 
-########################## Node 9 — Direct Answer ##########################
-
 async def direct_answer(state: AgentState, config: RunnableConfig | None = None):
     structlog.contextvars.bind_contextvars(step="direct_answer")
     prompt_obj = get_workflow_prompt("rag:direct_answer")
@@ -593,8 +470,6 @@ async def direct_answer(state: AgentState, config: RunnableConfig | None = None)
     }
 
 
-########################## Node 10 — Insufficient Evidence Answer ##########################
-
 def insufficient(state: AgentState):
     structlog.contextvars.bind_contextvars(step="insufficient")
     return {
@@ -603,99 +478,3 @@ def insufficient(state: AgentState):
         "retrieved_contexts": [],
         "trace": ["Stopped → insufficient reliable evidence"],
     }
-
-
-########################## Build the LangGraph Workflow ##########################
-
-def build_graph():
-    graph = StateGraph(AgentState)
-    for name, fn in {
-        "route_question": route_question_jev,
-        "retrieve_kb": retrieve_kb,
-        "grade_kb": grade_kb_jev_2,
-        "search_web": search_web,
-        "grade_web": grade_web_jev_2,
-        "rewrite_query": rewrite_query_2,
-        "generate_from_kb": generate_from_kb,
-        "generate_from_web": generate_from_web,
-        "direct_answer": direct_answer,
-        "insufficient": insufficient,
-    }.items():
-        graph.add_node(name, fn)
-
-    graph.add_edge(START, "route_question")
-    graph.add_conditional_edges("route_question", route_after_router, {
-        "retrieve_kb": "retrieve_kb", "direct_answer": "direct_answer"
-    })
-    graph.add_edge("retrieve_kb", "grade_kb")
-    graph.add_conditional_edges("grade_kb", after_kb, {
-        "generate_from_kb": "generate_from_kb", "search_web": "search_web"
-    })
-    graph.add_edge("search_web", "grade_web")
-    graph.add_conditional_edges("grade_web", after_web, {
-        "generate_from_web": "generate_from_web", "rewrite_query": "rewrite_query", "insufficient": "insufficient"
-    })
-    graph.add_edge("rewrite_query", "retrieve_kb")
-    graph.add_edge("generate_from_kb", END)
-    graph.add_edge("generate_from_web", END)
-    graph.add_edge("direct_answer", END)
-    graph.add_edge("insufficient", END)
-    compiled = graph.compile()
-    return wrap_safe_invoke(compiled)
-
-
-agent_graph = build_graph()
-
-
-########################## Helper Function ##########################
-
-def ask(
-    question: str,
-    *,
-    session_id: str | None = None,
-    user_id: str | None = None,
-    metadata: dict | None = None,
-    tags: list[str] | None = None,
-    callback: Any | None = None,
-) -> dict:
-    context: dict[str, Any] = {"workflow": "fix_single_jev"}
-    if session_id:
-        context["session_id"] = session_id
-    if user_id:
-        context["user_id"] = user_id
-
-    extracted_tid = (
-        extract_trace_id(callback)
-        or (metadata.get("trace_id") if isinstance(metadata, dict) else None)
-        or structlog.contextvars.get_contextvars().get("trace_id")
-    )
-    if extracted_tid:
-        context["trace_id"] = extracted_tid
-
-    structlog.contextvars.bind_contextvars(**context)
-
-    initial: AgentState = {
-        "question": question,
-        "current_query": "",
-        "kb_docs": [],
-        "web_results": "",
-        "kb_grade": "",
-        "web_grade": "",
-        "answer": "",
-        "source_used": "",
-        "retry_count": 0,
-        "trace": [],
-        "citations": [],
-        "retrieved_contexts": [],
-    }
-    if extracted_tid:
-        initial["trace_id"] = extracted_tid
-
-    config: dict[str, Any] = {}
-    if callback:
-        config["callbacks"] = [callback]
-    if tags:
-        config["tags"] = tags
-    if metadata:
-        config["metadata"] = metadata
-    return agent_graph.invoke(initial, config=config if config else None)

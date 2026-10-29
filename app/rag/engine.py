@@ -382,11 +382,7 @@ def ask(
     if not isinstance(result, dict):
         result = {"answer": str(result)}
 
-    result.setdefault("retrieved_contexts", [])
-    result.setdefault("citations", [])
-    result.setdefault("source_used", "")
-    result.setdefault("trace", [])
-    if extracted_tid:
-        result.setdefault("trace_id", extracted_tid)
+    if extracted_tid and "trace_id" not in result:
+        result["trace_id"] = extracted_tid
 
     return result

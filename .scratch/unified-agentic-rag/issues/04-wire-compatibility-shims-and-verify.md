@@ -4,10 +4,10 @@
 
 **Blocked by:** 02: Implement Production Classifier Adapters (OpenAI & JEV), 03: Consolidate Deep Workflow Engine with Pluggable Retriever Hook
 
-**Status:** ready-for-agent
+**Status:** completed
 
-- [ ] `app/rag/fix_single_llm.py` is reduced to a thin shim exporting `agent_graph = create_agentic_rag_graph(OpenAIClassifierAdapter())` and `ask(...)`.
-- [ ] `app/rag/fix_single_jev.py` is reduced to a thin shim exporting `agent_graph = create_agentic_rag_graph(JevClassifierAdapter())` and `ask(...)`.
-- [ ] `app/api/routes.py` runs without changes: `WORKFLOW_ASKS` and `WORKFLOW_GRAPHS` resolve identically.
-- [ ] Streaming SSE endpoints (`/api/chat/stream`) emit step and token events as expected.
-- [ ] All 260 existing unit, integration, and streaming tests pass green (`uv run pytest`).
+- [x] `app/rag/fix_single_llm.py` is reduced to a thin shim exporting `agent_graph = create_agentic_rag_graph(OpenAIClassifierAdapter())` and `ask(...)`.
+- [x] `app/rag/fix_single_jev.py` is reduced to a thin shim exporting `agent_graph = create_agentic_rag_graph(JevClassifierAdapter())` and `ask(...)`.
+- [x] `app/api/routes.py` runs without changes: `WORKFLOW_ASKS` and `WORKFLOW_GRAPHS` resolve identically.
+- [x] Streaming SSE endpoints (`/api/chat/stream`) emit step and token events as expected.
+- [x] All 260 existing unit, integration, and streaming tests pass green (`uv run pytest`).

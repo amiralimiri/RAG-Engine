@@ -1,15 +1,20 @@
-import asyncio
-from app.core.concurrency import wrap_safe_invoke
 import logging
 from typing import Any, Literal, cast
 from langchain_core.runnables import RunnableConfig
 from langchain_openai import ChatOpenAI
 from langchain_tavily import TavilySearch
-from langgraph.graph import StateGraph, START, END
 import structlog
+
 from app.core.config import get_settings
-from app.core.telemetry import extract_trace_id
-from app.rag.state import AgentState, RouteDecision, EvidenceGrade
+from app.rag.classifiers import OpenAIClassifierAdapter, _build_prompt_config
+from app.rag.engine import (
+    GENERATION_NODES,
+    ask as engine_ask,
+    create_agentic_rag_graph,
+    llm as engine_llm,
+    web_search_tool as engine_web_search,
+)
+from app.rag.state import AgentState, EvidenceGrade, RouteDecision
 from app.rag.vectorstore import get_retriever
 from app.services.prompts import get_workflow_prompt
 
@@ -23,48 +28,49 @@ _web_search = None
 def llm():
     global _llm
     if _llm is None:
-        _llm = ChatOpenAI(
-            model=settings.llm_model,
-            base_url=settings.llm_base_url,
-            api_key=settings.llm_api_key,
-            temperature=0,
-            stream_usage=True,
-        )
+        _llm = engine_llm()
     return _llm
 
 
 def web_search_tool():
     global _web_search
     if _web_search is None:
-        _web_search = TavilySearch(
-            tavily_api_key=settings.tavily_api_key.get_secret_value(),
-            max_results=5,
-            topic="general",
-            include_answer=True,
-            include_raw_content=False,
-        )
+        _web_search = engine_web_search()
     return _web_search
 
 
-def _build_prompt_config(prompt_obj: Any, config: RunnableConfig | None = None) -> RunnableConfig:
-    """Build or merge a RunnableConfig linking prompt metadata to LangChain observations."""
-    prompt_meta: dict[str, Any] = {}
-    if prompt_obj is not None:
-        if getattr(prompt_obj, "is_fallback", False) is True:
-            prompt_meta = {
-                "prompt_name": getattr(prompt_obj, "name", ""),
-                "prompt_fallback": True,
-            }
-        else:
-            prompt_meta = {"langfuse_prompt": prompt_obj}
-
-    cfg: RunnableConfig = dict(config) if config else {}
-    existing_meta = dict(cfg.get("metadata") or {})
-    existing_meta.update(prompt_meta)
-    cfg["metadata"] = existing_meta
-    return cfg
+# Canonical 10-node StateGraph built via unified engine
+classifier = OpenAIClassifierAdapter()
+agent_graph = create_agentic_rag_graph(classifier)
 
 
+def build_graph():
+    return create_agentic_rag_graph(OpenAIClassifierAdapter())
+
+
+def ask(
+    question: str,
+    *,
+    session_id: str | None = None,
+    user_id: str | None = None,
+    metadata: dict | None = None,
+    tags: list[str] | None = None,
+    callback: Any | None = None,
+) -> dict:
+    target_graph = globals().get("agent_graph", agent_graph)
+    return engine_ask(
+        question,
+        workflow="fix_single_llm",
+        graph=target_graph,
+        session_id=session_id,
+        user_id=user_id,
+        metadata=metadata,
+        tags=tags,
+        callback=callback,
+    )
+
+
+# Backward-compatibility node functions
 def route_question(state: AgentState, config: RunnableConfig | None = None):
     structlog.contextvars.bind_contextvars(step="route_question")
     router = llm().with_structured_output(RouteDecision, method="json_mode")
@@ -72,7 +78,11 @@ def route_question(state: AgentState, config: RunnableConfig | None = None):
     prompt = prompt_obj.compile(question=state["question"])
     run_cfg = _build_prompt_config(prompt_obj, config)
     decision = cast(RouteDecision, router.invoke(prompt, config=run_cfg))
-    return {"current_query": state['question'], "source_used": decision.route, "trace": [f"Router → {decision.route.upper()}"] }
+    return {
+        "current_query": state["question"],
+        "source_used": decision.route,
+        "trace": [f"Router → {decision.route.upper()}"],
+    }
 
 
 def route_after_router(state: AgentState) -> Literal["retrieve_kb", "direct_answer"]:
@@ -92,7 +102,10 @@ def retrieve_kb(state: AgentState, config: RunnableConfig | None = None):
 def grade_kb_2(state: AgentState, config: RunnableConfig | None = None):
     structlog.contextvars.bind_contextvars(step="grade_kb")
     grader = llm().with_structured_output(EvidenceGrade, method="json_mode")
-    context = "\n\n".join(f"Source: {d.metadata.get('source','unknown')}\n{d.page_content}" for d in state["kb_docs"])
+    context = "\n\n".join(
+        f"Source: {d.metadata.get('source', 'unknown')}\n{d.page_content}"
+        for d in state["kb_docs"]
+    )
     prompt_obj = get_workflow_prompt("rag:grade_kb:llm")
     prompt = prompt_obj.compile(
         question=state["question"],
@@ -101,7 +114,7 @@ def grade_kb_2(state: AgentState, config: RunnableConfig | None = None):
     )
     run_cfg = _build_prompt_config(prompt_obj, config)
     grade = cast(EvidenceGrade, grader.invoke(prompt, config=run_cfg))
-    return {"kb_grade": grade.grade, "trace": [f"KB evidence grade → {grade.grade.upper()}"] }
+    return {"kb_grade": grade.grade, "trace": [f"KB evidence grade → {grade.grade.upper()}"]}
 
 
 grade_kb = grade_kb_2
@@ -180,12 +193,12 @@ def rewrite_query_2(state: AgentState, config: RunnableConfig | None = None):
 rewrite_query = rewrite_query_2
 
 
-GENERATION_NODES = {"generate_from_kb", "generate_from_web", "direct_answer"}
-
-
 async def generate_from_kb(state: AgentState, config: RunnableConfig | None = None):
     structlog.contextvars.bind_contextvars(step="generate_from_kb")
-    context = "\n\n".join(f"[Source: {d.metadata.get('source','unknown')}]\n{d.page_content}" for d in state["kb_docs"])
+    context = "\n\n".join(
+        f"[Source: {d.metadata.get('source', 'unknown')}]\n{d.page_content}"
+        for d in state["kb_docs"]
+    )
     prompt_obj = get_workflow_prompt("rag:generate_kb")
     prompt = prompt_obj.compile(
         question=state["question"],
@@ -254,94 +267,3 @@ def insufficient(state: AgentState):
         "retrieved_contexts": [],
         "trace": ["Stopped → insufficient reliable evidence"],
     }
-
-
-def build_graph():
-    graph = StateGraph(AgentState)
-    for name, fn in {
-        "route_question": route_question,
-        "retrieve_kb": retrieve_kb,
-        "grade_kb": grade_kb_2,
-        "search_web": search_web,
-        "grade_web": grade_web_2,
-        "rewrite_query": rewrite_query_2,
-        "generate_from_kb": generate_from_kb,
-        "generate_from_web": generate_from_web,
-        "direct_answer": direct_answer,
-        "insufficient": insufficient,
-    }.items():
-        graph.add_node(name, fn)
-
-    graph.add_edge(START, "route_question")
-    graph.add_conditional_edges("route_question", route_after_router, {
-        "retrieve_kb": "retrieve_kb", "direct_answer": "direct_answer"
-    })
-    graph.add_edge("retrieve_kb", "grade_kb")
-    graph.add_conditional_edges("grade_kb", after_kb, {
-        "generate_from_kb": "generate_from_kb", "search_web": "search_web"
-    })
-    graph.add_edge("search_web", "grade_web")
-    graph.add_conditional_edges("grade_web", after_web, {
-        "generate_from_web": "generate_from_web", "rewrite_query": "rewrite_query", "insufficient": "insufficient"
-    })
-    graph.add_edge("rewrite_query", "retrieve_kb")
-    graph.add_edge("generate_from_kb", END)
-    graph.add_edge("generate_from_web", END)
-    graph.add_edge("direct_answer", END)
-    graph.add_edge("insufficient", END)
-    compiled = graph.compile()
-    return wrap_safe_invoke(compiled)
-
-
-agent_graph = build_graph()
-
-
-def ask(
-    question: str,
-    *,
-    session_id: str | None = None,
-    user_id: str | None = None,
-    metadata: dict | None = None,
-    tags: list[str] | None = None,
-    callback: Any | None = None,
-) -> dict:
-    context: dict[str, Any] = {"workflow": "fix_single_llm"}
-    if session_id:
-        context["session_id"] = session_id
-    if user_id:
-        context["user_id"] = user_id
-
-    extracted_tid = (
-        extract_trace_id(callback)
-        or (metadata.get("trace_id") if isinstance(metadata, dict) else None)
-        or structlog.contextvars.get_contextvars().get("trace_id")
-    )
-    if extracted_tid:
-        context["trace_id"] = extracted_tid
-
-    structlog.contextvars.bind_contextvars(**context)
-
-    initial: AgentState = {
-        "question": question,
-        "current_query": "",
-        "kb_docs": [],
-        "web_results": "",
-        "kb_grade": "",
-        "web_grade": "",
-        "answer": "",
-        "source_used": "",
-        "retry_count": 0,
-        "trace": [],
-        "citations": [],
-        "retrieved_contexts": [],
-    }
-    if extracted_tid:
-        initial["trace_id"] = extracted_tid
-    config: dict[str, Any] = {}
-    if callback:
-        config["callbacks"] = [callback]
-    if tags:
-        config["tags"] = tags
-    if metadata:
-        config["metadata"] = metadata
-    return agent_graph.invoke(initial, config=config if config else None)
