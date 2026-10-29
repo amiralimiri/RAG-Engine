@@ -1,5 +1,6 @@
 """Web search tool wrapping Tavily for LangChain and LangGraph agents."""
 
+import inspect
 from typing import Any
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import BaseTool
@@ -87,7 +88,7 @@ def create_web_search_tool(
             include_raw_content=False,
         )
 
-    def _run(query: str, config: RunnableConfig | None = None) -> tuple[str, dict[str, Any]]:
+    def _run(query: str, config: RunnableConfig = None) -> tuple[str, dict[str, Any]]:
         structlog.contextvars.bind_contextvars(step="search_web")
         client = _get_active_client()
         result = client.invoke({"query": query}, config=config)
@@ -97,11 +98,15 @@ def create_web_search_tool(
         }
         return _format_search_results(result), artifact
 
-    async def _arun(query: str, config: RunnableConfig | None = None) -> tuple[str, dict[str, Any]]:
+    async def _arun(query: str, config: RunnableConfig = None) -> tuple[str, dict[str, Any]]:
         structlog.contextvars.bind_contextvars(step="search_web")
         client = _get_active_client()
         if hasattr(client, "ainvoke"):
-            result = await client.ainvoke({"query": query}, config=config)
+            maybe_coro = client.ainvoke({"query": query}, config=config)
+            if inspect.isawaitable(maybe_coro):
+                result = await maybe_coro
+            else:
+                result = client.invoke({"query": query}, config=config)
         else:
             result = client.invoke({"query": query}, config=config)
         artifact = {

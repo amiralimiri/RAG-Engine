@@ -1,5 +1,6 @@
 """Knowledge base retrieval tool for LangChain and LangGraph agents."""
 
+import inspect
 from typing import Any
 from langchain_core.documents import Document
 from langchain_core.runnables import RunnableConfig
@@ -55,7 +56,7 @@ def create_retriever_tool(
         from app.rag.vectorstore import get_retriever
         return get_retriever()
 
-    def _run(query: str, config: RunnableConfig | None = None) -> tuple[str, dict[str, Any]]:
+    def _run(query: str, config: RunnableConfig = None) -> tuple[str, dict[str, Any]]:
         structlog.contextvars.bind_contextvars(step="retrieve_kb")
         active = _get_active_retriever()
         docs = active.invoke(query, config=config)
@@ -67,11 +68,15 @@ def create_retriever_tool(
         }
         return _format_docs(docs), artifact
 
-    async def _arun(query: str, config: RunnableConfig | None = None) -> tuple[str, dict[str, Any]]:
+    async def _arun(query: str, config: RunnableConfig = None) -> tuple[str, dict[str, Any]]:
         structlog.contextvars.bind_contextvars(step="retrieve_kb")
         active = _get_active_retriever()
         if hasattr(active, "ainvoke"):
-            docs = await active.ainvoke(query, config=config)
+            maybe_coro = active.ainvoke(query, config=config)
+            if inspect.isawaitable(maybe_coro):
+                docs = await maybe_coro
+            else:
+                docs = active.invoke(query, config=config)
         else:
             docs = active.invoke(query, config=config)
         docs = docs or []

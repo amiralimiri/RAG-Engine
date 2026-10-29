@@ -1,7 +1,9 @@
+import inspect
 from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from langchain_core.documents import Document
 from langchain_core.messages import AIMessage
+from langchain_core.tools import BaseTool
 import structlog
 
 from app.rag.classifiers import FakeClassifierAdapter
@@ -225,3 +227,131 @@ def test_ask_jev_workflow(mock_llm_and_web, fake_retriever):
         result = ask("Hello direct", workflow="fix_single_jev")
     assert result["source_used"] == "direct"
     assert result["answer"] == "Generated response"
+
+
+@pytest.mark.asyncio
+async def test_create_agentic_rag_graph_accepts_injected_kb_and_web_tools(mock_llm_and_web):
+    custom_kb_tool = MagicMock(spec=BaseTool)
+    custom_kb_doc = Document(page_content="Injected KB content", metadata={"source": "injected/kb.md"})
+    custom_kb_tool.ainvoke = AsyncMock(
+        return_value=(
+            "[Source: injected/kb.md]\nInjected KB content",
+            {
+                "documents": [custom_kb_doc],
+                "citations": [{"title": "kb.md", "url": "", "type": "private_kb"}],
+            },
+        )
+    )
+
+    custom_web_tool = MagicMock(spec=BaseTool)
+    custom_web_tool.ainvoke = AsyncMock(
+        return_value=(
+            "Web search snippet",
+            {
+                "citations": [{"title": "Web Title", "url": "https://example.com", "type": "web"}],
+                "retrieved_contexts": ["Title: Web Title\nURL: https://example.com\nContent: Web snippet"],
+            },
+        )
+    )
+
+    classifier = FakeClassifierAdapter(route_decision="kb", kb_grade="good")
+    graph = create_agentic_rag_graph(classifier, kb_tool=custom_kb_tool, web_tool=custom_web_tool)
+
+    result = await graph.ainvoke({"question": "How to do something?", "retry_count": 0})
+    custom_kb_tool.ainvoke.assert_awaited_once()
+    assert result["kb_docs"] == [custom_kb_doc]
+    assert result["retrieved_contexts"] == ["Injected KB content"]
+    assert result["citations"] == [{"title": "kb.md", "url": "", "type": "private_kb"}]
+
+
+@pytest.mark.asyncio
+async def test_create_agentic_rag_graph_injected_web_tool_fallback(mock_llm_and_web):
+    custom_kb_tool = MagicMock(spec=BaseTool)
+    custom_kb_tool.ainvoke = AsyncMock(
+        return_value=("No docs", {"documents": [], "citations": []})
+    )
+
+    custom_web_tool = MagicMock(spec=BaseTool)
+    custom_web_tool.ainvoke = AsyncMock(
+        return_value=(
+            "Injected web snippet",
+            {
+                "citations": [{"title": "Custom Web", "url": "https://custom.com", "type": "web"}],
+                "retrieved_contexts": ["Title: Custom Web\nURL: https://custom.com\nContent: Injected web snippet"],
+            },
+        )
+    )
+
+    classifier = FakeClassifierAdapter(route_decision="kb", kb_grade="weak", web_grade="good")
+    graph = create_agentic_rag_graph(classifier, kb_tool=custom_kb_tool, web_tool=custom_web_tool)
+
+    result = await graph.ainvoke({"question": "Need external info", "retry_count": 0})
+    custom_web_tool.ainvoke.assert_awaited_once()
+    assert result["source_used"] == "web_search"
+    assert result["web_results"] == "Injected web snippet"
+    assert result["citations"] == [{"title": "Custom Web", "url": "https://custom.com", "type": "web"}]
+    assert result["retrieved_contexts"] == [
+        "Title: Custom Web\nURL: https://custom.com\nContent: Injected web snippet"
+    ]
+
+
+def test_graph_nodes_are_native_async_coroutines():
+    import functools
+    classifier = FakeClassifierAdapter()
+    graph = create_agentic_rag_graph(classifier)
+    retrieve_kb_node = graph.nodes["retrieve_kb"]
+    search_web_node = graph.nodes["search_web"]
+
+    assert retrieve_kb_node.bound.func is None, "retrieve_kb must not have a sync fallback runner"
+    assert not isinstance(retrieve_kb_node.bound.afunc, functools.partial), "retrieve_kb must not be wrapped in run_in_executor"
+    assert inspect.iscoroutinefunction(retrieve_kb_node.bound.afunc), "retrieve_kb afunc must be a coroutine function"
+
+    assert search_web_node.bound.func is None, "search_web must not have a sync fallback runner"
+    assert not isinstance(search_web_node.bound.afunc, functools.partial), "search_web must not be wrapped in run_in_executor"
+    assert inspect.iscoroutinefunction(search_web_node.bound.afunc), "search_web afunc must be a coroutine function"
+
+
+@pytest.mark.asyncio
+async def test_graph_async_streaming_events_retrieve_and_search(mock_llm_and_web):
+    custom_kb_tool = MagicMock(spec=BaseTool)
+    custom_kb_doc = Document(page_content="Async streaming KB doc", metadata={"source": "streaming.md"})
+    custom_kb_tool.ainvoke = AsyncMock(
+        return_value=(
+            "[Source: streaming.md]\nAsync streaming KB doc",
+            {"documents": [custom_kb_doc], "citations": [{"title": "streaming.md", "url": "", "type": "private_kb"}]},
+        )
+    )
+
+    classifier = FakeClassifierAdapter(route_decision="kb", kb_grade="good")
+    graph = create_agentic_rag_graph(classifier, kb_tool=custom_kb_tool)
+
+    events = []
+    async for event in graph.astream_events({"question": "Streaming test", "retry_count": 0}, version="v2"):
+        events.append(event)
+
+    node_names = [
+        e.get("metadata", {}).get("langgraph_node")
+        for e in events
+        if e.get("event") in ("on_chain_start", "on_chain_end")
+    ]
+    assert "retrieve_kb" in node_names
+
+
+@pytest.mark.asyncio
+async def test_backward_compatibility_legacy_retriever_without_kb_tool(mock_llm_and_web):
+    mock_ret = MagicMock()
+    mock_ret.ainvoke = AsyncMock(return_value=[
+        Document(page_content="Legacy retriever doc", metadata={"source": "legacy.md"})
+    ])
+    mock_ret.invoke.return_value = [
+        Document(page_content="Legacy retriever doc", metadata={"source": "legacy.md"})
+    ]
+
+    classifier = FakeClassifierAdapter(route_decision="kb", kb_grade="good")
+    graph = create_agentic_rag_graph(classifier, retriever=mock_ret)
+
+    result = await graph.ainvoke({"question": "Legacy retriever test", "retry_count": 0})
+    assert len(result["kb_docs"]) == 1
+    assert result["kb_docs"][0].page_content == "Legacy retriever doc"
+    assert result["citations"] == [{"title": "legacy.md", "url": "", "type": "private_kb"}]
+    assert result["retrieved_contexts"] == ["Legacy retriever doc"]

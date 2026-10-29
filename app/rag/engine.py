@@ -1,7 +1,9 @@
+import inspect
 import logging
 from typing import Any, Literal, cast
 
 from langchain_core.runnables import RunnableConfig
+from langchain_core.tools import BaseTool
 from langchain_openai import ChatOpenAI
 from langchain_tavily import TavilySearch
 from langgraph.graph import END, START, StateGraph
@@ -12,6 +14,7 @@ from app.core.config import get_settings
 from app.core.telemetry import extract_trace_id
 from app.rag.classifiers import WorkflowClassifier, _build_prompt_config
 from app.rag.state import AgentState
+from app.rag.tools import create_retriever_tool, create_web_search_tool
 from app.rag.vectorstore import get_retriever
 from app.services.prompts import get_workflow_prompt
 
@@ -30,6 +33,21 @@ __all__ = [
 ]
 
 
+def _unpack_tool_output(raw_output: Any) -> tuple[str, dict[str, Any]]:
+    if isinstance(raw_output, tuple) and len(raw_output) == 2:
+        content, artifact = raw_output
+    elif hasattr(raw_output, "artifact") and raw_output.artifact:
+        content, artifact = raw_output.content, raw_output.artifact
+    else:
+        content, artifact = str(raw_output), {}
+
+    if not isinstance(content, str):
+        content = str(content)
+    if not isinstance(artifact, dict):
+        artifact = {}
+    return content, artifact
+
+
 def llm():
     global _llm
     if _llm is None:
@@ -44,18 +62,22 @@ def llm():
     return _llm
 
 
-def web_search_tool():
+def _default_web_search_tool():
     global _web_search
     if _web_search is None:
         settings = get_settings()
+        api_key = settings.tavily_api_key.get_secret_value() if settings.tavily_api_key else ""
         _web_search = TavilySearch(
-            tavily_api_key=settings.tavily_api_key.get_secret_value(),
+            tavily_api_key=api_key,
             max_results=5,
             topic="general",
             include_answer=True,
             include_raw_content=False,
         )
     return _web_search
+
+
+web_search_tool = _default_web_search_tool
 
 
 def route_after_router(state: AgentState) -> Literal["retrieve_kb", "direct_answer"]:
@@ -66,10 +88,12 @@ def retrieve_kb(state: AgentState, config: RunnableConfig | None = None, retriev
     structlog.contextvars.bind_contextvars(step="retrieve_kb")
     active_retriever = retriever if retriever is not None else get_retriever()
     docs = active_retriever.invoke(state["current_query"], config=config)
+    from app.rag.tools.retriever import _extract_citations
     return {
         "kb_docs": docs,
-        "retrieved_contexts": [d.page_content for d in docs],
-        "trace": [f"Private KB retrieval → {len(docs)} chunks"],
+        "retrieved_contexts": [d.page_content for d in docs] if docs else [],
+        "citations": _extract_citations(docs or []),
+        "trace": [f"Private KB retrieval → {len(docs or [])} chunks"],
     }
 
 
@@ -80,24 +104,12 @@ def after_kb(state: AgentState) -> Literal["generate_from_kb", "search_web"]:
 def search_web(state: AgentState, config: RunnableConfig | None = None):
     structlog.contextvars.bind_contextvars(step="search_web")
     result = web_search_tool().invoke({"query": state["current_query"]}, config=config)
-    lines, citations = [], []
-    web_contexts = []
-    if isinstance(result, dict):
-        if result.get("answer"):
-            lines.append("Search answer: " + result["answer"])
-        for item in result.get("results", []):
-            title, url, content = item.get("title", ""), item.get("url", ""), item.get("content", "")
-            lines.append(f"Title: {title}\nURL: {url}\nContent: {content}")
-            citations.append({"title": title or url, "url": url, "type": "web"})
-            web_contexts.append(f"Title: {title}\nURL: {url}\nContent: {content}")
-    else:
-        lines.append(str(result))
-        web_contexts.append(str(result))
+    from app.rag.tools.search import _extract_web_citations, _extract_web_contexts, _format_search_results
     return {
-        "web_results": "\n\n".join(lines),
-        "citations": citations,
+        "web_results": _format_search_results(result),
+        "citations": _extract_web_citations(result),
         "source_used": "web",
-        "retrieved_contexts": web_contexts,
+        "retrieved_contexts": _extract_web_contexts(result),
         "trace": ["Web fallback → Tavily search"],
     }
 
@@ -138,13 +150,15 @@ async def generate_from_kb(state: AgentState, config: RunnableConfig | None = No
     run_cfg = _build_prompt_config(prompt_obj, config)
     response = await llm().ainvoke(prompt, config=run_cfg)
     answer = response.content if hasattr(response, "content") else str(response)
-    citations = []
-    seen = set()
-    for d in state["kb_docs"]:
-        src = d.metadata.get("source", "Private KB")
-        if src not in seen:
-            seen.add(src)
-            citations.append({"title": src.split("/")[-1], "url": "", "type": "private_kb"})
+    citations = state.get("citations")
+    if not citations:
+        citations = []
+        seen = set()
+        for d in state["kb_docs"]:
+            src = d.metadata.get("source", "Private KB")
+            if src not in seen:
+                seen.add(src)
+                citations.append({"title": src.split("/")[-1], "url": "", "type": "private_kb"})
     retrieved_contexts = state.get("retrieved_contexts")
     if retrieved_contexts is None:
         retrieved_contexts = [d.page_content for d in state.get("kb_docs", [])]
@@ -171,6 +185,7 @@ async def generate_from_web(state: AgentState, config: RunnableConfig | None = N
         "answer": answer,
         "source_used": "web_search",
         "retrieved_contexts": state.get("retrieved_contexts", []),
+        "citations": state.get("citations", []),
         "trace": ["Answer generation → WEB SEARCH"],
     }
 
@@ -203,8 +218,37 @@ def insufficient(state: AgentState):
 def create_agentic_rag_graph(
     classifier: WorkflowClassifier,
     retriever: Any = None,
+    *,
+    kb_tool: BaseTool | None = None,
+    web_tool: BaseTool | None = None,
 ) -> Any:
     """Build and compile the canonical 10-node StateGraph topology."""
+    if kb_tool is not None:
+        active_kb_tool = kb_tool
+    elif retriever is not None:
+        active_kb_tool = create_retriever_tool(retriever=retriever)
+    else:
+        class _LazyRetrieverAdapter:
+            def invoke(self, *args, **kwargs):
+                return get_retriever().invoke(*args, **kwargs)
+
+            async def ainvoke(self, *args, **kwargs):
+                r = get_retriever()
+                if hasattr(r, "ainvoke"):
+                    maybe_coro = r.ainvoke(*args, **kwargs)
+                    if inspect.isawaitable(maybe_coro):
+                        return await maybe_coro
+                return r.invoke(*args, **kwargs)
+
+        active_kb_tool = create_retriever_tool(retriever=_LazyRetrieverAdapter())
+
+    if web_tool is not None:
+        active_web_tool = web_tool
+    else:
+        search_client = None
+        if web_search_tool is not _default_web_search_tool:
+            search_client = web_search_tool()
+        active_web_tool = create_web_search_tool(search_client=search_client)
 
     def node_route_question(state: AgentState, config: RunnableConfig | None = None):
         structlog.contextvars.bind_contextvars(step="route_question")
@@ -215,8 +259,21 @@ def create_agentic_rag_graph(
             "trace": [f"Router → {decision.route.upper()}"],
         }
 
-    def node_retrieve_kb(state: AgentState, config: RunnableConfig | None = None):
-        return retrieve_kb(state, config=config, retriever=retriever)
+    async def node_retrieve_kb(state: AgentState, config: RunnableConfig | None = None) -> dict[str, Any]:
+        structlog.contextvars.bind_contextvars(step="retrieve_kb")
+        raw_output = await active_kb_tool.ainvoke({"query": state["current_query"]}, config=config)
+        content, artifact = _unpack_tool_output(raw_output)
+
+        docs = artifact.get("documents", [])
+        citations = artifact.get("citations", [])
+        retrieved_contexts = [d.page_content for d in docs] if docs else ([content] if content else [])
+
+        return {
+            "kb_docs": docs,
+            "retrieved_contexts": retrieved_contexts,
+            "citations": citations,
+            "trace": [f"Private KB retrieval → {len(docs)} chunks"],
+        }
 
     def node_grade_kb(state: AgentState, config: RunnableConfig | None = None):
         structlog.contextvars.bind_contextvars(step="grade_kb")
@@ -229,6 +286,24 @@ def create_agentic_rag_graph(
         return {
             "kb_grade": grade.grade,
             "trace": [f"KB evidence grade → {grade.grade.upper()}"],
+        }
+
+    async def node_search_web(state: AgentState, config: RunnableConfig | None = None) -> dict[str, Any]:
+        structlog.contextvars.bind_contextvars(step="search_web")
+        raw_output = await active_web_tool.ainvoke({"query": state["current_query"]}, config=config)
+        content, artifact = _unpack_tool_output(raw_output)
+
+        citations = artifact.get("citations", [])
+        contexts = artifact.get("retrieved_contexts", [])
+        if not contexts and content:
+            contexts = [content]
+
+        return {
+            "web_results": content,
+            "citations": citations,
+            "source_used": "web",
+            "retrieved_contexts": contexts,
+            "trace": ["Web fallback → Tavily search"],
         }
 
     def node_grade_web(state: AgentState, config: RunnableConfig | None = None):
@@ -249,7 +324,7 @@ def create_agentic_rag_graph(
         "route_question": node_route_question,
         "retrieve_kb": node_retrieve_kb,
         "grade_kb": node_grade_kb,
-        "search_web": search_web,
+        "search_web": node_search_web,
         "grade_web": node_grade_web,
         "rewrite_query": rewrite_query,
         "generate_from_kb": generate_from_kb,
