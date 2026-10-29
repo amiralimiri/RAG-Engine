@@ -45,3 +45,6 @@ Guidelines and patterns established in ADR-0011 (Comprehensive Codebase Unificat
 3. **Purge Compatibility Assertions**:
    - Do not write tests that exist solely to assert backward-compatibility shims, AST structure of deleted files, or obsolete synchronous functions.
    - Focus unit and contract tests on domain contracts, protocol conformance, token accounting, and streaming correctness.
+
+4. **Modern Typing Standards**:
+   - Universal adherence to PEP 604 union types (`T | None = None`) across all application domain modules, test doubles, and utility scripts. Avoid legacy `typing.Optional`.
