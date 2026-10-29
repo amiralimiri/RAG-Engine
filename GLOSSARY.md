@@ -39,3 +39,21 @@ Multi-turn conversational tracking correlating user messages under a UUID v4 `se
 
 ### Feedback Score
 A normalized rating float between `0.0` (Thumbs Down / Poor) and `1.0` (Thumbs Up / Helpful) submitted via `POST /api/feedback` to evaluate response quality directly in Langfuse.
+
+### Workflow Definition
+A strongly-typed protocol (`app/rag/workflows/base.py`) defining the lifecycle contract for arbitrary workflow topologies. Encapsulates metadata (`WorkflowInfo`), compiled graph caching, state conversion adapters, streaming node whitelists, and error fallbacks.
+
+### Workflow Registry
+The central thread-safe registry (`app/rag/workflows/registry.py`) managing workflow lifecycles, lazy singleton graph compilation, and dynamic workflow lookup across HTTP and streaming routes.
+
+### State Adapter
+Bidirectional mapping methods (`to_initial_state` and `to_chat_response`) on `WorkflowDefinition` that convert between transport-level API schemas (`ChatRequest`, `ChatResponse`) and workflow-private graph states (e.g. `AgentState` or LangGraph message lists).
+
+### Tool Abstraction Layer
+A collection of reusable LangChain `BaseTool` implementations (`app/rag/tools/`) with typed Pydantic input schemas (`args_schema`) and automatic Langfuse telemetry propagation, consumable by both fixed DAGs and autonomous ReAct agents.
+
+### Evaluation Context
+A normalized data structure (`EvalContext`) extracted from arbitrary workflow states containing `source_used` and `retrieved_contexts`, enabling online evaluation tasks to grade answers across diverse topologies without assuming fixed vectorstore structures.
+
+### Thread ID (Checkpointer Lifecycle)
+The LangGraph configuration key (`configurable: {"thread_id": session_id}`) tying stateful, multi-turn conversational agents to durable in-memory (`MemorySaver`) or external checkpointer storage.

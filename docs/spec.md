@@ -1,161 +1,178 @@
-# Technical Specification: Unified Agentic RAG Workflow Engine & Classifier Seam
+# Technical Specification: Multi-Workflow Extensibility Platform
 
-- **ADR Reference:** `docs/adr/0006-unified-agentic-rag-engine-and-classifier-seam.md`
-- **Specification Document:** `docs/specs/0006-unified-agentic-rag-engine-spec.md`
-- **Target Version:** `0.6.0`
-- **Status:** Completed
-
----
-
-## Problem Statement
-
-The enterprise IT support RAG system maintains two separate LangGraph workflows (`fix_single_llm` and `fix_single_jev`) in isolated files (`app/rag/fix_single_llm.py` and `app/rag/fix_single_jev.py`). Over 85% of the codebase across these two files is identical: they share the exact same 10-node graph topology, state schema, prompt compilation mechanics, web search integration, citations synthesis, and error fallbacks. 
-
-This duplication creates acute architectural friction:
-- Every graph change (such as converting generation nodes to asynchronous invocation for SSE token streaming, or updating telemetry bindings) must be implemented and verified in two places, risking logic drift and divergence.
-- Classifier-specific implementation details—such as TypeSafe JEV heuristic character token estimation and custom Langfuse span creation—leak directly into graph execution nodes rather than being encapsulated.
-- The absence of a formal seam between the workflow topology and decision classifiers prevents future modularity, such as independently swapping vector stores or introducing new routing topologies.
-- API routes in `app/api/routes.py` must manage dual graph dictionaries and branch on workflow names to construct metadata.
+- **ADR Reference:** `docs/adr/0007-multi-workflow-extensibility-platform.md`
+- **Specification Document:** `docs/specs/0007-multi-workflow-extensibility-platform-spec.md`
+- **Target Version:** `0.7.0`
+- **Status:** In Progress
 
 ---
 
-## Solution
+## 1. Problem Statement
 
-Consolidate the duplicated workflow backends into a single, deep **Workflow Engine** (`app/rag/engine.py`) backed by an explicit **Workflow Classifier** seam (`app/rag/classifiers.py`). 
+Following ADR 0006, the self-corrective RAG engine consolidated its 10-node topology and established the `WorkflowClassifier` seam (`app/rag/classifiers.py`), allowing both `fix_single_llm` and `fix_single_jev` to share graph definitions.
 
-The new architecture:
-1. Establishes a strongly-typed `WorkflowClassifier` protocol defining discrete synchronous methods for `route`, `grade_kb`, and `grade_web`.
-2. Implements two pluggable adapters: `OpenAIClassifierAdapter` (structured JSON outputs) and `JevClassifierAdapter` (TypeSafe Classifier with fully encapsulated token accounting and Langfuse observation creation).
-3. Consolidates the complete LangGraph topology into `app/rag/engine.py` with an adapter-injected factory `create_agentic_rag_graph(classifier, retriever=None)` and a unified execution interface `ask()`.
-4. Leaves `fix_single_llm.py` and `fix_single_jev.py` as lightweight backward-compatibility shims (~10 lines each) exporting pre-wired graph instances, ensuring all existing routes, frontend interactions, and 260 tests pass without modification.
-5. Adds an optional `retriever` parameter to the graph compiler, cleanly paving the way for Candidate 4 (swappable vector knowledge stores).
+However, the architecture remains rigidly coupled to a single fixed-graph topology:
+1. **Module-Level Routing Coupling**: `app/api/routes.py` hardcodes module-level dictionaries (`WORKFLOW_ASKS`, `WORKFLOW_GRAPHS`), generation node names (`GENERATION_NODES`), and step labels (`STEP_LABELS`).
+2. **Monolithic State Schema**: The execution runtime explicitly assumes all workflows run on `AgentState` (`kb_docs`, `web_grade`, `retry_count`, `citations`), preventing developers from introducing conversational ReAct agents, multi-turn chat agents with memory, or multimodal pipelines.
+3. **Hardwired Tool Invocations**: Knowledge base retrieval (`retrieve_kb`) and search (`search_web`) are bespoke graph functions in `engine.py`, unavailable as structured `BaseTool` instances for autonomous tool-calling agents.
+4. **Single-Turn API Contract**: `ChatRequest` only accepts a single `question: str`, omitting conversational history (`messages`) or attachments.
+5. **Streaming Leakage**: SSE token streaming assumes every workflow emits text directly from three fixed generation nodes, leaking raw JSON tool-calling deltas to the frontend when autonomous agents invoke tools.
 
----
-
-## User Stories
-
-1. As an enterprise IT support user, I want the assistant to answer questions using private knowledge, web fallback, or direct responses identically regardless of which classifier is active, so that my support experience remains consistent.
-2. As a frontend client developer, I want `GET /api/workflows`, `POST /api/chat`, and `POST /api/chat/stream` to continue supporting `"fix_single_llm"` and `"fix_single_jev"`, so that UI selectors and chat streams require zero client-side modifications.
-3. As a backend engineer, I want the 10-step LangGraph topology defined in exactly one place, so that improvements to query rewriting, search, or generation automatically apply across all workflow backends.
-4. As a backend engineer, I want classifier-specific logic (e.g. TypeSafe JEV custom span recording and token heuristics) encapsulated inside its adapter, so that LangGraph execution nodes contain zero vendor-specific branching.
-5. As an LLMOps engineer, I want request traces in Langfuse to retain their existing trace names, metadata, and span hierarchies for both `fix_single_llm` and `fix_single_jev`, so that historical telemetry dashboards and cost analytics remain unbroken.
-6. As a QA engineer, I want existing test suites (`test_chat_stream.py`, `test_frontend_streaming.py`, `test_jev_telemetry.py`, `test_llm_telemetry.py`) to continue passing without signature breaks, so that regression risks are eliminated.
-7. As a backend engineer, I want to test the entire LangGraph workflow in memory using a lightweight fake classifier adapter, so that graph flow tests can run in milliseconds without network calls or API keys.
-8. As a backend engineer, I want `create_agentic_rag_graph` to accept an optional retriever argument, so that future work can inject an in-memory knowledge store adapter without breaking graph construction.
-9. As an evaluation runner, I want `evaluation/run_experiment.py` to benchmark both `fix_single_llm` and `fix_single_jev` through the same unified engine interface, so that comparative accuracy metrics reflect only classifier performance differences.
-10. As a maintenance engineer, I want prompt compilation and template fallback logic consolidated into shared helpers, so that prompt updates in the Langfuse Prompt CMS bind reliably across all nodes.
-11. As a systems architect, I want `app/rag/fix_single_llm.py` and `app/rag/fix_single_jev.py` reduced to thin declarative shims, so that deletion and deprecation paths are straightforward in the future.
-12. As an observability engineer, I want active LangGraph execution steps (`retrieve_kb`, `grade_kb`, `search_web`, etc.) bound to `structlog.contextvars` in one consolidated place, so that structured logs maintain complete context propagation.
+To support rapid development of new agentic workflows, the platform must provide an open-closed architecture where workflows encapsulate their own state schemas, graph compilation, tool bindings, streaming filters, and evaluation extractors.
 
 ---
 
-## Implementation Decisions
+## 2. Architectural Solution
 
-### 1. Classifier Seam Protocol (`app/rag/classifiers.py`)
-- Define `WorkflowClassifier` as a `typing.Protocol` with runtime checkability:
-  ```python
-  class WorkflowClassifier(Protocol):
-      def route(
-          self,
-          question: str,
-          config: RunnableConfig | None = None,
-      ) -> RouteDecision: ...
+Establish an extensible multi-workflow architecture comprised of five foundational modules:
 
-      def grade_kb(
-          self,
-          question: str,
-          current_query: str,
-          kb_docs: list[Document],
-          config: RunnableConfig | None = None,
-      ) -> EvidenceGrade: ...
-
-      def grade_web(
-          self,
-          question: str,
-          current_query: str,
-          web_results: str,
-          config: RunnableConfig | None = None,
-      ) -> EvidenceGrade: ...
-  ```
-- All protocol methods are synchronous (`def`), matching underlying SDK calls and avoiding superfluous event loop hops.
-- Return types strictly adhere to existing Pydantic models from `app.rag.state` (`RouteDecision` with `.route`, `EvidenceGrade` with `.grade`).
-
-### 2. Concrete Classifier Adapters (`app/rag/classifiers.py`)
-- **`OpenAIClassifierAdapter`**:
-  - Lazily initializes `ChatOpenAI(temperature=0, stream_usage=True)` via configured model settings.
-  - Compiles prompts using `get_workflow_prompt("rag:router:llm")`, `get_workflow_prompt("rag:grade_kb:llm")`, and `get_workflow_prompt("rag:grade_web:llm")`.
-  - Uses `with_structured_output(..., method="json_mode")`.
-  - Merges prompt observation metadata via `_build_prompt_config`.
-- **`JevClassifierAdapter`**:
-  - Lazily initializes `TypeSafeClassifier`.
-  - Compiles prompts using `rag:router:jev`, `rag:grade_kb:jev`, and `rag:grade_web:jev`.
-  - Evaluates decisions using `Choice` criteria.
-  - Fully absorbs `_estimate_jev_tokens()` and `_record_jev_generation()`, publishing custom generation spans and token costs to Langfuse directly within the adapter.
-
-### 3. Deep Workflow Engine (`app/rag/engine.py`)
-- Consolidates the complete 10-node StateGraph topology:
-  - `route_question` (invokes `classifier.route`)
-  - `retrieve_kb` (invokes `retriever.invoke`)
-  - `grade_kb` (invokes `classifier.grade_kb`)
-  - `search_web` (invokes `web_search_tool`)
-  - `grade_web` (invokes `classifier.grade_web`)
-  - `rewrite_query` (invokes `llm().ainvoke`)
-  - `generate_from_kb` (async def, invokes `llm().ainvoke`)
-  - `generate_from_web` (async def, invokes `llm().ainvoke`)
-  - `direct_answer` (async def, invokes `llm().ainvoke`)
-  - `insufficient` (static terminal node)
-- Generation nodes remain `async def` to guarantee streaming token propagation (`on_chat_model_stream`) in `astream_events(version="v2")`.
-- Exposes:
-  - `create_agentic_rag_graph(classifier: WorkflowClassifier, retriever: Any = None) -> Any`
-  - `ask(question: str, workflow: str = "fix_single_llm", session_id: str | None = None, user_id: str | None = None, metadata: dict[str, Any] | None = None, callback: Any = None) -> dict[str, Any]`
-
-### 4. Backward-Compatibility Shims
-- `app/rag/fix_single_llm.py`:
-  - Instantiates `OpenAIClassifierAdapter()`.
-  - Builds `agent_graph = create_agentic_rag_graph(OpenAIClassifierAdapter())`.
-  - Re-exports `ask()` pre-bound to `workflow="fix_single_llm"`.
-- `app/rag/fix_single_jev.py`:
-  - Instantiates `JevClassifierAdapter()`.
-  - Builds `agent_graph = create_agentic_rag_graph(JevClassifierAdapter())`.
-  - Re-exports `ask()` pre-bound to `workflow="fix_single_jev"`.
-
-### 5. API Routes Alignment (`app/api/routes.py`)
-- Routes continue to consume `WORKFLOW_ASKS` and `WORKFLOW_GRAPHS` referencing `fix_single_llm` and `fix_single_jev`.
-- Telemetry bindings, streaming generators, and error handling remain completely intact.
+1. **`app/rag/workflows/base.py` (`WorkflowDefinition` & `WorkflowInfo`)**:
+   - A runtime-checkable `Protocol` defining the workflow lifecycle contract: metadata, graph retrieval, bidirectional state conversion, evaluation context extraction, and error fallback handling.
+2. **`app/rag/workflows/registry.py` (`WorkflowRegistry`)**:
+   - A thread-safe registry providing lazy graph compilation, singleton caching, workflow discovery, and optional startup pre-warming.
+3. **`app/rag/tools/` (Modular Tool Abstraction Layer)**:
+   - Standalone LangChain `BaseTool` factories with structured Pydantic `args_schema` (`KnowledgeSearchInput`, `WebSearchInput`) and automatic Langfuse telemetry propagation.
+4. **`app/rag/workflows/self_corrective.py` (`SelfCorrectiveRagWorkflow`)**:
+   - A single parameterized workflow class hosting both `fix_single_llm` and `fix_single_jev` via their respective ADR 0006 classifier adapters.
+5. **`app/rag/workflows/react_agent.py` (`ReActAgentWorkflow`)**:
+   - A reference autonomous tool-calling agent using `langgraph.prebuilt.create_react_agent` with in-memory checkpointer persistence (`MemorySaver`) via `session_id` -> `thread_id` mapping.
+6. **Transport Layer Modernization (`app/api/routes.py` & `app/api/schemas.py`)**:
+   - Additive `ChatRequest` fields (`messages`, `attachments`), enriched `GET /api/workflows` capability introspection, and tool-call token filtering in the SSE stream generator.
+7. **Conformance Test Harness (`tests/rag/test_workflow_contracts.py`)**:
+   - A reusable `BaseWorkflowContractTest` class guaranteeing compliance with state adaptation, telemetry, and error-handling standards.
 
 ---
 
-## Testing Decisions
+## 3. User Stories
 
-### Seam Strategy
-- **Primary Seam**: The `WorkflowClassifier` protocol in `app/rag/classifiers.py`.
-  - Tests can substitute a `FakeClassifierAdapter` to verify all graph routing branches (direct answer, KB retrieval, web search fallback, query rewrite loops, insufficient evidence) deterministically without calling OpenAI or TypeSafe APIs.
-- **Workflow Seam**: The `ask()` interface and `agent_graph.astream_events()` in `app/rag/engine.py`.
-  - Verifies that state transitions, citations formatting, contextvars binding, and token streaming operate identically across both adapter configurations.
-- **Compatibility Seam**: The re-exported entry points in `app/rag/fix_single_llm.py` and `app/rag/fix_single_jev.py`.
-  - Ensures the existing 260 tests pass with zero modification.
-
-### Good Test Principles
-- Test external observable behavior (returned answers, sources used, citation links, trace steps, emitted SSE events) rather than private node closures.
-- Ensure telemetry callbacks receive identical observation tags and trace metadata under the refactored engine.
-
-### Prior Art
-- `tests/test_chat_stream.py`: Full SSE streaming verification across workflows.
-- `tests/test_llm_telemetry.py` & `tests/test_jev_telemetry.py`: Specific callback and cost recording assertions.
-- `tests/test_e2e_observability.py`: Complete API-level integration tests.
+1. **As a backend developer**, I want to create a new workflow by subclassing or implementing `WorkflowDefinition`, so that I can add new agent topologies without modifying FastAPI transport routes or existing workflows.
+2. **As an agent developer**, I want to use standard LangChain tools (`retriever_tool`, `web_search_tool`) inside dynamic ReAct agents, so that I don't have to reimplement search or telemetry logic.
+3. **As a frontend developer**, I want `GET /api/workflows` to return rich capabilities metadata (name, description, conversational flag, step labels), so that the UI can dynamically configure its chat interface and step spinners.
+4. **As an enterprise user**, I want multi-turn conversations with the ReAct agent to remember previous context within the same `session_id`, without needing to resend the entire message history every turn.
+5. **As an API consumer**, I want existing requests to `POST /api/chat` and `POST /api/chat/stream` with `workflow="fix_single_llm"` and `workflow="fix_single_jev"` to function with zero breaking changes.
+6. **As a streaming client**, I want tool-calling reasoning tokens (JSON function arguments) filtered out of the SSE `token` stream, so that only user-facing conversational text is rendered in the chat bubble.
+7. **As an LLMOps engineer**, I want online evaluation (`run_online_evaluation_task`) to evaluate any workflow through a standardized `extract_eval_context()` hook, ensuring metrics are recorded without key errors.
+8. **As a QA engineer**, I want to run `BaseWorkflowContractTest` against any new workflow, ensuring that all state adapters, fallbacks, and schema guarantees are validated automatically in CI.
 
 ---
 
-## Out of Scope
+## 4. Detailed Component Design
 
-- Implementing the pluggable vector store / in-memory store adapter (Candidate 4). This spec only adds the parameter hook (`retriever: Any = None`) to prepare for it.
-- Modifying prompt texts in `LOCAL_PROMPTS` or Langfuse Prompt CMS.
-- Changing frontend UI components or CSS styles.
-- Altering the evaluation engine (`app/services/evaluation.py`, Candidate 2) or ingestion pipeline (`app/services/ingestion.py`, Candidate 3).
+### 4.1. Core Protocol & Schemas (`app/rag/workflows/base.py`)
+
+```python
+from typing import Any, Protocol, runtime_checkable
+from pydantic import BaseModel, Field
+from app.api.schemas import ChatRequest, ChatResponse
+
+class WorkflowInfo(BaseModel):
+    id: str
+    name: str
+    description: str
+    is_conversational: bool = False
+    supports_streaming: bool = True
+    step_labels: dict[str, str] = Field(default_factory=dict)
+    generation_nodes: set[str] = Field(default_factory=set)
+
+class EvalContext(BaseModel):
+    source_used: str = "direct"
+    retrieved_contexts: list[str] = Field(default_factory=list)
+
+@runtime_checkable
+class WorkflowDefinition(Protocol):
+    info: WorkflowInfo
+
+    def get_compiled_graph(self) -> Any:
+        """Return the compiled, thread-safe LangGraph runnable."""
+        ...
+
+    def to_initial_state(self, request: ChatRequest, trace_id: str | None = None) -> dict[str, Any]:
+        """Convert an incoming API ChatRequest into internal workflow graph state."""
+        ...
+
+    def to_chat_response(self, final_state: dict[str, Any], trace_id: str | None = None) -> ChatResponse:
+        """Convert the internal final graph state into a normalized ChatResponse."""
+        ...
+
+    def extract_eval_context(self, final_state: dict[str, Any]) -> EvalContext:
+        """Extract evidence contexts and source used for online evaluation."""
+        ...
+
+    def handle_error(self, exc: Exception, current_state: dict[str, Any]) -> dict[str, Any]:
+        """Provide a fallback final state dictionary in the event of an unhandled node exception."""
+        ...
+```
+
+### 4.2. Workflow Registry (`app/rag/workflows/registry.py`)
+
+- Maintain an internal registry map `_REGISTRY: dict[str, WorkflowDefinition]`.
+- Provide thread-safe methods:
+  - `register(workflow: WorkflowDefinition) -> None`
+  - `get(workflow_id: str) -> WorkflowDefinition`
+  - `list_info() -> list[WorkflowInfo]`
+  - `list_ids() -> list[str]`
+  - `warmup() -> None` (compiles all registered graphs)
+- Decorator `@register_workflow` for declarative registration.
+
+### 4.3. Tool Abstraction Layer (`app/rag/tools/`)
+
+- `app/rag/tools/retriever.py`:
+  - `KnowledgeSearchInput`: Pydantic schema with `query: str`.
+  - `create_retriever_tool(retriever=None) -> BaseTool`: Encapsulates Pinecone vectorstore lookup and returns formatted chunk text.
+- `app/rag/tools/search.py`:
+  - `WebSearchInput`: Pydantic schema with `query: str`.
+  - `create_web_search_tool() -> BaseTool`: Encapsulates Tavily general search.
+- All tools pass `RunnableConfig` through, ensuring Langfuse telemetry callbacks log tool spans.
+
+### 4.4. Parameterized Self-Corrective RAG (`app/rag/workflows/self_corrective.py`)
+
+- Subclasses/implements `WorkflowDefinition`.
+- Parameterized by `classifier: WorkflowClassifier`.
+- Compiles the canonical 10-node DAG from `app/rag/engine.py`.
+- Encapsulates `AgentState` conversion, citations extraction, and error handling.
+- Registered twice:
+  - `id="fix_single_llm"` with `OpenAIClassifierAdapter()`
+  - `id="fix_single_jev"` with `JevClassifierAdapter()`
+
+### 4.5. Reference ReAct Agent (`app/rag/workflows/react_agent.py`)
+
+- Subclasses/implements `WorkflowDefinition`.
+- Uses `langgraph.prebuilt.create_react_agent(llm, tools, checkpointer=MemorySaver())`.
+- State is a list of LangChain messages (`Sequence[BaseMessage]`).
+- Converts `ChatRequest.question` and optional `messages` into `HumanMessage`.
+- Maps `session_id` into `thread_id` for conversation persistence across invocations.
+- Extracts citations from tool messages (`ToolMessage`) in state history.
+
+### 4.6. API Schemas & Route Integration
+
+- **`app/api/schemas.py`**:
+  - `ChatMessage(role: str, content: str)`
+  - `Attachment(filename: str, content_type: str, url: str | None = None)`
+  - `ChatRequest`: add `messages: list[ChatMessage] | None = None`, `attachments: list[Attachment] | None = None`.
+  - `WorkflowListResponse`: returns `default: str`, `workflows: list[str]`, and `details: list[WorkflowInfo]`.
+- **`app/api/routes.py`**:
+  - Delegate execution entirely to `WorkflowRegistry.get(payload.workflow)`.
+  - In `chat_event_generator`:
+    - Lookup step labels from `workflow.info.step_labels`.
+    - Check token emission against `workflow.info.generation_nodes`.
+    - Filter out tool-call JSON deltas (`chunk.message.tool_call_chunks`).
+    - Use `workflow.extract_eval_context()` for online evaluation.
+    - Wrap execution with `workflow.handle_error()` for graceful failure synthesis.
 
 ---
 
-## Further Notes
+## 5. Verification Plan
 
-- Once this specification is implemented, deleting or adding future workflow backends (e.g. a hypothetical local Ollama classifier) requires only adding one new adapter class without touching graph topology.
-- Performance characteristics remain unchanged: node execution latency, streaming time-to-first-token (TTFT), and memory footprint are preserved.
+1. **Unit & Conformance Testing**:
+   - `tests/rag/test_workflow_contracts.py`: Conformance suite running against `fix_single_llm`, `fix_single_jev`, and `react_agent`.
+   - `tests/rag/test_tools.py`: Tool invocation, schema validation, and config/telemetry propagation.
+   - `tests/rag/test_registry.py`: Registration, duplicate detection, lazy compilation, and lookup.
+2. **API & Streaming Integration**:
+   - Verify `GET /api/workflows` returns both legacy list and rich metadata.
+   - Verify `POST /api/chat` and `POST /api/chat/stream` work seamlessly across all registered workflows.
+   - Verify multi-turn context retention in `react_agent` using identical `session_id`.
+   - Verify tool-call JSON chunks are not leaked during streaming.
+3. **Telemetry & Observability**:
+   - Confirm Langfuse trace generation, span hierarchy, and online evaluation execution for all workflows.
+4. **Regression Safety**:
+   - Run the complete existing test suite (260 tests) to ensure zero regressions on existing endpoints and workflows.
