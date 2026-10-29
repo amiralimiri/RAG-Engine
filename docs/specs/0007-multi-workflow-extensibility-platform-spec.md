@@ -2,7 +2,7 @@
 
 - **ADR Reference:** `docs/adr/0007-multi-workflow-extensibility-platform.md`
 - **Target Version:** `0.7.0`
-- **Status:** In Progress
+- **Status:** Implemented
 
 ---
 

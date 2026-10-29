@@ -7,6 +7,8 @@ from fastapi.testclient import TestClient
 from app.main import app
 from app.core.config import get_settings
 from app.api.routes import WORKFLOW_ASKS, WORKFLOW_GRAPHS
+from app.rag.workflows import get_workflow_registry
+from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, ToolMessage
 from tests.test_chat_stream import parse_sse_lines
 
 
@@ -345,5 +347,321 @@ async def test_e2e_streaming_flow_with_observability_and_evaluation(monkeypatch)
             value=1.0,
             comment="Super helpful!",
         )
+
+
+# ==============================================================================
+# Ticket 08: End-to-End Verification & Full Regression Tests
+# ==============================================================================
+
+
+def test_e2e_switching_all_workflows_sync_and_stream(client, monkeypatch):
+    """Verify switching between fix_single_jev, react_agent, and fix_single_llm across both sync and streaming."""
+    mock_client = MagicMock()
+    mock_handler = MagicMock()
+    mock_handler.last_trace_id = "trace-e2e-switch-777"
+    mock_eval = AsyncMock()
+
+    monkeypatch.setattr("app.core.telemetry.get_langfuse_client", lambda: mock_client)
+    monkeypatch.setattr("app.api.routes.get_langfuse_client", lambda: mock_client)
+    monkeypatch.setattr("app.api.routes.get_langfuse_callback", lambda **kwargs: mock_handler)
+    monkeypatch.setattr("app.api.routes.extract_trace_id", lambda handler: getattr(handler, "last_trace_id", None))
+    monkeypatch.setattr("app.api.routes.run_online_evaluation_task", mock_eval)
+
+    registry = get_workflow_registry()
+    jev_wf = registry.get("fix_single_jev")
+    react_wf = registry.get("react_agent")
+    llm_wf = registry.get("fix_single_llm")
+
+    # Mocks for the 3 workflows
+    mock_jev_graph = MagicMock()
+    mock_jev_graph.invoke.return_value = {
+        "answer": "JEV workflow resolution.",
+        "source_used": "vectorstore",
+        "trace": ["route_question", "retrieve_kb", "generate_from_kb"],
+        "citations": [{"title": "jev_guide.pdf"}],
+        "current_query": "how to reset password?",
+        "retrieved_contexts": ["Reset password at account portal."],
+    }
+    monkeypatch.setattr(jev_wf, "get_compiled_graph", lambda: mock_jev_graph)
+
+    mock_react_graph = MagicMock()
+    mock_react_graph.invoke.return_value = {
+        "messages": [
+            HumanMessage(content="how to reset password?"),
+            AIMessage(
+                content="",
+                tool_calls=[{"name": "knowledge_base_search", "args": {"query": "password"}, "id": "tc1"}],
+            ),
+            ToolMessage(
+                content="[Source: react_guide.pdf] Password reset documentation.",
+                name="knowledge_base_search",
+                tool_call_id="tc1",
+            ),
+            AIMessage(content="ReAct workflow resolution."),
+        ],
+        "question": "how to reset password?",
+    }
+    monkeypatch.setattr(react_wf, "get_compiled_graph", lambda: mock_react_graph)
+
+    mock_llm_graph = MagicMock()
+    mock_llm_graph.invoke.return_value = {
+        "answer": "LLM workflow resolution.",
+        "source_used": "vectorstore",
+        "trace": ["route_question", "retrieve_kb", "generate_from_kb"],
+        "citations": [{"title": "llm_guide.pdf"}],
+        "current_query": "how to reset password?",
+        "retrieved_contexts": ["LLM password guidelines."],
+    }
+    monkeypatch.setattr(llm_wf, "get_compiled_graph", lambda: mock_llm_graph)
+
+    # 1. Sync /api/chat: Switch across all 3 workflows
+    res_jev = client.post("/api/chat", json={"question": "how to reset password?", "workflow": "fix_single_jev"})
+    assert res_jev.status_code == 200
+    assert res_jev.json()["workflow"] == "fix_single_jev"
+    assert res_jev.json()["answer"] == "JEV workflow resolution."
+
+    res_react = client.post("/api/chat", json={"question": "how to reset password?", "workflow": "react_agent"})
+    assert res_react.status_code == 200
+    assert res_react.json()["workflow"] == "react_agent"
+    assert res_react.json()["answer"] == "ReAct workflow resolution."
+
+    res_llm = client.post("/api/chat", json={"question": "how to reset password?", "workflow": "fix_single_llm"})
+    assert res_llm.status_code == 200
+    assert res_llm.json()["workflow"] == "fix_single_llm"
+    assert res_llm.json()["answer"] == "LLM workflow resolution."
+
+
+def test_e2e_multi_turn_session_persistence_http(client, monkeypatch):
+    """Multi-turn session persistence verified end-to-end via HTTP requests sharing session_id."""
+    from langchain_core.language_models.chat_models import SimpleChatModel
+    from langgraph.checkpoint.memory import MemorySaver
+    from app.rag.workflows.react_agent import ReActAgentWorkflow
+
+    mock_client = MagicMock()
+    mock_handler = MagicMock()
+    mock_handler.last_trace_id = "trace-e2e-persist-101"
+    mock_eval = AsyncMock()
+
+    monkeypatch.setattr("app.core.telemetry.get_langfuse_client", lambda: mock_client)
+    monkeypatch.setattr("app.api.routes.get_langfuse_client", lambda: mock_client)
+    monkeypatch.setattr("app.api.routes.get_langfuse_callback", lambda **kwargs: mock_handler)
+    monkeypatch.setattr("app.api.routes.extract_trace_id", lambda handler: getattr(handler, "last_trace_id", None))
+    monkeypatch.setattr("app.api.routes.run_online_evaluation_task", mock_eval)
+
+    class MemoryEchoChatModel(SimpleChatModel):
+        @property
+        def _llm_type(self) -> str:
+            return "memory_echo"
+
+        def bind_tools(self, tools, **kwargs):
+            return self
+
+        def _call(self, messages, stop=None, run_manager=None, **kwargs):
+            user_texts = [m.content for m in messages if isinstance(m, HumanMessage)]
+            return f"Conversation history so far: {' -> '.join(user_texts)}"
+
+    custom_wf = ReActAgentWorkflow(
+        id="react_agent",
+        llm=MemoryEchoChatModel(),
+        tools=[],
+        checkpointer=MemorySaver(),
+    )
+
+    registry = get_workflow_registry()
+    react_wf = registry.get("react_agent")
+    # Share the same checkpointer-enabled compiled graph
+    monkeypatch.setattr(react_wf, "get_compiled_graph", custom_wf.get_compiled_graph)
+
+    shared_session = "persistent-http-session-999"
+
+    # Turn 1
+    resp1 = client.post(
+        "/api/chat",
+        json={
+            "question": "My favorite database is PostgreSQL.",
+            "workflow": "react_agent",
+            "session_id": shared_session,
+        },
+    )
+    assert resp1.status_code == 200
+    data1 = resp1.json()
+    assert "Conversation history so far: My favorite database is PostgreSQL." in data1["answer"]
+
+    # Turn 2: Follow up with new question in same session
+    resp2 = client.post(
+        "/api/chat",
+        json={
+            "question": "What database did I say?",
+            "workflow": "react_agent",
+            "session_id": shared_session,
+        },
+    )
+    assert resp2.status_code == 200
+    data2 = resp2.json()
+    # MemorySaver retained Turn 1 message!
+    assert (
+        "Conversation history so far: My favorite database is PostgreSQL. -> What database did I say?"
+        in data2["answer"]
+    )
+
+
+def test_e2e_langfuse_trace_spans_for_fixed_dag_and_react(client, monkeypatch):
+    """Langfuse trace metadata and spans verified for both fixed DAG workflows and ReAct tool executions."""
+    captured_callbacks = []
+
+    def mock_get_langfuse_callback(**kwargs):
+        captured_callbacks.append(kwargs)
+        h = MagicMock()
+        h.last_trace_id = f"trace-{kwargs.get('workflow_name')}-123"
+        return h
+
+    mock_client = MagicMock()
+    monkeypatch.setattr("app.core.telemetry.get_langfuse_client", lambda: mock_client)
+    monkeypatch.setattr("app.api.routes.get_langfuse_client", lambda: mock_client)
+    monkeypatch.setattr("app.api.routes.get_langfuse_callback", mock_get_langfuse_callback)
+    monkeypatch.setattr("app.api.routes.run_online_evaluation_task", AsyncMock())
+
+    registry = get_workflow_registry()
+    jev_wf = registry.get("fix_single_jev")
+    react_wf = registry.get("react_agent")
+
+    mock_jev_graph = MagicMock()
+    mock_jev_graph.invoke.return_value = {
+        "answer": "Fixed DAG answer",
+        "source_used": "vectorstore",
+        "trace": ["route_question", "retrieve_kb", "generate_from_kb"],
+        "citations": [],
+        "current_query": "question",
+    }
+    monkeypatch.setattr(jev_wf, "get_compiled_graph", lambda: mock_jev_graph)
+
+    mock_react_graph = MagicMock()
+    mock_react_graph.invoke.return_value = {
+        "messages": [AIMessage(content="ReAct answer")],
+        "question": "question",
+    }
+    monkeypatch.setattr(react_wf, "get_compiled_graph", lambda: mock_react_graph)
+
+    # 1. Fixed DAG call
+    client.post(
+        "/api/chat",
+        json={
+            "question": "Fixed DAG test",
+            "workflow": "fix_single_jev",
+            "session_id": "sess-dag",
+            "user_id": "user-dag",
+        },
+    )
+    assert len(captured_callbacks) == 1
+    dag_cb = captured_callbacks[0]
+    assert dag_cb["workflow_name"] == "fix_single_jev"
+    assert dag_cb["session_id"] == "sess-dag"
+    assert dag_cb["user_id"] == "user-dag"
+    assert dag_cb["metadata"]["classifier"] == "typesafe_jev"
+    assert dag_cb["metadata"]["retrieval_strategy"] == "self_corrective"
+
+    # 2. ReAct Agent call
+    client.post(
+        "/api/chat",
+        json={
+            "question": "ReAct test",
+            "workflow": "react_agent",
+            "session_id": "sess-react",
+            "user_id": "user-react",
+        },
+    )
+    assert len(captured_callbacks) == 2
+    react_cb = captured_callbacks[1]
+    assert react_cb["workflow_name"] == "react_agent"
+    assert react_cb["session_id"] == "sess-react"
+    assert react_cb["user_id"] == "user-react"
+    assert react_cb["metadata"]["classifier"] == "react_agent"
+    assert react_cb["metadata"]["retrieval_strategy"] == "react_agent"
+
+
+@pytest.mark.asyncio
+async def test_e2e_online_evaluation_scores_recorded_for_all_workflows_without_schema_errors(monkeypatch):
+    """Online evaluation scores and feedback successfully recorded for all workflows without schema errors."""
+    mock_client = MagicMock()
+    mock_handler = MagicMock()
+    mock_handler.last_trace_id = "trace-eval-multi-wf-999"
+
+    monkeypatch.setattr("app.core.telemetry.get_langfuse_client", lambda: mock_client)
+    monkeypatch.setattr("app.api.routes.get_langfuse_client", lambda: mock_client)
+    monkeypatch.setattr("app.api.routes.get_langfuse_callback", lambda **kwargs: mock_handler)
+    monkeypatch.setattr("app.api.routes.extract_trace_id", lambda handler: "trace-eval-multi-wf-999")
+
+    captured_eval_tasks = []
+
+    def mock_run_online_eval(**kwargs):
+        captured_eval_tasks.append(kwargs)
+
+    monkeypatch.setattr("app.api.routes.run_online_evaluation_task", mock_run_online_eval)
+
+    registry = get_workflow_registry()
+    workflows_to_test = ["fix_single_llm", "fix_single_jev", "react_agent"]
+
+    with TestClient(app) as test_client:
+        for wf_id in workflows_to_test:
+            wf = registry.get(wf_id)
+            mock_graph = MagicMock()
+
+            if wf_id == "react_agent":
+                mock_graph.invoke.return_value = {
+                    "messages": [
+                        HumanMessage(content=f"Question for {wf_id}"),
+                        AIMessage(content="", tool_calls=[{"name": "knowledge_base_search", "args": {"query": "q"}, "id": "t1"}]),
+                        ToolMessage(content="[Source: doc1.pdf] Extracted context for evaluation.", name="knowledge_base_search", tool_call_id="t1"),
+                        AIMessage(content=f"Answer for {wf_id}"),
+                    ],
+                    "question": f"Question for {wf_id}",
+                }
+            else:
+                mock_graph.invoke.return_value = {
+                    "answer": f"Answer for {wf_id}",
+                    "source_used": "vectorstore",
+                    "trace": ["route_question", "retrieve_kb", "generate_from_kb"],
+                    "citations": [{"title": "doc1.pdf"}],
+                    "current_query": f"Question for {wf_id}",
+                    "retrieved_contexts": ["Extracted context for evaluation."],
+                }
+
+            monkeypatch.setattr(wf, "get_compiled_graph", lambda g=mock_graph: g)
+
+            # 1. Chat invocation
+            resp = test_client.post(
+                "/api/chat",
+                json={"question": f"Question for {wf_id}", "workflow": wf_id},
+            )
+            assert resp.status_code == 200
+
+            # 2. Check online evaluation task enqueued with valid schema
+            eval_call = [c for c in captured_eval_tasks if c.get("question") == f"Question for {wf_id}"]
+            assert len(eval_call) == 1
+            call_data = eval_call[0]
+            assert call_data["trace_id"] == "trace-eval-multi-wf-999"
+            assert call_data["question"] == f"Question for {wf_id}"
+            assert call_data["answer"] == f"Answer for {wf_id}"
+            assert call_data["source_used"] in {"vectorstore", "react_agent"}
+            assert isinstance(call_data["retrieved_contexts"], list)
+            assert len(call_data["retrieved_contexts"]) > 0
+
+            # 3. Post feedback score to verify schema validation
+            fb_resp = test_client.post(
+                "/api/feedback",
+                json={
+                    "trace_id": "trace-eval-multi-wf-999",
+                    "score": 1.0,
+                    "name": "faithfulness",
+                    "comment": f"High quality evaluation score for {wf_id}",
+                },
+            )
+            assert fb_resp.status_code == 200
+            mock_client.create_score.assert_called_with(
+                trace_id="trace-eval-multi-wf-999",
+                name="faithfulness",
+                value=1.0,
+                comment=f"High quality evaluation score for {wf_id}",
+            )
 
 

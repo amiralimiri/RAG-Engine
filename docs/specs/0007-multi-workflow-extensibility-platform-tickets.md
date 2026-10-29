@@ -2,7 +2,7 @@
 
 - **Specification Reference:** [`docs/specs/0007-multi-workflow-extensibility-platform-spec.md`](./0007-multi-workflow-extensibility-platform-spec.md)
 - **ADR Reference:** [`docs/adr/0007-multi-workflow-extensibility-platform.md`](../adr/0007-multi-workflow-extensibility-platform.md)
-- **Status:** In Progress
+- **Status:** Complete
 
 ---
 
@@ -61,7 +61,7 @@
 | **Ticket 05** | Parameterized `SelfCorrectiveRagWorkflow` | `app/rag/workflows/self_corrective.py`, `app/rag/workflows/__init__.py`, `tests/rag/test_self_corrective_contract.py` | None (Tickets 01, 03, 04 completed) | `completed` |
 | **Ticket 06** | Autonomous ReAct Agent Reference Workflow | `app/rag/workflows/react_agent.py`, `app/rag/workflows/__init__.py`, `tests/rag/test_react_agent.py` | None (Tickets 01, 02, 03, 04 completed) | `completed` |
 | **Ticket 07** | Modernize Transport Layer & SSE Token Filtering | `app/api/routes.py`, `tests/api/test_routes_multi_workflow.py` | None (Tickets 03, 05, 06 completed) | `completed` |
-| **Ticket 08** | End-to-End Verification & Regression Suite | `tests/test_chat_stream.py`, `tests/test_e2e_observability.py`, full suite | None (Ticket 07 completed) | `ready` |
+| **Ticket 08** | End-to-End Verification & Regression Suite | `tests/test_chat_stream.py`, `tests/test_e2e_observability.py`, full suite | None (Ticket 07 completed) | `completed` |
 
 ---
 
@@ -253,15 +253,15 @@ Refactor `app/api/routes.py` to route requests exclusively through `WorkflowRegi
   - `tests/test_e2e_observability.py`
   - Entire test suite (260+ tests)
 - **Blockers:** None (Ticket 07 completed)
-- **Status:** `ready`
+- **Status:** `completed`
 
 ### What to build:
 Verify end-to-end integration across all workflows (`fix_single_llm`, `fix_single_jev`, and `react_agent`). Ensure full backward compatibility for existing scripts, Langfuse trace structures, and run the entire test suite to guarantee zero regressions.
 
 ### Acceptance Criteria:
-- [ ] All existing 260 tests pass without modification.
-- [ ] New E2E tests verify switching between `fix_single_jev` and `react_agent` via `/api/chat` and `/api/chat/stream`.
-- [ ] Streaming tokens for `react_agent` verified to contain only conversational text, with tool invocations emitting `step` events.
-- [ ] Multi-turn session persistence verified end-to-end via HTTP requests sharing `session_id`.
-- [ ] Langfuse trace spans verified for both fixed DAG workflows and ReAct tool executions.
-- [ ] Online evaluation scores successfully recorded for all workflows without schema errors.
+- [x] All existing 260 tests pass without modification.
+- [x] New E2E tests verify switching between `fix_single_jev` and `react_agent` via `/api/chat` and `/api/chat/stream`.
+- [x] Streaming tokens for `react_agent` verified to contain only conversational text, with tool invocations emitting `step` events.
+- [x] Multi-turn session persistence verified end-to-end via HTTP requests sharing `session_id`.
+- [x] Langfuse trace spans verified for both fixed DAG workflows and ReAct tool executions.
+- [x] Online evaluation scores successfully recorded for all workflows without schema errors.

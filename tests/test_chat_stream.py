@@ -21,9 +21,12 @@ from unittest.mock import AsyncMock, MagicMock
 import httpx
 import pytest
 from fastapi.testclient import TestClient
+from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, ToolMessage
+from langchain_core.messages.tool import ToolCallChunk
 
 from app.main import app
 from app.api.routes import WORKFLOW_ASKS, WORKFLOW_GRAPHS
+from app.rag.workflows import get_workflow_registry
 
 
 # ── helpers & transports ──────────────────────────────────────────────────
@@ -663,3 +666,311 @@ class TestBackwardCompatibility:
         assert data["trace_id"] == "trace-bc-006"
         assert data["source_used"] == "knowledge_base"
         assert data["citations"] == [{"title": "network_guide.pdf"}]
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 8. End-to-End Multi-Workflow Streaming Verification (Ticket 08)
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+@pytest.mark.asyncio
+class TestMultiWorkflowStreamingE2E:
+    """End-to-end multi-workflow verification for streaming SSE endpoint."""
+
+    async def test_stream_switching_between_jev_and_react(self, monkeypatch):
+        """Verify dynamic switching between fix_single_jev and react_agent via /api/chat/stream."""
+        registry = get_workflow_registry()
+        jev_wf = registry.get("fix_single_jev")
+        react_wf = registry.get("react_agent")
+
+        mock_handler = get_mock_handler("trace-switch-001")
+        monkeypatch.setattr("app.api.routes.get_langfuse_callback", lambda **kwargs: mock_handler)
+        monkeypatch.setattr("app.api.routes.extract_trace_id", lambda handler: "trace-switch-001")
+
+        # 1. Stream fix_single_jev
+        async def mock_jev_events(*args, **kwargs):
+            yield {"event": "on_chain_start", "metadata": {"langgraph_node": "route_question"}, "data": {}}
+            yield {"event": "on_chain_start", "metadata": {"langgraph_node": "retrieve_kb"}, "data": {}}
+            yield {"event": "on_chain_start", "metadata": {"langgraph_node": "generate_from_kb"}, "data": {}}
+            yield {
+                "event": "on_chat_model_stream",
+                "metadata": {"langgraph_node": "generate_from_kb"},
+                "data": {"chunk": {"content": "JEV answer stream"}},
+            }
+            yield {
+                "event": "on_chain_end",
+                "metadata": {"langgraph_node": "generate_from_kb"},
+                "data": {
+                    "output": {
+                        "answer": "JEV answer stream",
+                        "source_used": "vectorstore",
+                        "citations": [{"title": "jev_guide.pdf"}],
+                        "trace": ["route_question", "retrieve_kb", "generate_from_kb"],
+                    }
+                },
+            }
+
+        mock_jev_graph = MagicMock()
+        mock_jev_graph.astream_events = mock_jev_events
+        monkeypatch.setattr(jev_wf, "get_compiled_graph", lambda: mock_jev_graph)
+
+        # 2. Stream react_agent
+        async def mock_react_events(*args, **kwargs):
+            yield {"event": "on_chain_start", "metadata": {"langgraph_node": "agent"}, "data": {}}
+            yield {"event": "on_chain_start", "metadata": {"langgraph_node": "tools"}, "data": {}}
+            yield {"event": "on_chain_start", "metadata": {"langgraph_node": "agent"}, "data": {}}
+            yield {
+                "event": "on_chat_model_stream",
+                "metadata": {"langgraph_node": "agent"},
+                "data": {"chunk": AIMessageChunk(content="ReAct agent reply")},
+            }
+            yield {
+                "event": "on_chain_end",
+                "metadata": {"langgraph_node": "agent"},
+                "data": {
+                    "output": {
+                        "messages": [
+                            ToolMessage(content="[Source: react_tool.pdf] Tool output", name="knowledge_base_search", tool_call_id="call_1"),
+                            AIMessage(content="ReAct agent reply"),
+                        ]
+                    }
+                },
+            }
+
+        mock_react_graph = MagicMock()
+        mock_react_graph.astream_events = mock_react_events
+        monkeypatch.setattr(react_wf, "get_compiled_graph", lambda: mock_react_graph)
+
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as ac:
+            # Request 1: fix_single_jev
+            async with ac.stream(
+                "POST",
+                "/api/chat/stream",
+                json={"question": "Question for JEV", "workflow": "fix_single_jev"},
+            ) as resp1:
+                assert resp1.status_code == 200
+                lines1 = [line async for line in resp1.aiter_lines()]
+
+            events1 = parse_sse_lines(lines1)
+            steps1 = [e["data"]["step"] for e in events1 if e["event"] == "step"]
+            assert "route_question" in steps1
+            assert "retrieve_kb" in steps1
+            assert "generate_from_kb" in steps1
+
+            tokens1 = "".join(e["data"]["delta"] for e in events1 if e["event"] == "token")
+            assert tokens1 == "JEV answer stream"
+
+            meta1 = [e["data"] for e in events1 if e["event"] == "metadata"][0]
+            assert meta1["workflow"] == "fix_single_jev"
+            assert meta1["source_used"] == "vectorstore"
+
+            # Request 2: react_agent
+            async with ac.stream(
+                "POST",
+                "/api/chat/stream",
+                json={"question": "Question for ReAct", "workflow": "react_agent"},
+            ) as resp2:
+                assert resp2.status_code == 200
+                lines2 = [line async for line in resp2.aiter_lines()]
+
+            events2 = parse_sse_lines(lines2)
+            steps2 = [e["data"]["step"] for e in events2 if e["event"] == "step"]
+            assert "agent" in steps2
+            assert "tools" in steps2
+
+            labels2 = {e["data"]["step"]: e["data"]["label"] for e in events2 if e["event"] == "step"}
+            assert labels2["agent"] == "Reasoning & planning response..."
+            assert labels2["tools"] == "Executing selected tool..."
+
+            tokens2 = "".join(e["data"]["delta"] for e in events2 if e["event"] == "token")
+            assert tokens2 == "ReAct agent reply"
+
+            meta2 = [e["data"] for e in events2 if e["event"] == "metadata"][0]
+            assert meta2["workflow"] == "react_agent"
+
+    async def test_react_agent_strict_conversational_tokens_and_step_events(self, monkeypatch):
+        """Streaming tokens for react_agent verified to contain only conversational text, with tool invocations emitting step events."""
+        registry = get_workflow_registry()
+        workflow = registry.get("react_agent")
+
+        mock_handler = get_mock_handler("trace-react-stream-002")
+        monkeypatch.setattr("app.api.routes.get_langfuse_callback", lambda **kwargs: mock_handler)
+        monkeypatch.setattr("app.api.routes.extract_trace_id", lambda handler: "trace-react-stream-002")
+
+        async def mock_events(*args, **kwargs):
+            # Step 1: Agent starts
+            yield {"event": "on_chain_start", "metadata": {"langgraph_node": "agent"}, "data": {}}
+
+            # Model emits tool call chunks (must be filtered out)
+            tool_chunk = AIMessageChunk(
+                content="",
+                tool_call_chunks=[
+                    ToolCallChunk(name="knowledge_base_search", args='{"query": "vpn password"}', id="call_abc", index=0)
+                ],
+            )
+            yield {
+                "event": "on_chat_model_stream",
+                "metadata": {"langgraph_node": "agent"},
+                "data": {"chunk": tool_chunk},
+            }
+
+            yield {
+                "event": "on_chain_end",
+                "metadata": {"langgraph_node": "agent"},
+                "data": {
+                    "output": {
+                        "messages": [
+                            AIMessage(
+                                content="",
+                                tool_calls=[{"name": "knowledge_base_search", "args": {"query": "vpn password"}, "id": "call_abc"}],
+                            )
+                        ]
+                    }
+                },
+            }
+
+            # Step 2: Tools node starts
+            yield {"event": "on_chain_start", "metadata": {"langgraph_node": "tools"}, "data": {}}
+            yield {
+                "event": "on_chain_end",
+                "metadata": {"langgraph_node": "tools"},
+                "data": {
+                    "output": {
+                        "messages": [
+                            ToolMessage(
+                                content="[Source: password_policy.pdf] Passwords expire every 90 days.",
+                                name="knowledge_base_search",
+                                tool_call_id="call_abc",
+                            )
+                        ]
+                    }
+                },
+            }
+
+            # Step 3: Agent resumes and emits natural language tokens
+            yield {"event": "on_chain_start", "metadata": {"langgraph_node": "agent"}, "data": {}}
+            yield {
+                "event": "on_chat_model_stream",
+                "metadata": {"langgraph_node": "agent"},
+                "data": {"chunk": AIMessageChunk(content="Your corporate password ")},
+            }
+            yield {
+                "event": "on_chat_model_stream",
+                "metadata": {"langgraph_node": "agent"},
+                "data": {"chunk": AIMessageChunk(content="expires every 90 days.")},
+            }
+            yield {
+                "event": "on_chain_end",
+                "metadata": {"langgraph_node": "agent"},
+                "data": {
+                    "output": {
+                        "messages": [
+                            AIMessage(content="Your corporate password expires every 90 days."),
+                        ]
+                    }
+                },
+            }
+
+        mock_graph = MagicMock()
+        mock_graph.astream_events = mock_events
+        monkeypatch.setattr(workflow, "get_compiled_graph", lambda: mock_graph)
+
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as ac:
+            async with ac.stream(
+                "POST",
+                "/api/chat/stream",
+                json={"question": "When does password expire?", "workflow": "react_agent"},
+            ) as resp:
+                lines = [line async for line in resp.aiter_lines()]
+
+        events = parse_sse_lines(lines)
+
+        # 1. Step events must include agent and tools
+        step_events = [e for e in events if e["event"] == "step"]
+        steps = [s["data"]["step"] for s in step_events]
+        assert "agent" in steps
+        assert "tools" in steps
+
+        # 2. Token events must contain ONLY conversational text
+        token_events = [e for e in events if e["event"] == "token"]
+        assert len(token_events) == 2
+        full_text = "".join(t["data"]["delta"] for t in token_events)
+        assert full_text == "Your corporate password expires every 90 days."
+
+        # 3. Assert zero leak of JSON tool arguments or schema
+        assert "{" not in full_text
+        assert "}" not in full_text
+        assert "knowledge_base_search" not in full_text
+        assert "query" not in full_text
+        assert "call_abc" not in full_text
+
+        # 4. Terminal metadata
+        meta = [e for e in events if e["event"] == "metadata"][0]["data"]
+        assert meta["workflow"] == "react_agent"
+        assert meta["citations"][0]["title"] == "password_policy.pdf"
+
+    async def test_streaming_multi_turn_session_persistence(self, monkeypatch):
+        """Multi-turn session persistence verified end-to-end via HTTP streaming requests sharing session_id."""
+        registry = get_workflow_registry()
+        workflow = registry.get("react_agent")
+
+        mock_handler = get_mock_handler("trace-stream-multiturn")
+        monkeypatch.setattr("app.api.routes.get_langfuse_callback", lambda **kwargs: mock_handler)
+        monkeypatch.setattr("app.api.routes.extract_trace_id", lambda handler: "trace-stream-multiturn")
+
+        captured_configs = []
+
+        async def mock_events(*args, **kwargs):
+            if "config" in kwargs:
+                captured_configs.append(kwargs["config"])
+            elif len(args) > 1 and isinstance(args[1], dict):
+                captured_configs.append(args[1])
+            yield {"event": "on_chain_start", "metadata": {"langgraph_node": "agent"}, "data": {}}
+            yield {
+                "event": "on_chat_model_stream",
+                "metadata": {"langgraph_node": "agent"},
+                "data": {"chunk": AIMessageChunk(content="Acknowledged.")},
+            }
+            yield {
+                "event": "on_chain_end",
+                "metadata": {"langgraph_node": "agent"},
+                "data": {"output": {"messages": [AIMessage(content="Acknowledged.")]}},
+            }
+
+        mock_graph = MagicMock()
+        mock_graph.astream_events = mock_events
+        monkeypatch.setattr(workflow, "get_compiled_graph", lambda: mock_graph)
+
+        shared_session_id = "test-persistent-stream-session-88"
+
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as ac:
+            # Turn 1
+            async with ac.stream(
+                "POST",
+                "/api/chat/stream",
+                json={
+                    "question": "My favorite editor is Vim.",
+                    "workflow": "react_agent",
+                    "session_id": shared_session_id,
+                },
+            ) as resp1:
+                assert resp1.status_code == 200
+                _ = [line async for line in resp1.aiter_lines()]
+
+            # Turn 2
+            async with ac.stream(
+                "POST",
+                "/api/chat/stream",
+                json={
+                    "question": "What is my favorite editor?",
+                    "workflow": "react_agent",
+                    "session_id": shared_session_id,
+                },
+            ) as resp2:
+                assert resp2.status_code == 200
+                _ = [line async for line in resp2.aiter_lines()]
+
+        # Both invocations must share the exact same thread_id in configurable
+        assert len(captured_configs) == 2
+        assert captured_configs[0].get("configurable", {}).get("thread_id") == shared_session_id
+        assert captured_configs[1].get("configurable", {}).get("thread_id") == shared_session_id
