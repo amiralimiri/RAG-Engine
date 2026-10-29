@@ -60,8 +60,8 @@
 | **Ticket 04** | Reusable Conformance Test Harness | `tests/rag/test_workflow_contracts.py` | None (Ticket 01 completed) | `completed` |
 | **Ticket 05** | Parameterized `SelfCorrectiveRagWorkflow` | `app/rag/workflows/self_corrective.py`, `app/rag/workflows/__init__.py`, `tests/rag/test_self_corrective_contract.py` | None (Tickets 01, 03, 04 completed) | `completed` |
 | **Ticket 06** | Autonomous ReAct Agent Reference Workflow | `app/rag/workflows/react_agent.py`, `app/rag/workflows/__init__.py`, `tests/rag/test_react_agent.py` | None (Tickets 01, 02, 03, 04 completed) | `completed` |
-| **Ticket 07** | Modernize Transport Layer & SSE Token Filtering | `app/api/routes.py`, `tests/api/test_routes_multi_workflow.py` | None (Tickets 03, 05, 06 completed) | `ready` |
-| **Ticket 08** | End-to-End Verification & Regression Suite | `tests/test_chat_stream.py`, `tests/test_e2e_observability.py`, full suite | Ticket 07 | `blocked` |
+| **Ticket 07** | Modernize Transport Layer & SSE Token Filtering | `app/api/routes.py`, `tests/api/test_routes_multi_workflow.py` | None (Tickets 03, 05, 06 completed) | `completed` |
+| **Ticket 08** | End-to-End Verification & Regression Suite | `tests/test_chat_stream.py`, `tests/test_e2e_observability.py`, full suite | None (Ticket 07 completed) | `ready` |
 
 ---
 
@@ -229,19 +229,19 @@ Implement `ReActAgentWorkflow` using `langgraph.prebuilt.create_react_agent`. Bi
   - `app/api/routes.py`
   - `tests/api/test_routes_multi_workflow.py`
 - **Blockers:** Ticket 03, Ticket 05, Ticket 06
-- **Status:** `blocked`
+- **Status:** `completed`
 
 ### What to build:
 Refactor `app/api/routes.py` to route requests exclusively through `WorkflowRegistry`. Enrich `GET /api/workflows` to return `WorkflowListResponse` with rich capability metadata. In `chat_event_generator`, dynamically resolve step labels and generation nodes from the workflow, and filter out tool-call argument JSON tokens during ReAct execution.
 
 ### Acceptance Criteria:
-- [ ] `GET /api/workflows` returns `{ "default": "fix_single_jev", "workflows": [...], "details": [...] }`.
-- [ ] `POST /api/chat` retrieves workflow from `WorkflowRegistry.get(payload.workflow)`, calls `to_initial_state()`, executes graph with `configurable: {"thread_id": session_id}`, and returns `to_chat_response()`.
-- [ ] `POST /api/chat/stream` streams events using dynamic `workflow.info.step_labels` and `workflow.info.generation_nodes`.
-- [ ] SSE generator filters out token deltas when `chunk.message.tool_call_chunks` is present or text is empty, ensuring tool JSON arguments are never streamed to clients.
-- [ ] Stream generator invokes `workflow.handle_error()` on unhandled exceptions, yielding a clean terminal metadata event or error event.
-- [ ] `run_online_evaluation_task` receives context from `workflow.extract_eval_context(final_state)`.
-- [ ] Unit and API tests confirm dynamic routing and streaming across all registered workflows.
+- [x] `GET /api/workflows` returns `{ "default": "fix_single_jev", "workflows": [...], "details": [...] }`.
+- [x] `POST /api/chat` retrieves workflow from `WorkflowRegistry.get(payload.workflow)`, calls `to_initial_state()`, executes graph with `configurable: {"thread_id": session_id}`, and returns `to_chat_response()`.
+- [x] `POST /api/chat/stream` streams events using dynamic `workflow.info.step_labels` and `workflow.info.generation_nodes`.
+- [x] SSE generator filters out token deltas when `chunk.message.tool_call_chunks` is present or text is empty, ensuring tool JSON arguments are never streamed to clients.
+- [x] Stream generator invokes `workflow.handle_error()` on unhandled exceptions, yielding a clean terminal metadata event or error event.
+- [x] `run_online_evaluation_task` receives context from `workflow.extract_eval_context(final_state)`.
+- [x] Unit and API tests confirm dynamic routing and streaming across all registered workflows.
 
 ---
 
@@ -252,8 +252,8 @@ Refactor `app/api/routes.py` to route requests exclusively through `WorkflowRegi
   - `tests/test_chat_stream.py`
   - `tests/test_e2e_observability.py`
   - Entire test suite (260+ tests)
-- **Blockers:** Ticket 07
-- **Status:** `blocked`
+- **Blockers:** None (Ticket 07 completed)
+- **Status:** `ready`
 
 ### What to build:
 Verify end-to-end integration across all workflows (`fix_single_llm`, `fix_single_jev`, and `react_agent`). Ensure full backward compatibility for existing scripts, Langfuse trace structures, and run the entire test suite to guarantee zero regressions.

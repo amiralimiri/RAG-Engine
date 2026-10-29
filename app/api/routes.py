@@ -20,6 +20,7 @@ from app.api.schemas import (
     StreamMetadataEvent,
     StreamStepEvent,
     StreamTokenEvent,
+    WorkflowListResponse,
 )
 from app.core.config import get_settings
 from app.core.telemetry import (
@@ -32,6 +33,7 @@ from app.rag import fix_single_llm, fix_single_jev
 from app.rag.vectorstore import add_documents 
 from app.services.ingestion import load_file, chunk_documents, SUPPORTED
 from app.services.evaluation import score_trace_metric, run_online_evaluation_task
+from app.rag.workflows import WorkflowDefinition, get_workflow_registry
 
 logger = structlog.get_logger(__name__)
 
@@ -59,6 +61,9 @@ WORKFLOW_GRAPHS = {
     "fix_single_llm": fix_single_llm.agent_graph,
     "fix_single_jev": fix_single_jev.agent_graph,
 }
+
+_ORIGINAL_ASKS = dict(WORKFLOW_ASKS)
+_ORIGINAL_GRAPHS = dict(WORKFLOW_GRAPHS)
 
 
 router = APIRouter(prefix="/api")
@@ -107,27 +112,59 @@ def health():
 
 @router.get("/workflows")
 def list_workflows():
-    return {
-        "default": ChatRequest.model_fields["workflow"].default,
-        "workflows": sorted(WORKFLOW_ASKS),
-    }
+    """Expose registered workflows with rich capability introspection metadata."""
+    registry = get_workflow_registry()
+    details = registry.list_info()
+    ids = sorted(registry.list_ids())
+    for wid in WORKFLOW_ASKS:
+        if wid not in ids:
+            ids.append(wid)
+    return WorkflowListResponse(
+        default=ChatRequest.model_fields["workflow"].default or "fix_single_jev",
+        workflows=sorted(set(ids)),
+        details=details,
+    )
 
 
-@router.post("/chat")
+def _is_legacy_override(workflow_id: str) -> bool:
+    """Detect monkeypatched legacy workflow entries (backward compat with prior tests)."""
+    return (
+        workflow_id in WORKFLOW_ASKS and WORKFLOW_ASKS[workflow_id] is not _ORIGINAL_ASKS.get(workflow_id)
+    ) or (
+        workflow_id in WORKFLOW_GRAPHS and WORKFLOW_GRAPHS[workflow_id] is not _ORIGINAL_GRAPHS.get(workflow_id)
+    )
+
+
+def _resolve_workflow(workflow_id: str) -> WorkflowDefinition | None:
+    """Resolve a registered workflow definition, honoring legacy overrides for backward compatibility."""
+    registry = get_workflow_registry()
+    if workflow_id in registry.list_ids() and not _is_legacy_override(workflow_id):
+        return registry.get(workflow_id)
+    return None
+
+
+@router.post("/chat", response_model=ChatResponse)
 def chat(payload: ChatRequest, background_tasks: BackgroundTasks):
+    wf_def = _resolve_workflow(payload.workflow)
     ask = WORKFLOW_ASKS.get(payload.workflow)
     
-    if ask is None:
+    if wf_def is None and ask is None:
         raise HTTPException(status_code=400, detail=f"Unknown workflow: {payload.workflow}")
 
     classifier_meta = "openai_json" if payload.workflow == "fix_single_llm" else "typesafe_jev"
+    if payload.workflow == "react_agent":
+        classifier_meta = "react_agent"
+
     sanitized_tid = payload.trace_id.replace("-", "").lower() if payload.trace_id else None
     handler = get_langfuse_callback(
         workflow_name=payload.workflow,
         session_id=payload.session_id,
         user_id=payload.user_id,
         trace_id=sanitized_tid,
-        metadata={"classifier": classifier_meta, "retrieval_strategy": "self_corrective"},
+        metadata={
+            "classifier": classifier_meta,
+            "retrieval_strategy": "self_corrective" if payload.workflow != "react_agent" else "react_agent",
+        },
     )
     trace_id = extract_trace_id(handler)
     if handler is not None and not trace_id:
@@ -150,46 +187,103 @@ def chat(payload: ChatRequest, background_tasks: BackgroundTasks):
         context_bindings["user_id"] = payload.user_id
     structlog.contextvars.bind_contextvars(**context_bindings)
 
+    # Legacy fallback path when explicitly monkeypatched in tests
+    if wf_def is None and ask is not None:
+        try:
+            result = ask(
+                payload.question,
+                session_id=payload.session_id,
+                user_id=payload.user_id,
+                metadata={"trace_id": trace_id} if trace_id else None,
+                callback=handler,
+            )
+            trace_id = extract_trace_id(handler) or trace_id or (result.get("trace_id") if isinstance(result, dict) else None)
+            if trace_id:
+                structlog.contextvars.bind_contextvars(trace_id=trace_id)
+
+            logger.info(
+                "chat_query_completed",
+                workflow=payload.workflow,
+                question=payload.question,
+                source_used=result["source_used"],
+                trace=result.get("trace", []),
+                trace_id=trace_id,
+            )
+
+            if trace_id:
+                background_tasks.add_task(
+                    run_online_evaluation_task,
+                    trace_id=trace_id,
+                    question=payload.question,
+                    answer=result["answer"],
+                    source_used=result["source_used"],
+                    retrieved_contexts=result.get("retrieved_contexts", []),
+                )
+
+            return ChatResponse(
+                workflow=payload.workflow,
+                answer=result["answer"],
+                source_used=result["source_used"],
+                trace=result.get("trace", []),
+                citations=result.get("citations", []),
+                rewritten_query=result.get("current_query", payload.question),
+                trace_id=trace_id,
+            )
+
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.exception("Error in chat pipeline: %s", exc)
+            raise HTTPException(status_code=500, detail=f"Inference error: {exc}") from exc
+
+    # Modern WorkflowRegistry path
     try:
-        result = ask(
-            payload.question,
-            session_id=payload.session_id,
-            user_id=payload.user_id,
-            metadata={"trace_id": trace_id} if trace_id else None,
-            callback=handler,
-        )
-        trace_id = extract_trace_id(handler) or trace_id or (result.get("trace_id") if isinstance(result, dict) else None)
+        initial_state = wf_def.to_initial_state(payload, trace_id=trace_id)
+        graph = wf_def.get_compiled_graph()
+
+        config: dict[str, Any] = {}
+        if handler:
+            config["callbacks"] = [handler]
         if trace_id:
-            structlog.contextvars.bind_contextvars(trace_id=trace_id)
+            config["metadata"] = {"trace_id": trace_id}
+        thread_id = payload.session_id or uuid.uuid4().hex
+        config["configurable"] = {"thread_id": thread_id}
+
+        try:
+            final_state = graph.invoke(initial_state, config=config if config else None)
+            if not isinstance(final_state, dict):
+                final_state = {"answer": str(final_state)}
+        except Exception as exc:
+            logger.exception("Error executing workflow %s: %s", payload.workflow, exc)
+            final_state = wf_def.handle_error(exc, initial_state)
+
+        chat_response = wf_def.to_chat_response(final_state, trace_id=trace_id)
+        resolved_tid = extract_trace_id(handler) or trace_id or chat_response.trace_id
+
+        if resolved_tid:
+            structlog.contextvars.bind_contextvars(trace_id=resolved_tid)
 
         logger.info(
             "chat_query_completed",
             workflow=payload.workflow,
             question=payload.question,
-            source_used=result["source_used"],
-            trace=result.get("trace", []),
-            trace_id=trace_id,
+            source_used=chat_response.source_used,
+            trace=chat_response.trace,
+            trace_id=resolved_tid,
         )
 
-        if trace_id:
+        if resolved_tid:
+            eval_ctx = wf_def.extract_eval_context(final_state)
             background_tasks.add_task(
                 run_online_evaluation_task,
-                trace_id=trace_id,
+                trace_id=resolved_tid,
                 question=payload.question,
-                answer=result["answer"],
-                source_used=result["source_used"],
-                retrieved_contexts=result.get("retrieved_contexts", []),
+                answer=chat_response.answer,
+                source_used=eval_ctx.source_used,
+                retrieved_contexts=eval_ctx.retrieved_contexts,
             )
 
-        return {
-            "workflow": payload.workflow,
-            "answer": result["answer"],
-            "source_used": result["source_used"],
-            "trace": result.get("trace", []),
-            "citations": result.get("citations", []),
-            "rewritten_query": result.get("current_query", payload.question),
-            "trace_id": trace_id,
-        }
+        return chat_response
 
     except HTTPException:
         raise
@@ -207,6 +301,32 @@ def format_sse(event: str, data: dict[str, Any] | BaseModel) -> str:
     return f"event: {event}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
 
+def is_tool_call_chunk(chunk: Any) -> bool:
+    """Filter out token deltas when chunk contains tool call chunks or structured calls."""
+    if chunk is None:
+        return False
+    if bool(getattr(chunk, "tool_call_chunks", None)):
+        return True
+    if bool(getattr(chunk, "tool_calls", None)):
+        return True
+    if isinstance(chunk, dict) and (bool(chunk.get("tool_call_chunks")) or bool(chunk.get("tool_calls"))):
+        return True
+
+    msg = getattr(chunk, "message", None)
+    if msg is not None:
+        if bool(getattr(msg, "tool_call_chunks", None)):
+            return True
+        if bool(getattr(msg, "tool_calls", None)):
+            return True
+        if isinstance(msg, dict) and (bool(msg.get("tool_call_chunks")) or bool(msg.get("tool_calls"))):
+            return True
+    elif isinstance(chunk, dict) and isinstance(chunk.get("message"), dict):
+        msg_dict = chunk["message"]
+        if bool(msg_dict.get("tool_call_chunks")) or bool(msg_dict.get("tool_calls")):
+            return True
+    return False
+
+
 async def chat_event_generator(
     graph: Any,
     initial_state: dict[str, Any],
@@ -218,6 +338,7 @@ async def chat_event_generator(
     callback: Any = None,
     session_id: str | None = None,
     user_id: str | None = None,
+    workflow_def: WorkflowDefinition | None = None,
 ) -> AsyncGenerator[str, None]:
     """Consume LangGraph astream_events v2, yielding typed SSE events."""
     context_bindings: dict[str, Any] = {"workflow": workflow}
@@ -228,6 +349,9 @@ async def chat_event_generator(
     if user_id:
         context_bindings["user_id"] = user_id
     structlog.contextvars.bind_contextvars(**context_bindings)
+
+    step_labels = (workflow_def.info.step_labels if workflow_def else None) or STEP_LABELS
+    generation_nodes = (workflow_def.info.generation_nodes if workflow_def else None) or GENERATION_NODES
 
     accumulated_trace: list[str] = []
     final_output: dict[str, Any] = {}
@@ -240,21 +364,21 @@ async def chat_event_generator(
             node_name = event.get("metadata", {}).get("langgraph_node")
 
             # 1. Step transitions
-            if stream_steps and ev_type == "on_chain_start" and node_name in STEP_LABELS:
+            if stream_steps and ev_type == "on_chain_start" and node_name in step_labels:
                 yield format_sse(
                     "step",
                     StreamStepEvent(
                         step=node_name,
-                        label=STEP_LABELS[node_name],
+                        label=step_labels[node_name],
                         timestamp=datetime.now(timezone.utc).timestamp(),
                     ),
                 )
 
-            # 2. Whitelisted Token Delta Streaming (Strictly isolated from routers and graders)
-            elif ev_type == "on_chat_model_stream" and node_name in GENERATION_NODES:
+            # 2. Whitelisted Token Delta Streaming (Filtered: tool calls & empty strings suppressed)
+            elif ev_type == "on_chat_model_stream" and node_name in generation_nodes:
                 chunk = event.get("data", {}).get("chunk")
                 delta_content = ""
-                if chunk is not None:
+                if chunk is not None and not is_tool_call_chunk(chunk):
                     if isinstance(chunk, dict):
                         content = chunk.get("content", "")
                     else:
@@ -268,6 +392,7 @@ async def chat_event_generator(
                         )
                     else:
                         delta_content = str(content) if content else ""
+
                 if delta_content:
                     tokens_delivered += 1
                     answer_chunks.append(delta_content)
@@ -281,24 +406,49 @@ async def chat_event_generator(
                         for t in node_output["trace"]:
                             if t not in accumulated_trace:
                                 accumulated_trace.append(t)
-                    final_output.update(node_output)
+                    if "messages" in node_output and isinstance(node_output["messages"], list):
+                        if "messages" not in final_output:
+                            final_output["messages"] = list(initial_state.get("messages", []))
+                        for m in node_output["messages"]:
+                            if m not in final_output["messages"]:
+                                final_output["messages"].append(m)
+                    for k, v in node_output.items():
+                        if k != "messages":
+                            final_output[k] = v
 
         # Fallback for non-streaming terminal nodes (e.g. 'insufficient') that set static answer
-        if tokens_delivered == 0 and final_output.get("answer"):
-            static_answer = str(final_output["answer"])
-            if static_answer:
+        if tokens_delivered == 0:
+            fallback_answer = final_output.get("answer")
+            if not fallback_answer and workflow_def is not None:
+                try:
+                    candidate_resp = workflow_def.to_chat_response(final_output)
+                    fallback_answer = candidate_resp.answer
+                except Exception:
+                    pass
+            if fallback_answer:
+                static_answer = str(fallback_answer)
                 tokens_delivered += 1
                 answer_chunks.append(static_answer)
                 yield format_sse("token", StreamTokenEvent(delta=static_answer))
 
         # 4. Terminal Metadata Event
         resolved_tid = extract_trace_id(callback) or trace_id
-        final_trace = accumulated_trace or final_output.get("trace", [])
-        final_source_used = final_output.get("source_used", "direct")
-        final_citations = final_output.get("citations", [])
-        final_rewritten_query = final_output.get("current_query", question)
-        final_answer = str(final_output.get("answer") or "".join(answer_chunks))
-        final_retrieved_contexts = final_output.get("retrieved_contexts") or []
+        if workflow_def is not None:
+            chat_resp = workflow_def.to_chat_response(final_output, trace_id=resolved_tid)
+            eval_ctx = workflow_def.extract_eval_context(final_output)
+            final_trace = accumulated_trace or chat_resp.trace
+            final_source_used = chat_resp.source_used or eval_ctx.source_used
+            final_citations = chat_resp.citations
+            final_rewritten_query = chat_resp.rewritten_query or final_output.get("current_query", question)
+            final_answer = chat_resp.answer or str(final_output.get("answer") or "".join(answer_chunks))
+            final_retrieved_contexts = eval_ctx.retrieved_contexts
+        else:
+            final_trace = accumulated_trace or final_output.get("trace", [])
+            final_source_used = final_output.get("source_used", "direct")
+            final_citations = final_output.get("citations", [])
+            final_rewritten_query = final_output.get("current_query", question)
+            final_answer = str(final_output.get("answer") or "".join(answer_chunks))
+            final_retrieved_contexts = final_output.get("retrieved_contexts") or []
 
         metadata_dict = {
             "trace_id": resolved_tid,
@@ -354,6 +504,13 @@ async def chat_event_generator(
 
     except Exception as exc:
         logger.exception("Error during graph execution stream: %s", exc)
+        if workflow_def is not None:
+            try:
+                fallback_state = workflow_def.handle_error(exc, final_output or initial_state)
+                final_output.update(fallback_state)
+            except Exception as fallback_exc:
+                logger.error("Error in workflow.handle_error: %s", fallback_exc)
+
         err_dict = {"message": f"Inference stream failed: {str(exc)}", "code": 500}
         try:
             yield format_sse("error", StreamErrorEvent(**err_dict))
@@ -374,12 +531,19 @@ async def chat_event_generator(
 
 @router.post("/chat/stream")
 async def chat_stream(payload: ChatRequest):
-    graph = WORKFLOW_GRAPHS.get(payload.workflow)
-    if graph is None:
+    wf_def = _resolve_workflow(payload.workflow)
+    legacy_graph = WORKFLOW_GRAPHS.get(payload.workflow)
+
+    if wf_def is None and legacy_graph is None:
         raise HTTPException(status_code=400, detail=f"Unknown workflow: {payload.workflow}")
+
+    graph = legacy_graph if wf_def is None else wf_def.get_compiled_graph()
 
     sanitized_tid = payload.trace_id.replace("-", "").lower() if payload.trace_id else uuid.uuid4().hex
     classifier_meta = "openai_json" if payload.workflow == "fix_single_llm" else "typesafe_jev"
+    if payload.workflow == "react_agent":
+        classifier_meta = "react_agent"
+
     handler = get_langfuse_callback(
         workflow_name=payload.workflow,
         session_id=payload.session_id,
@@ -399,25 +563,30 @@ async def chat_stream(payload: ChatRequest):
         context_bindings["user_id"] = payload.user_id
     structlog.contextvars.bind_contextvars(**context_bindings)
 
-    initial_state = {
-        "question": payload.question,
-        "current_query": "",
-        "kb_docs": [],
-        "web_results": "",
-        "kb_grade": "",
-        "web_grade": "",
-        "answer": "",
-        "source_used": "",
-        "retry_count": 0,
-        "trace": [],
-        "citations": [],
-        "trace_id": trace_id,
-    }
+    if wf_def is not None:
+        initial_state = wf_def.to_initial_state(payload, trace_id=trace_id)
+    else:
+        initial_state = {
+            "question": payload.question,
+            "current_query": "",
+            "kb_docs": [],
+            "web_results": "",
+            "kb_grade": "",
+            "web_grade": "",
+            "answer": "",
+            "source_used": "",
+            "retry_count": 0,
+            "trace": [],
+            "citations": [],
+            "trace_id": trace_id,
+        }
 
     config: dict[str, Any] = {}
     if handler:
         config["callbacks"] = [handler]
     config["metadata"] = {"trace_id": trace_id, "streaming": True}
+    thread_id = payload.session_id or uuid.uuid4().hex
+    config["configurable"] = {"thread_id": thread_id}
 
     return StreamingResponse(
         chat_event_generator(
@@ -431,6 +600,7 @@ async def chat_stream(payload: ChatRequest):
             callback=handler,
             session_id=payload.session_id,
             user_id=payload.user_id,
+            workflow_def=wf_def,
         ),
         media_type="text/event-stream; charset=utf-8",
         headers={
