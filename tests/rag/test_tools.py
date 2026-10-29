@@ -23,35 +23,52 @@ def test_input_schemas():
 
 
 def test_create_retriever_tool_sync():
-    mock_retriever = MagicMock()
-    mock_retriever.invoke.return_value = [
+    docs = [
         Document(page_content="Use OpenVPN config file.", metadata={"source": "docs/vpn.md"}),
         Document(page_content="Contact IT for credentials.", metadata={"source": "docs/help.md"}),
     ]
+    mock_retriever = MagicMock()
+    mock_retriever.invoke.return_value = docs
 
     tool = create_retriever_tool(retriever=mock_retriever)
     assert isinstance(tool, BaseTool)
     assert tool.name == "knowledge_base_search"
     assert "query" in tool.args
 
-    output = tool.invoke({"query": "vpn"})
-    assert "[Source: docs/vpn.md]" in output
-    assert "Use OpenVPN config file." in output
-    assert "[Source: docs/help.md]" in output
+    result = tool.invoke({"query": "vpn"})
+    assert isinstance(result, tuple) and len(result) == 2
+    content, artifact = result
+
+    assert "[Source: docs/vpn.md]" in content
+    assert "Use OpenVPN config file." in content
+    assert "[Source: docs/help.md]" in content
+    assert artifact["documents"] == docs
+    assert artifact["citations"] == [
+        {"title": "vpn.md", "url": "", "type": "private_kb"},
+        {"title": "help.md", "url": "", "type": "private_kb"},
+    ]
     mock_retriever.invoke.assert_called_once()
 
 
 @pytest.mark.asyncio
 async def test_create_retriever_tool_async():
-    mock_retriever = MagicMock()
-    mock_retriever.ainvoke = AsyncMock(return_value=[
+    docs = [
         Document(page_content="SSO login with Okta.", metadata={"source": "sso.pdf"}),
-    ])
+    ]
+    mock_retriever = MagicMock()
+    mock_retriever.ainvoke = AsyncMock(return_value=docs)
 
     tool = create_retriever_tool(retriever=mock_retriever)
-    output = await tool.ainvoke({"query": "sso"})
-    assert "[Source: sso.pdf]" in output
-    assert "SSO login with Okta." in output
+    result = await tool.ainvoke({"query": "sso"})
+    assert isinstance(result, tuple) and len(result) == 2
+    content, artifact = result
+
+    assert "[Source: sso.pdf]" in content
+    assert "SSO login with Okta." in content
+    assert artifact["documents"] == docs
+    assert artifact["citations"] == [
+        {"title": "sso.pdf", "url": "", "type": "private_kb"},
+    ]
     mock_retriever.ainvoke.assert_called_once()
 
 
@@ -60,8 +77,32 @@ def test_create_retriever_tool_empty():
     mock_retriever.invoke.return_value = []
 
     tool = create_retriever_tool(retriever=mock_retriever)
-    output = tool.invoke({"query": "nonexistent"})
-    assert "No relevant internal documentation found." in output
+    result = tool.invoke({"query": "nonexistent"})
+    assert isinstance(result, tuple) and len(result) == 2
+    content, artifact = result
+
+    assert "No relevant internal documentation found." in content
+    assert artifact["documents"] == []
+    assert artifact["citations"] == []
+
+
+def test_create_retriever_tool_sync_exception_propagation():
+    mock_retriever = MagicMock()
+    mock_retriever.invoke.side_effect = ConnectionError("Pinecone connection timed out")
+
+    tool = create_retriever_tool(retriever=mock_retriever)
+    with pytest.raises(ConnectionError, match="Pinecone connection timed out"):
+        tool.invoke({"query": "vpn"})
+
+
+@pytest.mark.asyncio
+async def test_create_retriever_tool_async_exception_propagation():
+    mock_retriever = MagicMock()
+    mock_retriever.ainvoke = AsyncMock(side_effect=ConnectionError("Pinecone connection timed out"))
+
+    tool = create_retriever_tool(retriever=mock_retriever)
+    with pytest.raises(ConnectionError, match="Pinecone connection timed out"):
+        await tool.ainvoke({"query": "vpn"})
 
 
 def test_create_web_search_tool_sync():

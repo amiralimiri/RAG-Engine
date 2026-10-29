@@ -3,9 +3,11 @@
 from typing import Any
 from langchain_core.documents import Document
 from langchain_core.runnables import RunnableConfig
-from langchain_core.tools import BaseTool, StructuredTool
+from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field
 import structlog
+
+from app.rag.tools.base import DualOutputStructuredTool
 
 logger = structlog.get_logger(__name__)
 
@@ -53,22 +55,34 @@ def create_retriever_tool(
         from app.rag.vectorstore import get_retriever
         return get_retriever()
 
-    def _run(query: str, config: RunnableConfig | None = None) -> tuple[str, list[dict[str, Any]]]:
+    def _run(query: str, config: RunnableConfig | None = None) -> tuple[str, dict[str, Any]]:
         structlog.contextvars.bind_contextvars(step="retrieve_kb")
         active = _get_active_retriever()
         docs = active.invoke(query, config=config)
-        return _format_docs(docs), _extract_citations(docs)
+        docs = docs or []
+        citations = _extract_citations(docs)
+        artifact = {
+            "documents": docs,
+            "citations": citations,
+        }
+        return _format_docs(docs), artifact
 
-    async def _arun(query: str, config: RunnableConfig | None = None) -> tuple[str, list[dict[str, Any]]]:
+    async def _arun(query: str, config: RunnableConfig | None = None) -> tuple[str, dict[str, Any]]:
         structlog.contextvars.bind_contextvars(step="retrieve_kb")
         active = _get_active_retriever()
         if hasattr(active, "ainvoke"):
             docs = await active.ainvoke(query, config=config)
         else:
             docs = active.invoke(query, config=config)
-        return _format_docs(docs), _extract_citations(docs)
+        docs = docs or []
+        citations = _extract_citations(docs)
+        artifact = {
+            "documents": docs,
+            "citations": citations,
+        }
+        return _format_docs(docs), artifact
 
-    return StructuredTool.from_function(
+    return DualOutputStructuredTool.from_function(
         func=_run,
         coroutine=_arun,
         name=name,
