@@ -355,3 +355,15 @@ async def test_backward_compatibility_legacy_retriever_without_kb_tool(mock_llm_
     assert result["kb_docs"][0].page_content == "Legacy retriever doc"
     assert result["citations"] == [{"title": "legacy.md", "url": "", "type": "private_kb"}]
     assert result["retrieved_contexts"] == ["Legacy retriever doc"]
+
+
+def test_unpack_tool_output_handles_empty_dict_artifact():
+    from app.rag.engine import _unpack_tool_output
+    from langchain_core.messages import ToolMessage
+
+    msg = ToolMessage(content="Found nothing", artifact={}, tool_call_id="call_123")
+    content, artifact = _unpack_tool_output(msg)
+    assert content == "Found nothing"
+    assert artifact == {}
+    assert isinstance(artifact, dict)
+

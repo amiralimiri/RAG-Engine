@@ -52,11 +52,21 @@ def create_retriever_tool(
 
     def _get_active_retriever():
         if retriever is not None:
+            if callable(retriever) and not hasattr(retriever, "invoke") and not hasattr(retriever, "ainvoke"):
+                return retriever()
             return retriever
+        import sys
+        engine_mod = sys.modules.get("app.rag.engine")
+        if engine_mod is not None and hasattr(engine_mod, "get_retriever"):
+            engine_get = getattr(engine_mod, "get_retriever")
+            from app.rag.vectorstore import get_retriever as vs_get_retriever
+            if engine_get is not vs_get_retriever:
+                return engine_get()
+            return vs_get_retriever()
         from app.rag.vectorstore import get_retriever
         return get_retriever()
 
-    def _run(query: str, config: RunnableConfig = None) -> tuple[str, dict[str, Any]]:
+    def _run(query: str, config: RunnableConfig | None = None) -> tuple[str, dict[str, Any]]:
         structlog.contextvars.bind_contextvars(step="retrieve_kb")
         active = _get_active_retriever()
         docs = active.invoke(query, config=config)
@@ -68,7 +78,7 @@ def create_retriever_tool(
         }
         return _format_docs(docs), artifact
 
-    async def _arun(query: str, config: RunnableConfig = None) -> tuple[str, dict[str, Any]]:
+    async def _arun(query: str, config: RunnableConfig | None = None) -> tuple[str, dict[str, Any]]:
         structlog.contextvars.bind_contextvars(step="retrieve_kb")
         active = _get_active_retriever()
         if hasattr(active, "ainvoke"):

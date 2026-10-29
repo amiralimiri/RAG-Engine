@@ -76,7 +76,18 @@ def create_web_search_tool(
 
     def _get_active_client():
         if search_client is not None:
+            if callable(search_client) and not hasattr(search_client, "invoke") and not hasattr(search_client, "ainvoke"):
+                return search_client()
             return search_client
+        import sys
+        engine_mod = sys.modules.get("app.rag.engine")
+        if engine_mod is not None and hasattr(engine_mod, "web_search_tool"):
+            candidate = getattr(engine_mod, "web_search_tool")
+            default_func = getattr(engine_mod, "_default_web_search_tool", None)
+            if default_func is not None and candidate is not default_func:
+                res = candidate() if callable(candidate) else candidate
+                if res is not None:
+                    return res
         from langchain_tavily import TavilySearch
         settings = get_settings()
         api_key = settings.tavily_api_key.get_secret_value() if settings.tavily_api_key else ""
@@ -88,7 +99,7 @@ def create_web_search_tool(
             include_raw_content=False,
         )
 
-    def _run(query: str, config: RunnableConfig = None) -> tuple[str, dict[str, Any]]:
+    def _run(query: str, config: RunnableConfig | None = None) -> tuple[str, dict[str, Any]]:
         structlog.contextvars.bind_contextvars(step="search_web")
         client = _get_active_client()
         result = client.invoke({"query": query}, config=config)
@@ -98,7 +109,7 @@ def create_web_search_tool(
         }
         return _format_search_results(result), artifact
 
-    async def _arun(query: str, config: RunnableConfig = None) -> tuple[str, dict[str, Any]]:
+    async def _arun(query: str, config: RunnableConfig | None = None) -> tuple[str, dict[str, Any]]:
         structlog.contextvars.bind_contextvars(step="search_web")
         client = _get_active_client()
         if hasattr(client, "ainvoke"):
