@@ -56,7 +56,7 @@
 |---|---|---|---|---|
 | **Ticket 01** | Core Workflow Interfaces & Additive Schemas | `app/rag/workflows/base.py`, `app/api/schemas.py`, `tests/rag/test_base_workflow.py` | None | `completed` |
 | **Ticket 02** | Reusable Tool Abstraction Layer (`BaseTool`) | `app/rag/tools/retriever.py`, `app/rag/tools/search.py`, `app/rag/tools/__init__.py`, `tests/rag/test_tools.py` | None | `completed` |
-| **Ticket 03** | Central Thread-Safe `WorkflowRegistry` | `app/rag/workflows/registry.py`, `tests/rag/test_registry.py` | None (Ticket 01 completed) | `ready` |
+| **Ticket 03** | Central Thread-Safe `WorkflowRegistry` | `app/rag/workflows/registry.py`, `tests/rag/test_registry.py` | None (Ticket 01 completed) | `completed` |
 | **Ticket 04** | Reusable Conformance Test Harness | `tests/rag/test_workflow_contracts.py` | None (Ticket 01 completed) | `ready` |
 | **Ticket 05** | Parameterized `SelfCorrectiveRagWorkflow` | `app/rag/workflows/self_corrective.py`, `app/rag/workflows/__init__.py`, `tests/rag/test_self_corrective_contract.py` | Ticket 01, Ticket 03, Ticket 04 | `blocked` |
 | **Ticket 06** | Autonomous ReAct Agent Reference Workflow | `app/rag/workflows/react_agent.py`, `app/rag/workflows/__init__.py`, `tests/rag/test_react_agent.py` | Ticket 01, Ticket 02, Ticket 03, Ticket 04 | `blocked` |
@@ -131,21 +131,21 @@ Extract private knowledge base retrieval and Tavily web search into modular `Bas
   - `app/rag/workflows/registry.py`
   - `tests/rag/test_registry.py`
 - **Blockers:** Ticket 01
-- **Status:** `blocked`
+- **Status:** `completed`
 
 ### What to build:
 Create a thread-safe registry that stores `WorkflowDefinition` instances, prevents duplicate registration, manages lazy singleton graph compilation, and supports pre-warming. Provide a `@register_workflow` decorator.
 
 ### Acceptance Criteria:
-- [ ] `WorkflowRegistry` class implements:
+- [x] `WorkflowRegistry` class implements:
   - `register(workflow: WorkflowDefinition) -> None` (raises `ValueError` on duplicate IDs)
   - `get(workflow_id: str) -> WorkflowDefinition` (raises `KeyError` or `ValueError` if missing)
   - `list_ids() -> list[str]`
   - `list_info() -> list[WorkflowInfo]`
   - `warmup() -> None` (calls `get_compiled_graph()` on all registered workflows)
-- [ ] `@register_workflow` decorator allows declarative registration into the default registry.
-- [ ] Thread safety confirmed via concurrency tests simulating parallel lookups and compilation.
-- [ ] Unit tests cover registration, retrieval, listing, duplicate error handling, and warmup.
+- [x] `@register_workflow` decorator allows declarative registration into the default registry.
+- [x] Thread safety confirmed via concurrency tests simulating parallel lookups and compilation.
+- [x] Unit tests cover registration, retrieval, listing, duplicate error handling, and warmup.
 
 ---
 
