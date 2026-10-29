@@ -2,6 +2,11 @@
 
 from app.rag.classifiers import JevClassifierAdapter, OpenAIClassifierAdapter
 from app.rag.workflows.base import EvalContext, WorkflowDefinition, WorkflowInfo
+from app.rag.workflows.legacy import (
+    WORKFLOW_ASKS,
+    WORKFLOW_GRAPHS,
+    reset_legacy_defaults,
+)
 from app.rag.workflows.react_agent import ReActAgentWorkflow
 from app.rag.workflows.registry import (
     WorkflowRegistry,
@@ -54,4 +59,7 @@ __all__ = [
     "SelfCorrectiveRagWorkflow",
     "ReActAgentWorkflow",
     "register_default_workflows",
+    "WORKFLOW_ASKS",
+    "WORKFLOW_GRAPHS",
+    "reset_legacy_defaults",
 ]

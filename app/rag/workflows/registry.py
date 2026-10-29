@@ -71,6 +71,15 @@ class WorkflowRegistry:
         with self._lock:
             self._workflows.clear()
 
+    def unregister(self, workflow_id: str) -> bool:
+        """Remove a workflow by ID from the registry. Returns True if removed, False otherwise."""
+        with self._lock:
+            if workflow_id in self._workflows:
+                del self._workflows[workflow_id]
+                logger.info("workflow_unregistered", workflow_id=workflow_id)
+                return True
+            return False
+
     def __contains__(self, workflow_id: str) -> bool:
         with self._lock:
             return workflow_id in self._workflows

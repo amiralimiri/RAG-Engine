@@ -4,9 +4,9 @@
 
 **Blocked by:** 01: WorkflowRunner Core Execution & Unit Test Suite
 
-**Status:** ready-for-agent
+**Status:** closed
 
-- [ ] Create `app/rag/workflows/legacy.py` containing `_LegacyUnifiedWorkflowAdapter`, `_sync_legacy_registry`, `_LegacyAsksDict`, and `_LegacyGraphsDict`.
-- [ ] Export `WORKFLOW_ASKS` and `WORKFLOW_GRAPHS` from `app/rag/workflows/legacy.py` and re-export via `app/rag/workflows/__init__.py`.
-- [ ] Ensure that modifications or deletions on `WORKFLOW_ASKS` and `WORKFLOW_GRAPHS` automatically synchronize with `WorkflowRegistry` via `_sync_legacy_registry`.
-- [ ] Write dedicated conformance unit tests in `tests/rag/test_legacy_compat.py` verifying that dictionary mutations update the registry, that monkeypatched ask callables invoke cleanly, and that deleting entries resets defaults.
+- [x] Create `app/rag/workflows/legacy.py` containing `_LegacyUnifiedWorkflowAdapter`, `_sync_legacy_registry`, `_LegacyAsksDict`, and `_LegacyGraphsDict`.
+- [x] Export `WORKFLOW_ASKS` and `WORKFLOW_GRAPHS` from `app/rag/workflows/legacy.py` and re-export via `app/rag/workflows/__init__.py`.
+- [x] Ensure that modifications or deletions on `WORKFLOW_ASKS` and `WORKFLOW_GRAPHS` automatically synchronize with `WorkflowRegistry` via `_sync_legacy_registry`.
+- [x] Write dedicated conformance unit tests in `tests/rag/test_legacy_compat.py` verifying that dictionary mutations update the registry, that monkeypatched ask callables invoke cleanly, and that deleting entries resets defaults.
