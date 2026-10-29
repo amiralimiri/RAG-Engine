@@ -79,15 +79,6 @@ def create_web_search_tool(
             if callable(search_client) and not hasattr(search_client, "invoke") and not hasattr(search_client, "ainvoke"):
                 return search_client()
             return search_client
-        import sys
-        engine_mod = sys.modules.get("app.rag.engine")
-        if engine_mod is not None and hasattr(engine_mod, "web_search_tool"):
-            candidate = getattr(engine_mod, "web_search_tool")
-            default_func = getattr(engine_mod, "_default_web_search_tool", None)
-            if candidate is not None and (default_func is None or candidate is not default_func):
-                res = candidate() if callable(candidate) else candidate
-                if res is not None:
-                    return res
         from langchain_tavily import TavilySearch
         settings = get_settings()
         api_key = settings.tavily_api_key.get_secret_value() if settings.tavily_api_key else ""

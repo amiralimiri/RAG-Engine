@@ -263,10 +263,34 @@ def test_create_retriever_tool_without_engine_module_reflection(monkeypatch: pyt
             bogus_called = True
             raise AssertionError("Reflection hack was called on app.rag.engine!")
 
-        monkeypatch.setattr(engine_mod, "get_retriever", bogus_get)
+        monkeypatch.setattr(engine_mod, "get_retriever", bogus_get, raising=False)
 
     tool = create_retriever_tool()
     content, artifact = tool.invoke({"query": "policy"})
     assert "Zero reflection chunk." in content
+
+
+def test_create_web_search_tool_without_engine_module_reflection(monkeypatch: pytest.MonkeyPatch):
+    """create_web_search_tool does not depend on sys.modules['app.rag.engine']."""
+    import sys
+
+    # Inject a bogus web_search_tool on app.rag.engine if present
+    engine_mod = sys.modules.get("app.rag.engine")
+    if engine_mod is not None:
+        def bogus_tool():
+            raise AssertionError("Reflection hack was called on app.rag.engine!")
+
+        monkeypatch.setattr(engine_mod, "web_search_tool", bogus_tool, raising=False)
+
+    mock_client = MagicMock()
+    mock_client.invoke.return_value = {
+        "answer": "Clean search answer",
+        "results": [{"title": "Web Title", "url": "https://example.com", "content": "Clean snippet"}],
+    }
+
+    tool = create_web_search_tool(search_client=mock_client)
+    content, artifact = tool.invoke({"query": "test query"})
+    assert "Clean search answer" in content
+    assert artifact["citations"] == [{"title": "Web Title", "url": "https://example.com", "type": "web"}]
 
 

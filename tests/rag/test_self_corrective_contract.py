@@ -18,13 +18,13 @@ class TestSelfCorrectiveRagFakeClassifierContract(BaseWorkflowContractTest):
 
     @pytest.fixture
     def workflow(self):
-        mock_retriever = MagicMock()
-        mock_retriever.invoke.return_value = []
+        mock_kb = MagicMock(spec=BaseTool)
+        mock_kb.invoke.return_value = ("content", {})
         return SelfCorrectiveRagWorkflow(
             id="self_corrective_test",
             name="Self Corrective Test",
             classifier=FakeClassifierAdapter(route_decision="kb", kb_grade="good"),
-            retriever=mock_retriever,
+            kb_tool=mock_kb,
         )
 
 
@@ -52,12 +52,10 @@ class TestRegisteredJevWorkflowContract(BaseWorkflowContractTest):
 
 def test_self_corrective_state_mutation():
     """Verify initial state keys match AgentState expectation."""
-    mock_retriever = MagicMock()
     wf = SelfCorrectiveRagWorkflow(
         id="test_sc",
         name="Test",
         classifier=FakeClassifierAdapter(),
-        retriever=mock_retriever,
     )
     from app.api.schemas import ChatRequest
     req = ChatRequest(question="How to configure VPN?", trace_id="tid_123")
@@ -72,12 +70,10 @@ def test_self_corrective_state_mutation():
 
 def test_self_corrective_handle_error_trace():
     """Verify error handler appends error to trace and returns user-friendly fallback."""
-    mock_retriever = MagicMock()
     wf = SelfCorrectiveRagWorkflow(
         id="test_sc",
         name="Test",
         classifier=FakeClassifierAdapter(),
-        retriever=mock_retriever,
     )
     current_state = {"trace": ["Router -> KB"], "question": "test"}
     fallback = wf.handle_error(ValueError("Vectorstore down"), current_state)
@@ -141,7 +137,6 @@ def test_self_corrective_get_compiled_graph_forwards_tools():
         id="test_forwarding",
         name="Test Forwarding",
         classifier=classifier,
-        retriever=mock_retriever,
         kb_tool=mock_kb_tool,
         web_tool=mock_web_tool,
     )
@@ -151,11 +146,35 @@ def test_self_corrective_get_compiled_graph_forwards_tools():
         graph = wf.get_compiled_graph()
         mock_create_graph.assert_called_once_with(
             classifier=classifier,
-            retriever=mock_retriever,
+            model=None,
             kb_tool=mock_kb_tool,
             web_tool=mock_web_tool,
         )
         assert graph is mock_create_graph.return_value
+
+
+def test_self_corrective_model_injection_parameters():
+    """Verify SelfCorrectiveRagWorkflow accepts, stores, and forwards model."""
+    from langchain_core.language_models.chat_models import BaseChatModel
+    mock_model = MagicMock(spec=BaseChatModel)
+    classifier = FakeClassifierAdapter()
+    wf = SelfCorrectiveRagWorkflow(
+        id="test_model_fwd",
+        name="Test Model Fwd",
+        classifier=classifier,
+        model=mock_model,
+    )
+    assert wf.model is mock_model
+
+    with patch("app.rag.workflows.self_corrective.create_agentic_rag_graph") as mock_create_graph:
+        mock_create_graph.return_value = MagicMock()
+        wf.get_compiled_graph()
+        mock_create_graph.assert_called_once_with(
+            classifier=classifier,
+            model=mock_model,
+            kb_tool=None,
+            web_tool=None,
+        )
 
 
 @pytest.mark.asyncio

@@ -2,7 +2,6 @@
 from typing import Any
 
 from app.rag.classifiers import OpenAIClassifierAdapter
-from app.rag.engine import ask as engine_ask
 from app.rag.workflows.registry import get_workflow_registry
 from app.rag.workflows.self_corrective import SelfCorrectiveRagWorkflow
 

@@ -80,8 +80,8 @@ class ReActAgentWorkflow:
         self._compiled_graph = None
 
     def _get_default_llm(self) -> Any:
-        from app.rag.engine import llm
-        return llm()
+        from app.rag.engine import get_chat_model
+        return get_chat_model()
 
     def _get_default_tools(self) -> list[BaseTool]:
         from app.rag.tools import create_retriever_tool, create_web_search_tool
