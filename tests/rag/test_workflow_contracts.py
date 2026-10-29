@@ -52,10 +52,14 @@ class BaseWorkflowContractTest:
         init_state = workflow.to_initial_state(request, trace_id="trace_abc")
         # Ensure minimal answer fields exist for state conversion
         test_state = dict(init_state)
-        test_state.setdefault("answer", "Here is your test answer.")
-        test_state.setdefault("source_used", "test_source")
-        test_state.setdefault("citations", [{"title": "Doc 1", "url": "https://example.com"}])
-        test_state.setdefault("trace", ["Step 1", "Step 2"])
+        if not test_state.get("answer"):
+            test_state["answer"] = "Here is your test answer."
+        if not test_state.get("source_used"):
+            test_state["source_used"] = "test_source"
+        if not test_state.get("citations"):
+            test_state["citations"] = [{"title": "Doc 1", "url": "https://example.com"}]
+        if not test_state.get("trace"):
+            test_state["trace"] = ["Step 1", "Step 2"]
 
         response = workflow.to_chat_response(test_state, trace_id="trace_abc")
         assert isinstance(response, ChatResponse), "to_chat_response must return a ChatResponse instance"
@@ -70,8 +74,10 @@ class BaseWorkflowContractTest:
         request = ChatRequest(question="Test question")
         init_state = workflow.to_initial_state(request)
         test_state = dict(init_state)
-        test_state.setdefault("source_used", "vectorstore")
-        test_state.setdefault("retrieved_contexts", ["Context paragraph 1", "Context paragraph 2"])
+        if not test_state.get("source_used"):
+            test_state["source_used"] = "vectorstore"
+        if not test_state.get("retrieved_contexts"):
+            test_state["retrieved_contexts"] = ["Context paragraph 1", "Context paragraph 2"]
 
         eval_ctx = workflow.extract_eval_context(test_state)
         assert isinstance(eval_ctx, EvalContext), "extract_eval_context must return an EvalContext"

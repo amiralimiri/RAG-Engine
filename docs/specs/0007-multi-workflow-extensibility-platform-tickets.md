@@ -58,7 +58,7 @@
 | **Ticket 02** | Reusable Tool Abstraction Layer (`BaseTool`) | `app/rag/tools/retriever.py`, `app/rag/tools/search.py`, `app/rag/tools/__init__.py`, `tests/rag/test_tools.py` | None | `completed` |
 | **Ticket 03** | Central Thread-Safe `WorkflowRegistry` | `app/rag/workflows/registry.py`, `tests/rag/test_registry.py` | None (Ticket 01 completed) | `completed` |
 | **Ticket 04** | Reusable Conformance Test Harness | `tests/rag/test_workflow_contracts.py` | None (Ticket 01 completed) | `completed` |
-| **Ticket 05** | Parameterized `SelfCorrectiveRagWorkflow` | `app/rag/workflows/self_corrective.py`, `app/rag/workflows/__init__.py`, `tests/rag/test_self_corrective_contract.py` | None (Tickets 01, 03, 04 completed) | `ready` |
+| **Ticket 05** | Parameterized `SelfCorrectiveRagWorkflow` | `app/rag/workflows/self_corrective.py`, `app/rag/workflows/__init__.py`, `tests/rag/test_self_corrective_contract.py` | None (Tickets 01, 03, 04 completed) | `completed` |
 | **Ticket 06** | Autonomous ReAct Agent Reference Workflow | `app/rag/workflows/react_agent.py`, `app/rag/workflows/__init__.py`, `tests/rag/test_react_agent.py` | None (Tickets 01, 02, 03, 04 completed) | `ready` |
 | **Ticket 07** | Modernize Transport Layer & SSE Token Filtering | `app/api/routes.py`, `tests/api/test_routes_multi_workflow.py` | Ticket 03, Ticket 05, Ticket 06 | `blocked` |
 | **Ticket 08** | End-to-End Verification & Regression Suite | `tests/test_chat_stream.py`, `tests/test_e2e_observability.py`, full suite | Ticket 07 | `blocked` |
@@ -181,20 +181,20 @@ Create an abstract test base class `BaseWorkflowContractTest` that tests any `Wo
   - `app/rag/workflows/__init__.py`
   - `tests/rag/test_self_corrective_contract.py`
 - **Blockers:** Ticket 01, Ticket 03, Ticket 04
-- **Status:** `blocked`
+- **Status:** `completed`
 
 ### What to build:
 Implement `SelfCorrectiveRagWorkflow` satisfying `WorkflowDefinition`. Encapsulate the 10-node DAG from `app/rag/engine.py`. Parameterize with `WorkflowClassifier`. Register both `"fix_single_llm"` (with `OpenAIClassifierAdapter`) and `"fix_single_jev"` (with `JevClassifierAdapter`) into the registry manifest.
 
 ### Acceptance Criteria:
-- [ ] `SelfCorrectiveRagWorkflow` takes `id`, `name`, `classifier`, and optional `retriever`.
-- [ ] `info` includes `generation_nodes = {"generate_from_kb", "generate_from_web", "direct_answer"}` and step labels matching existing UI spinners.
-- [ ] `to_initial_state` initializes full `AgentState` dictionary (`question`, `current_query`, `retry_count=0`, etc.).
-- [ ] `to_chat_response` constructs valid `ChatResponse` with `source_used`, `citations`, `trace`, and `answer`.
-- [ ] `extract_eval_context` returns `EvalContext(source_used=..., retrieved_contexts=...)`.
-- [ ] `handle_error` returns an `AgentState` dict with `source_used="error_fallback"` and user-friendly error answer.
-- [ ] Both instances registered in `app/rag/workflows/__init__.py`.
-- [ ] Inherits and passes `BaseWorkflowContractTest` for both classifier variants.
+- [x] `SelfCorrectiveRagWorkflow` takes `id`, `name`, `classifier`, and optional `retriever`.
+- [x] `info` includes `generation_nodes = {"generate_from_kb", "generate_from_web", "direct_answer"}` and step labels matching existing UI spinners.
+- [x] `to_initial_state` initializes full `AgentState` dictionary (`question`, `current_query`, `retry_count=0`, etc.).
+- [x] `to_chat_response` constructs valid `ChatResponse` with `source_used`, `citations`, `trace`, and `answer`.
+- [x] `extract_eval_context` returns `EvalContext(source_used=..., retrieved_contexts=...)`.
+- [x] `handle_error` returns an `AgentState` dict with `source_used="error_fallback"` and user-friendly error answer.
+- [x] Both instances registered in `app/rag/workflows/__init__.py`.
+- [x] Inherits and passes `BaseWorkflowContractTest` for both classifier variants.
 
 ---
 

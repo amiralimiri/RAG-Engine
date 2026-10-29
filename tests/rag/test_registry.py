@@ -97,30 +97,31 @@ def test_registry_warmup():
 
 
 def test_register_decorator_and_global_singleton():
+    from app.rag.workflows import register_default_workflows
     global_reg = get_workflow_registry()
-    global_reg.clear()
 
-    # Direct function registration
-    wf_inst = _make_mock_workflow("global_wf1")
-    register_workflow(wf_inst)
-    assert "global_wf1" in global_reg
+    try:
+        # Direct function registration
+        wf_inst = _make_mock_workflow("global_wf1")
+        register_workflow(wf_inst)
+        assert "global_wf1" in global_reg
 
-    # Decorator on class
-    @register_workflow
-    class DecoratedWorkflow:
-        def __init__(self):
-            self.info = WorkflowInfo(
-                id="decorated_wf",
-                name="Decorated Workflow",
-                description="Class decorated workflow",
-            )
-            self.get_compiled_graph = MagicMock()
+        # Decorator on class
+        @register_workflow
+        class DecoratedWorkflow:
+            def __init__(self):
+                self.info = WorkflowInfo(
+                    id="decorated_wf",
+                    name="Decorated Workflow",
+                    description="Class decorated workflow",
+                )
+                self.get_compiled_graph = MagicMock()
 
-    assert "decorated_wf" in global_reg
-    assert global_reg.get("decorated_wf").info.name == "Decorated Workflow"
-
-    # Clean up
-    global_reg.clear()
+        assert "decorated_wf" in global_reg
+        assert global_reg.get("decorated_wf").info.name == "Decorated Workflow"
+    finally:
+        # Clean up added test workflows and restore defaults
+        register_default_workflows()
 
 
 def test_thread_safety_concurrency():
