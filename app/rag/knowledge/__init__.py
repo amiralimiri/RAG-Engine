@@ -5,6 +5,10 @@ from app.rag.knowledge.chunkers import (
     DocumentChunker,
     RecursiveCharacterChunker,
 )
+from app.rag.knowledge.indexer import (
+    DocumentIndexer,
+    get_document_indexer,
+)
 from app.rag.knowledge.parsers import (
     CompositeDocumentParser,
     DocxParser,
@@ -31,4 +35,6 @@ __all__ = [
     "CompositeDocumentParser",
     "DocumentChunker",
     "RecursiveCharacterChunker",
+    "DocumentIndexer",
+    "get_document_indexer",
 ]

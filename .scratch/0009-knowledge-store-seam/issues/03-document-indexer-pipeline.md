@@ -23,12 +23,12 @@ Implement the deep write-path indexing pipeline in `app/rag/knowledge/indexer.py
 - Ticket 01: VectorStoreAdapter Protocol & Offline In-Memory Double
 - Ticket 02: Pluggable Document Parsing and Chunking Strategy Protocols
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Red: Create `tests/rag/test_document_indexer.py` asserting `index_file` and `aindex_file` successfully parse, chunk, and index a document into `InMemoryVectorStoreAdapter`.
-- [ ] Red: Add test asserting `IndexingResult` returns accurate document counts, chunk counts, and created vector IDs.
-- [ ] Red: Add idempotency test asserting re-indexing the same file produces identical chunk IDs and does not increase the total vector count in the store.
-- [ ] Red: Add test asserting `index_batch` and `aindex_batch` process multiple files in batched slices.
-- [ ] Red: Add test asserting unhandled parsing errors return an `IndexingResult` with `success=False` and the captured error message without crashing the batch.
-- [ ] Green: Implement `DocumentIndexer` and `get_document_indexer` in `app/rag/knowledge/indexer.py`.
-- [ ] Refactor: Export `DocumentIndexer` in `app/rag/knowledge/__init__.py`.
+- [x] Red: Create `tests/rag/test_document_indexer.py` asserting `index_file` and `aindex_file` successfully parse, chunk, and index a document into `InMemoryVectorStoreAdapter`.
+- [x] Red: Add test asserting `IndexingResult` returns accurate document counts, chunk counts, and created vector IDs.
+- [x] Red: Add idempotency test asserting re-indexing the same file produces identical chunk IDs and does not increase the total vector count in the store.
+- [x] Red: Add test asserting `index_batch` and `aindex_batch` process multiple files in batched slices.
+- [x] Red: Add test asserting unhandled parsing errors return an `IndexingResult` with `success=False` and the captured error message without crashing the batch.
+- [x] Green: Implement `DocumentIndexer` and `get_document_indexer` in `app/rag/knowledge/indexer.py`.
+- [x] Refactor: Export `DocumentIndexer` in `app/rag/knowledge/__init__.py`.
