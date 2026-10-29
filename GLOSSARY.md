@@ -82,3 +82,7 @@ A pluggable strategy protocol (`DocumentParser`) responsible for reading a raw f
 
 ### Document Chunker
 A pluggable strategy protocol (`DocumentChunker`) partitioning parsed documents into retrieval-optimized text segments with preserved metadata and configurable overlap.
+
+### Workflow Runner
+The deep execution and streaming runtime module (`app/rag/workflows/runner.py`) orchestrating workflow invocation, LangGraph `astream_events` polling, selective token filtering, SSE serialization, telemetry context binding, and online evaluation dispatch behind a compact 2-method interface (`execute` and `stream`).
+_Avoid_: Event generator, stream helper, route executor
