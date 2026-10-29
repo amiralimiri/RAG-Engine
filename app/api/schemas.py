@@ -4,6 +4,24 @@ from datetime import datetime, timezone
 from typing import Any
 from pydantic import BaseModel, Field
 
+from app.rag.workflows.base import WorkflowInfo
+
+
+class ChatMessage(BaseModel):
+    """Conversational chat message."""
+
+    role: str = Field(..., description="Message author role (e.g. 'user', 'assistant', 'system')")
+    content: str = Field(..., description="Message text content")
+
+
+class Attachment(BaseModel):
+    """File, image, or media attachment for multimodal requests."""
+
+    filename: str = Field(..., description="Name of the attached file")
+    content_type: str = Field(..., description="MIME content type")
+    url: str | None = Field(default=None, description="Optional remote URL to resource")
+    data: str | None = Field(default=None, description="Optional base64-encoded file payload")
+
 
 class ChatRequest(BaseModel):
     """Payload contract for chat generation requests."""
@@ -14,6 +32,14 @@ class ChatRequest(BaseModel):
     user_id: str | None = Field(default=None, description="Optional authenticated user identifier")
     trace_id: str | None = Field(default=None, description="Optional Langfuse trace ID override")
     stream_steps: bool = Field(default=True, description="Whether to emit intermediate graph step events")
+    messages: list[ChatMessage] | None = Field(
+        default=None,
+        description="Optional multi-turn conversation messages preceding this query",
+    )
+    attachments: list[Attachment] | None = Field(
+        default=None,
+        description="Optional file or image attachments",
+    )
 
 
 class ChatResponse(BaseModel):
@@ -26,6 +52,17 @@ class ChatResponse(BaseModel):
     citations: list[Any] = Field(default_factory=list, description="Cited reference materials")
     rewritten_query: str | None = Field(default=None, description="Rewritten or original query")
     trace_id: str | None = Field(default=None, description="Langfuse trace ID")
+
+
+class WorkflowListResponse(BaseModel):
+    """Available workflows and rich capability introspection."""
+
+    default: str = Field(..., description="Default workflow name")
+    workflows: list[str] = Field(..., description="List of registered workflow names")
+    details: list[WorkflowInfo] = Field(
+        default_factory=list,
+        description="Rich capability details for registered workflows",
+    )
 
 
 class FeedbackRequest(BaseModel):
@@ -73,8 +110,11 @@ class StreamErrorEvent(BaseModel):
 
 
 __all__ = [
+    "ChatMessage",
+    "Attachment",
     "ChatRequest",
     "ChatResponse",
+    "WorkflowListResponse",
     "FeedbackRequest",
     "StreamStepEvent",
     "StreamTokenEvent",

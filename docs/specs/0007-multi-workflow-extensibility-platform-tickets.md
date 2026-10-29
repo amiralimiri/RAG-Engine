@@ -54,10 +54,10 @@
 
 | Ticket | Title | Target Files | Blockers | Status |
 |---|---|---|---|---|
-| **Ticket 01** | Core Workflow Interfaces & Additive Schemas | `app/rag/workflows/base.py`, `app/api/schemas.py`, `tests/rag/test_base_workflow.py` | None | `ready` |
+| **Ticket 01** | Core Workflow Interfaces & Additive Schemas | `app/rag/workflows/base.py`, `app/api/schemas.py`, `tests/rag/test_base_workflow.py` | None | `completed` |
 | **Ticket 02** | Reusable Tool Abstraction Layer (`BaseTool`) | `app/rag/tools/retriever.py`, `app/rag/tools/search.py`, `app/rag/tools/__init__.py`, `tests/rag/test_tools.py` | None | `ready` |
-| **Ticket 03** | Central Thread-Safe `WorkflowRegistry` | `app/rag/workflows/registry.py`, `tests/rag/test_registry.py` | Ticket 01 | `blocked` |
-| **Ticket 04** | Reusable Conformance Test Harness | `tests/rag/test_workflow_contracts.py` | Ticket 01 | `blocked` |
+| **Ticket 03** | Central Thread-Safe `WorkflowRegistry` | `app/rag/workflows/registry.py`, `tests/rag/test_registry.py` | None (Ticket 01 completed) | `ready` |
+| **Ticket 04** | Reusable Conformance Test Harness | `tests/rag/test_workflow_contracts.py` | None (Ticket 01 completed) | `ready` |
 | **Ticket 05** | Parameterized `SelfCorrectiveRagWorkflow` | `app/rag/workflows/self_corrective.py`, `app/rag/workflows/__init__.py`, `tests/rag/test_self_corrective_contract.py` | Ticket 01, Ticket 03, Ticket 04 | `blocked` |
 | **Ticket 06** | Autonomous ReAct Agent Reference Workflow | `app/rag/workflows/react_agent.py`, `app/rag/workflows/__init__.py`, `tests/rag/test_react_agent.py` | Ticket 01, Ticket 02, Ticket 03, Ticket 04 | `blocked` |
 | **Ticket 07** | Modernize Transport Layer & SSE Token Filtering | `app/api/routes.py`, `tests/api/test_routes_multi_workflow.py` | Ticket 03, Ticket 05, Ticket 06 | `blocked` |
@@ -73,30 +73,30 @@
   - `app/api/schemas.py`
   - `tests/rag/test_base_workflow.py`
 - **Blockers:** None
-- **Status:** `ready`
+- **Status:** `completed`
 
 ### What to build:
 Establish the structural contracts that all workflow implementations must satisfy. Define `WorkflowInfo`, `EvalContext`, and the runtime-checkable `WorkflowDefinition` Protocol. Additively extend `ChatRequest` to support optional multi-turn `messages` and `attachments` without breaking backward compatibility for `question: str`.
 
 ### Acceptance Criteria:
-- [ ] `WorkflowInfo` defined as a Pydantic model with fields:
+- [x] `WorkflowInfo` defined as a Pydantic model with fields:
   - `id: str`, `name: str`, `description: str`
   - `is_conversational: bool = False`
   - `supports_streaming: bool = True`
   - `step_labels: dict[str, str]`
   - `generation_nodes: set[str]`
-- [ ] `EvalContext` defined with `source_used: str = "direct"` and `retrieved_contexts: list[str] = []`.
-- [ ] `WorkflowDefinition` defined as `@runtime_checkable Protocol` requiring:
+- [x] `EvalContext` defined with `source_used: str = "direct"` and `retrieved_contexts: list[str] = []`.
+- [x] `WorkflowDefinition` defined as `@runtime_checkable Protocol` requiring:
   - `info: WorkflowInfo`
   - `get_compiled_graph() -> Any`
   - `to_initial_state(request: ChatRequest, trace_id: str | None = None) -> dict[str, Any]`
   - `to_chat_response(final_state: dict[str, Any], trace_id: str | None = None) -> ChatResponse`
   - `extract_eval_context(final_state: dict[str, Any]) -> EvalContext`
   - `handle_error(exc: Exception, current_state: dict[str, Any]) -> dict[str, Any]`
-- [ ] `ChatMessage` and `Attachment` schemas added to `app/api/schemas.py`.
-- [ ] `ChatRequest` extended with optional `messages: list[ChatMessage] | None = None` and `attachments: list[Attachment] | None = None`. If `question` is provided, requests succeed as before.
-- [ ] `WorkflowListResponse` added with `default: str`, `workflows: list[str]`, and `details: list[WorkflowInfo]`.
-- [ ] Unit tests verify protocol runtime type checking and Pydantic validation.
+- [x] `ChatMessage` and `Attachment` schemas added to `app/api/schemas.py`.
+- [x] `ChatRequest` extended with optional `messages: list[ChatMessage] | None = None` and `attachments: list[Attachment] | None = None`. If `question` is provided, requests succeed as before.
+- [x] `WorkflowListResponse` added with `default: str`, `workflows: list[str]`, and `details: list[WorkflowInfo]`.
+- [x] Unit tests verify protocol runtime type checking and Pydantic validation.
 
 ---
 
