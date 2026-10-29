@@ -3,7 +3,7 @@
 - **ADR Reference:** `docs/adr/0006-unified-agentic-rag-engine-and-classifier-seam.md`
 - **Specification Document:** `docs/specs/0006-unified-agentic-rag-engine-spec.md`
 - **Target Version:** `0.6.0`
-- **Status:** Approved / Ready for Implementation
+- **Status:** Completed
 
 ---
 
