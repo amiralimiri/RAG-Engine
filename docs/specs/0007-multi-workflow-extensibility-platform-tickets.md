@@ -57,9 +57,9 @@
 | **Ticket 01** | Core Workflow Interfaces & Additive Schemas | `app/rag/workflows/base.py`, `app/api/schemas.py`, `tests/rag/test_base_workflow.py` | None | `completed` |
 | **Ticket 02** | Reusable Tool Abstraction Layer (`BaseTool`) | `app/rag/tools/retriever.py`, `app/rag/tools/search.py`, `app/rag/tools/__init__.py`, `tests/rag/test_tools.py` | None | `completed` |
 | **Ticket 03** | Central Thread-Safe `WorkflowRegistry` | `app/rag/workflows/registry.py`, `tests/rag/test_registry.py` | None (Ticket 01 completed) | `completed` |
-| **Ticket 04** | Reusable Conformance Test Harness | `tests/rag/test_workflow_contracts.py` | None (Ticket 01 completed) | `ready` |
-| **Ticket 05** | Parameterized `SelfCorrectiveRagWorkflow` | `app/rag/workflows/self_corrective.py`, `app/rag/workflows/__init__.py`, `tests/rag/test_self_corrective_contract.py` | Ticket 01, Ticket 03, Ticket 04 | `blocked` |
-| **Ticket 06** | Autonomous ReAct Agent Reference Workflow | `app/rag/workflows/react_agent.py`, `app/rag/workflows/__init__.py`, `tests/rag/test_react_agent.py` | Ticket 01, Ticket 02, Ticket 03, Ticket 04 | `blocked` |
+| **Ticket 04** | Reusable Conformance Test Harness | `tests/rag/test_workflow_contracts.py` | None (Ticket 01 completed) | `completed` |
+| **Ticket 05** | Parameterized `SelfCorrectiveRagWorkflow` | `app/rag/workflows/self_corrective.py`, `app/rag/workflows/__init__.py`, `tests/rag/test_self_corrective_contract.py` | None (Tickets 01, 03, 04 completed) | `ready` |
+| **Ticket 06** | Autonomous ReAct Agent Reference Workflow | `app/rag/workflows/react_agent.py`, `app/rag/workflows/__init__.py`, `tests/rag/test_react_agent.py` | None (Tickets 01, 02, 03, 04 completed) | `ready` |
 | **Ticket 07** | Modernize Transport Layer & SSE Token Filtering | `app/api/routes.py`, `tests/api/test_routes_multi_workflow.py` | Ticket 03, Ticket 05, Ticket 06 | `blocked` |
 | **Ticket 08** | End-to-End Verification & Regression Suite | `tests/test_chat_stream.py`, `tests/test_e2e_observability.py`, full suite | Ticket 07 | `blocked` |
 
@@ -155,21 +155,21 @@ Create a thread-safe registry that stores `WorkflowDefinition` instances, preven
 - **Target Files:**
   - `tests/rag/test_workflow_contracts.py`
 - **Blockers:** Ticket 01
-- **Status:** `blocked`
+- **Status:** `completed`
 
 ### What to build:
 Create an abstract test base class `BaseWorkflowContractTest` that tests any `WorkflowDefinition` against core platform contracts: state conversion, evaluation extraction, error fallback, and streaming node definitions. Include a `FakeWorkflow` double to test the harness.
 
 ### Acceptance Criteria:
-- [ ] `BaseWorkflowContractTest` provides test methods:
+- [x] `BaseWorkflowContractTest` provides test methods:
   - `test_workflow_info_validity()`
   - `test_to_initial_state_contract()`
   - `test_to_chat_response_contract()`
   - `test_extract_eval_context_contract()`
   - `test_handle_error_fallback()`
   - `test_compiled_graph_is_runnable()`
-- [ ] `FakeWorkflow` satisfies `WorkflowDefinition` and passes all base contract tests.
-- [ ] Demonstrates failing assertions when a dummy invalid workflow violates return shapes.
+- [x] `FakeWorkflow` satisfies `WorkflowDefinition` and passes all base contract tests.
+- [x] Demonstrates failing assertions when a dummy invalid workflow violates return shapes.
 
 ---
 
