@@ -2,26 +2,57 @@ from unittest.mock import MagicMock
 import pytest
 
 from app.rag import fix_single_jev
+from app.rag.classifiers import JevClassifierAdapter, _estimate_jev_tokens
+
+
+def route_question_jev(state, config=None):
+    adapter = JevClassifierAdapter()
+    run_cfg = dict(config) if config else {}
+    if "trace_id" in state and "metadata" not in run_cfg:
+        run_cfg["metadata"] = {"trace_id": state["trace_id"]}
+    decision = adapter.route(state["question"], config=run_cfg)
+    return {
+        "current_query": state["question"],
+        "source_used": decision.route,
+        "trace": [f"Router → {decision.route.upper()}"],
+    }
+
+
+def grade_kb_jev(state, config=None):
+    adapter = JevClassifierAdapter()
+    run_cfg = dict(config) if config else {}
+    if "trace_id" in state and "metadata" not in run_cfg:
+        run_cfg["metadata"] = {"trace_id": state["trace_id"]}
+    grade = adapter.grade_kb(
+        question=state["question"],
+        current_query=state.get("current_query", ""),
+        kb_docs=state.get("kb_docs", []),
+        config=run_cfg,
+    )
+    return {
+        "kb_grade": grade.grade,
+        "trace": [f"KB evidence grade → {grade.grade.upper()}"],
+    }
 
 
 def test_estimate_jev_tokens():
     """_estimate_jev_tokens correctly estimates tokens based on character length (max(1, len // 4))."""
     # Empty string should yield minimum 1 token
-    res_empty = fix_single_jev._estimate_jev_tokens("", "")
+    res_empty = _estimate_jev_tokens("", "")
     assert res_empty == {"input": 1, "output": 1, "total": 2}
 
     # Short strings (< 4 chars) should yield minimum 1 token
-    res_short = fix_single_jev._estimate_jev_tokens("hi", "no")
+    res_short = _estimate_jev_tokens("hi", "no")
     assert res_short == {"input": 1, "output": 1, "total": 2}
 
     # Strings with exact multiples of 4
-    res_exact = fix_single_jev._estimate_jev_tokens("12345678", "abcd")
+    res_exact = _estimate_jev_tokens("12345678", "abcd")
     assert res_exact == {"input": 2, "output": 1, "total": 3}
 
     # Longer string
     prompt = "This is a prompt for testing token estimation."  # 46 chars -> 46 // 4 = 11
     output = "kb"  # 2 chars -> max(1, 2 // 4) = 1
-    res_longer = fix_single_jev._estimate_jev_tokens(prompt, output)
+    res_longer = _estimate_jev_tokens(prompt, output)
     assert res_longer == {
         "input": len(prompt) // 4,
         "output": 1,
@@ -127,12 +158,12 @@ def test_jev_node_fails_open_when_langfuse_client_fails(monkeypatch):
     mock_jev_result = MagicMock()
     mock_jev_result.choices = {"route": MagicMock(choice="kb")}
     mock_jev.invoke.return_value = mock_jev_result
-    monkeypatch.setattr(fix_single_jev, "jev", lambda: mock_jev)
+    monkeypatch.setattr("app.rag.classifiers.TypeSafeClassifier", lambda **kwargs: mock_jev)
 
     mock_client = MagicMock()
     mock_client.start_observation.side_effect = RuntimeError("Langfuse API unavailable")
     mock_client.generation.side_effect = RuntimeError("Langfuse API unavailable")
-    monkeypatch.setattr(fix_single_jev, "get_langfuse_client", lambda: mock_client)
+    monkeypatch.setattr("app.rag.classifiers.get_langfuse_client", lambda: mock_client)
 
     state = {
         "question": "How do I reset my password?",
@@ -148,7 +179,7 @@ def test_jev_node_fails_open_when_langfuse_client_fails(monkeypatch):
         "citations": [],
     }
 
-    result = fix_single_jev.route_question_jev(state)
+    result = route_question_jev(state)
     assert result["source_used"] == "kb"
     assert result["current_query"] == "How do I reset my password?"
     assert "Router → KB" in result["trace"]
@@ -160,9 +191,9 @@ def test_jev_node_when_langfuse_client_none(monkeypatch):
     mock_jev_result = MagicMock()
     mock_jev_result.choices = {"route": MagicMock(choice="direct")}
     mock_jev.invoke.return_value = mock_jev_result
-    monkeypatch.setattr(fix_single_jev, "jev", lambda: mock_jev)
+    monkeypatch.setattr("app.rag.classifiers.TypeSafeClassifier", lambda **kwargs: mock_jev)
 
-    monkeypatch.setattr(fix_single_jev, "get_langfuse_client", lambda: None)
+    monkeypatch.setattr("app.rag.classifiers.get_langfuse_client", lambda: None)
 
     state = {
         "question": "Hello",
@@ -178,7 +209,7 @@ def test_jev_node_when_langfuse_client_none(monkeypatch):
         "citations": [],
     }
 
-    result = fix_single_jev.route_question_jev(state)
+    result = route_question_jev(state)
     assert result["source_used"] == "direct"
     assert "Router → DIRECT" in result["trace"]
 
@@ -197,12 +228,12 @@ def test_jev_nodes_emit_generation_metadata(monkeypatch):
         return mock_grade_res
 
     mock_jev.invoke.side_effect = mock_jev_invoke
-    monkeypatch.setattr(fix_single_jev, "jev", lambda: mock_jev)
+    monkeypatch.setattr("app.rag.classifiers.TypeSafeClassifier", lambda **kwargs: mock_jev)
 
     mock_client = MagicMock()
     mock_observation = MagicMock()
     mock_client.start_observation.return_value = mock_observation
-    monkeypatch.setattr(fix_single_jev, "get_langfuse_client", lambda: mock_client)
+    monkeypatch.setattr("app.rag.classifiers.get_langfuse_client", lambda: mock_client)
 
     # Test route_question_jev
     state = {
@@ -218,7 +249,7 @@ def test_jev_nodes_emit_generation_metadata(monkeypatch):
         "trace": [],
         "citations": [],
     }
-    route_res = fix_single_jev.route_question_jev(state)
+    route_res = route_question_jev(state)
     assert route_res["source_used"] == "kb"
     assert mock_client.start_observation.called
     obs_call_args = mock_client.start_observation.call_args[1]
@@ -238,7 +269,7 @@ def test_jev_nodes_emit_generation_metadata(monkeypatch):
     doc_mock.page_content = "To reset VPN, go to settings."
     state["kb_docs"] = [doc_mock]
 
-    grade_res = fix_single_jev.grade_kb_jev(state)
+    grade_res = grade_kb_jev(state)
     assert grade_res["kb_grade"] == "good"
     obs_call_args2 = mock_client.start_observation.call_args[1]
     assert obs_call_args2["name"] == "jev_kb_grader"
@@ -255,12 +286,12 @@ def test_jev_nodes_emit_generation_with_trace_context(monkeypatch):
     mock_route_res = MagicMock()
     mock_route_res.choices = {"route": MagicMock(choice="kb")}
     mock_jev.invoke.return_value = mock_route_res
-    monkeypatch.setattr(fix_single_jev, "jev", lambda: mock_jev)
+    monkeypatch.setattr("app.rag.classifiers.TypeSafeClassifier", lambda **kwargs: mock_jev)
 
     mock_client = MagicMock()
     mock_observation = MagicMock()
     mock_client.start_observation.return_value = mock_observation
-    monkeypatch.setattr(fix_single_jev, "get_langfuse_client", lambda: mock_client)
+    monkeypatch.setattr("app.rag.classifiers.get_langfuse_client", lambda: mock_client)
 
     state = {
         "question": "How to reset VPN?",
@@ -276,7 +307,7 @@ def test_jev_nodes_emit_generation_with_trace_context(monkeypatch):
         "citations": [],
         "trace_id": "trace-root-999",
     }
-    route_res = fix_single_jev.route_question_jev(state)
+    route_res = route_question_jev(state)
     assert route_res["source_used"] == "kb"
     assert mock_client.start_observation.called
     obs_call_args = mock_client.start_observation.call_args[1]
@@ -290,12 +321,12 @@ def test_jev_nodes_emit_generation_with_trace_context_from_contextvars(monkeypat
 
     mock_jev = MagicMock()
     mock_jev.invoke.return_value.choices = {"route": MagicMock(choice="kb")}
-    monkeypatch.setattr(fix_single_jev, "jev", lambda: mock_jev)
+    monkeypatch.setattr("app.rag.classifiers.TypeSafeClassifier", lambda **kwargs: mock_jev)
 
     mock_client = MagicMock()
     mock_obs = MagicMock()
     mock_client.start_observation.return_value = mock_obs
-    monkeypatch.setattr(fix_single_jev, "get_langfuse_client", lambda: mock_client)
+    monkeypatch.setattr("app.rag.classifiers.get_langfuse_client", lambda: mock_client)
 
     state = {
         "question": "How to reset VPN?",
@@ -310,7 +341,7 @@ def test_jev_nodes_emit_generation_with_trace_context_from_contextvars(monkeypat
         "trace": [],
         "citations": [],
     }
-    fix_single_jev.route_question_jev(state)
+    route_question_jev(state)
     obs_args = mock_client.start_observation.call_args[1]
     assert obs_args["trace_context"] == {"trace_id": "ctx-trace-abc-123"}
 
@@ -322,12 +353,12 @@ def test_jev_nodes_emit_generation_with_trace_context_from_config(monkeypatch):
 
     mock_jev = MagicMock()
     mock_jev.invoke.return_value.choices = {"route": MagicMock(choice="kb")}
-    monkeypatch.setattr(fix_single_jev, "jev", lambda: mock_jev)
+    monkeypatch.setattr("app.rag.classifiers.TypeSafeClassifier", lambda **kwargs: mock_jev)
 
     mock_client = MagicMock()
     mock_obs = MagicMock()
     mock_client.start_observation.return_value = mock_obs
-    monkeypatch.setattr(fix_single_jev, "get_langfuse_client", lambda: mock_client)
+    monkeypatch.setattr("app.rag.classifiers.get_langfuse_client", lambda: mock_client)
 
     state = {
         "question": "How to reset VPN?",
@@ -344,7 +375,7 @@ def test_jev_nodes_emit_generation_with_trace_context_from_config(monkeypatch):
     }
 
     # 1. via config metadata
-    fix_single_jev.route_question_jev(state, config={"metadata": {"trace_id": "meta-trace-456"}})
+    route_question_jev(state, config={"metadata": {"trace_id": "meta-trace-456"}})
     obs_args = mock_client.start_observation.call_args[1]
     assert obs_args["trace_context"] == {"trace_id": "meta-trace-456"}
 
@@ -352,7 +383,6 @@ def test_jev_nodes_emit_generation_with_trace_context_from_config(monkeypatch):
     mock_client.start_observation.reset_mock()
     mock_handler = MagicMock()
     mock_handler.last_trace_id = "handler-trace-789"
-    fix_single_jev.route_question_jev(state, config={"callbacks": [mock_handler]})
+    route_question_jev(state, config={"callbacks": [mock_handler]})
     obs_args2 = mock_client.start_observation.call_args[1]
     assert obs_args2["trace_context"] == {"trace_id": "handler-trace-789"}
-

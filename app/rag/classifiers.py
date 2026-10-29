@@ -21,6 +21,7 @@ __all__ = [
     "JevClassifierAdapter",
     "_build_prompt_config",
     "_estimate_jev_tokens",
+    "_record_jev_generation",
 ]
 
 

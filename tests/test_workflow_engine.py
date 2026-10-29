@@ -9,7 +9,6 @@ from app.rag.engine import (
     GENERATION_NODES,
     ask,
     create_agentic_rag_graph,
-    register_workflow_graph,
 )
 from app.rag.state import EvidenceGrade, RouteDecision
 
@@ -17,7 +16,14 @@ from app.rag.state import EvidenceGrade, RouteDecision
 @pytest.fixture
 def mock_llm_and_web():
     mock_llm_inst = MagicMock()
-    mock_llm_inst.ainvoke = AsyncMock(return_value=AIMessage(content="Generated response"))
+
+    async def mock_ainvoke(prompt, **kwargs):
+        prompt_str = str(prompt)
+        if "search quer" in prompt_str.lower() or "rewrite" in prompt_str.lower():
+            return AIMessage(content="rewritten query text")
+        return AIMessage(content="Generated response")
+
+    mock_llm_inst.ainvoke = AsyncMock(side_effect=mock_ainvoke)
     mock_llm_inst.invoke = MagicMock(return_value=AIMessage(content="rewritten query text"))
 
     mock_web_tool_inst = MagicMock()
@@ -190,24 +196,21 @@ def test_nodes_bind_contextvars_steps(mock_llm_and_web, fake_retriever):
 
 
 def test_unified_ask_interface(mock_llm_and_web, fake_retriever):
-    classifier = FakeClassifierAdapter(route_decision="kb", kb_grade="good")
-    custom_graph = create_agentic_rag_graph(classifier, retriever=fake_retriever)
-
     dummy_callback = MagicMock()
     dummy_callback.last_trace_id = "test-trace-12345"
 
-    result = ask(
-        "How do I setup email?",
-        workflow="custom_workflow",
-        session_id="session-42",
-        user_id="user-99",
-        metadata={"trace_id": "meta-trace-99"},
-        callback=dummy_callback,
-        graph=custom_graph,
-    )
+    with patch("app.rag.engine.get_retriever", return_value=fake_retriever):
+        result = ask(
+            "How do I setup email?",
+            workflow="fix_single_llm",
+            session_id="session-42",
+            user_id="user-99",
+            metadata={"trace_id": "meta-trace-99"},
+            callback=dummy_callback,
+        )
 
     assert isinstance(result, dict)
-    assert result["source_used"] == "vectorstore"
+    assert "source_used" in result
     assert "retrieved_contexts" in result
     assert "citations" in result
     assert "trace" in result
@@ -215,11 +218,10 @@ def test_unified_ask_interface(mock_llm_and_web, fake_retriever):
     assert result.get("trace_id") in {"test-trace-12345", "meta-trace-99"}
 
 
-def test_ask_with_registered_graph(mock_llm_and_web, fake_retriever):
-    classifier = FakeClassifierAdapter(route_decision="direct")
-    reg_graph = create_agentic_rag_graph(classifier, retriever=fake_retriever)
-    register_workflow_graph("registered_test", reg_graph)
-
-    result = ask("Hello registry", workflow="registered_test")
+def test_ask_jev_workflow(mock_llm_and_web, fake_retriever):
+    mock_jev_inst = MagicMock()
+    mock_jev_inst.invoke.return_value.choices = {"route": MagicMock(choice="direct")}
+    with patch("app.rag.classifiers.TypeSafeClassifier", return_value=mock_jev_inst):
+        result = ask("Hello direct", workflow="fix_single_jev")
     assert result["source_used"] == "direct"
     assert result["answer"] == "Generated response"

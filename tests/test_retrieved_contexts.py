@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from langchain_core.documents import Document
 
-from app.rag import fix_single_llm, fix_single_jev
+from app.rag import fix_single_llm, fix_single_jev, engine
 from app.rag.state import AgentState
 
 
@@ -39,14 +39,14 @@ def test_agent_state_defines_retrieved_contexts():
 # ==============================================================================
 
 def test_retrieve_kb_populates_retrieved_contexts_llm(monkeypatch):
-    """retrieve_kb in fix_single_llm populates retrieved_contexts with raw chunk strings."""
+    """retrieve_kb in engine populates retrieved_contexts with raw chunk strings."""
     docs = [
         Document(page_content="Chunk 1: VPN guide.", metadata={"source": "kb/vpn.md"}),
         Document(page_content="Chunk 2: Troubleshooting.", metadata={"source": "kb/vpn.md"}),
     ]
     mock_retriever = MagicMock()
     mock_retriever.invoke.return_value = docs
-    monkeypatch.setattr(fix_single_llm, "get_retriever", lambda: mock_retriever)
+    monkeypatch.setattr(engine, "get_retriever", lambda: mock_retriever)
 
     state: AgentState = {
         "question": "How to connect to VPN?",
@@ -62,7 +62,7 @@ def test_retrieve_kb_populates_retrieved_contexts_llm(monkeypatch):
         "citations": [],
     }
 
-    result = fix_single_llm.retrieve_kb(state)
+    result = engine.retrieve_kb(state)
     assert "retrieved_contexts" in result, "retrieve_kb must return 'retrieved_contexts'"
     assert result["retrieved_contexts"] == [
         "Chunk 1: VPN guide.",
@@ -71,7 +71,7 @@ def test_retrieve_kb_populates_retrieved_contexts_llm(monkeypatch):
 
 
 def test_search_web_appends_retrieved_contexts_llm(monkeypatch):
-    """search_web in fix_single_llm appends web search snippets to existing retrieved_contexts."""
+    """search_web in engine appends web search snippets to existing retrieved_contexts."""
     mock_tool = MagicMock()
     mock_tool.invoke.return_value = {
         "answer": "External answer",
@@ -83,7 +83,7 @@ def test_search_web_appends_retrieved_contexts_llm(monkeypatch):
             }
         ],
     }
-    monkeypatch.setattr(fix_single_llm, "web_search_tool", lambda: mock_tool)
+    monkeypatch.setattr(engine, "web_search_tool", lambda: mock_tool)
 
     state: AgentState = {
         "question": "How to connect to VPN?",
@@ -100,7 +100,7 @@ def test_search_web_appends_retrieved_contexts_llm(monkeypatch):
         "retrieved_contexts": ["Prior KB chunk 1"],
     }
 
-    result = fix_single_llm.search_web(state)
+    result = engine.search_web(state)
     assert "retrieved_contexts" in result, "search_web must return 'retrieved_contexts'"
     assert result["retrieved_contexts"] == [
         "Title: Vendor Support\nURL: https://example.com/vpn\nContent: Official Cisco AnyConnect docs",
@@ -109,11 +109,11 @@ def test_search_web_appends_retrieved_contexts_llm(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_generate_from_kb_populates_retrieved_contexts_llm(monkeypatch):
-    """generate_from_kb in fix_single_llm includes exact chunk strings in retrieved_contexts."""
+    """generate_from_kb in engine includes exact chunk strings in retrieved_contexts."""
     mock_response = MagicMock(content="Follow these VPN steps.")
     mock_llm_instance = MagicMock()
     mock_llm_instance.ainvoke = AsyncMock(return_value=mock_response)
-    monkeypatch.setattr(fix_single_llm, "llm", lambda: mock_llm_instance)
+    monkeypatch.setattr(engine, "llm", lambda: mock_llm_instance)
 
     docs = [Document(page_content="VPN instructions content.", metadata={"source": "kb/vpn.md"})]
     state: AgentState = {
@@ -131,18 +131,18 @@ async def test_generate_from_kb_populates_retrieved_contexts_llm(monkeypatch):
         "retrieved_contexts": ["VPN instructions content."],
     }
 
-    result = await fix_single_llm.generate_from_kb(state)
+    result = await engine.generate_from_kb(state)
     assert "retrieved_contexts" in result, "generate_from_kb must return 'retrieved_contexts'"
     assert result["retrieved_contexts"] == ["VPN instructions content."]
 
 
 @pytest.mark.asyncio
 async def test_generate_from_web_populates_retrieved_contexts_llm(monkeypatch):
-    """generate_from_web in fix_single_llm includes web snippets in retrieved_contexts."""
+    """generate_from_web in engine includes web snippets in retrieved_contexts."""
     mock_response = MagicMock(content="Vendor recommends reinstalling.")
     mock_llm_instance = MagicMock()
     mock_llm_instance.ainvoke = AsyncMock(return_value=mock_response)
-    monkeypatch.setattr(fix_single_llm, "llm", lambda: mock_llm_instance)
+    monkeypatch.setattr(engine, "llm", lambda: mock_llm_instance)
 
     web_snippet = "Title: Vendor Support\nURL: https://example.com/vpn\nContent: Official Cisco AnyConnect docs"
     state: AgentState = {
@@ -160,18 +160,18 @@ async def test_generate_from_web_populates_retrieved_contexts_llm(monkeypatch):
         "retrieved_contexts": [web_snippet],
     }
 
-    result = await fix_single_llm.generate_from_web(state)
+    result = await engine.generate_from_web(state)
     assert "retrieved_contexts" in result, "generate_from_web must return 'retrieved_contexts'"
     assert result["retrieved_contexts"] == [web_snippet]
 
 
 @pytest.mark.asyncio
 async def test_direct_answer_returns_empty_retrieved_contexts_llm(monkeypatch):
-    """direct_answer in fix_single_llm returns empty list for retrieved_contexts."""
+    """direct_answer in engine returns empty list for retrieved_contexts."""
     mock_response = MagicMock(content="Hello! How can I help you today?")
     mock_llm_instance = MagicMock()
     mock_llm_instance.ainvoke = AsyncMock(return_value=mock_response)
-    monkeypatch.setattr(fix_single_llm, "llm", lambda: mock_llm_instance)
+    monkeypatch.setattr(engine, "llm", lambda: mock_llm_instance)
 
     state: AgentState = {
         "question": "hello",
@@ -188,13 +188,13 @@ async def test_direct_answer_returns_empty_retrieved_contexts_llm(monkeypatch):
         "retrieved_contexts": [],
     }
 
-    result = await fix_single_llm.direct_answer(state)
+    result = await engine.direct_answer(state)
     assert "retrieved_contexts" in result, "direct_answer must return 'retrieved_contexts'"
     assert result["retrieved_contexts"] == []
 
 
 def test_insufficient_returns_empty_retrieved_contexts_llm():
-    """insufficient in fix_single_llm returns empty list for retrieved_contexts."""
+    """insufficient in engine returns empty list for retrieved_contexts."""
     state: AgentState = {
         "question": "obscure question",
         "current_query": "obscure query",
@@ -210,7 +210,7 @@ def test_insufficient_returns_empty_retrieved_contexts_llm():
         "retrieved_contexts": ["stale weak chunk"],
     }
 
-    result = fix_single_llm.insufficient(state)
+    result = engine.insufficient(state)
     assert "retrieved_contexts" in result, "insufficient must return 'retrieved_contexts'"
     assert result["retrieved_contexts"] == []
 
@@ -220,14 +220,14 @@ def test_insufficient_returns_empty_retrieved_contexts_llm():
 # ==============================================================================
 
 def test_retrieve_kb_populates_retrieved_contexts_jev(monkeypatch):
-    """retrieve_kb in fix_single_jev populates retrieved_contexts with raw chunk strings."""
+    """retrieve_kb in engine populates retrieved_contexts with raw chunk strings."""
     docs = [
         Document(page_content="JEV Chunk 1: WiFi password.", metadata={"source": "kb/wifi.md"}),
         Document(page_content="JEV Chunk 2: Guest network.", metadata={"source": "kb/wifi.md"}),
     ]
     mock_retriever = MagicMock()
     mock_retriever.invoke.return_value = docs
-    monkeypatch.setattr(fix_single_jev, "get_retriever", lambda: mock_retriever)
+    monkeypatch.setattr(engine, "get_retriever", lambda: mock_retriever)
 
     state: AgentState = {
         "question": "What is the WiFi password?",
@@ -243,7 +243,7 @@ def test_retrieve_kb_populates_retrieved_contexts_jev(monkeypatch):
         "citations": [],
     }
 
-    result = fix_single_jev.retrieve_kb(state)
+    result = engine.retrieve_kb(state)
     assert "retrieved_contexts" in result, "retrieve_kb must return 'retrieved_contexts'"
     assert result["retrieved_contexts"] == [
         "JEV Chunk 1: WiFi password.",
@@ -252,7 +252,7 @@ def test_retrieve_kb_populates_retrieved_contexts_jev(monkeypatch):
 
 
 def test_search_web_populates_retrieved_contexts_jev(monkeypatch):
-    """search_web in fix_single_jev populates web search snippets in retrieved_contexts without rejected KB chunks."""
+    """search_web in engine populates web search snippets in retrieved_contexts without rejected KB chunks."""
     mock_tool = MagicMock()
     mock_tool.invoke.return_value = {
         "answer": "External WiFi docs",
@@ -264,7 +264,7 @@ def test_search_web_populates_retrieved_contexts_jev(monkeypatch):
             }
         ],
     }
-    monkeypatch.setattr(fix_single_jev, "web_search_tool", lambda: mock_tool)
+    monkeypatch.setattr(engine, "web_search_tool", lambda: mock_tool)
 
     state: AgentState = {
         "question": "How to fix WiFi?",
@@ -281,7 +281,7 @@ def test_search_web_populates_retrieved_contexts_jev(monkeypatch):
         "retrieved_contexts": ["Prior JEV KB chunk"],
     }
 
-    result = fix_single_jev.search_web(state)
+    result = engine.search_web(state)
     assert "retrieved_contexts" in result, "search_web must return 'retrieved_contexts'"
     assert result["retrieved_contexts"] == [
         "Title: Router Support\nURL: https://example.com/wifi\nContent: Reset router to factory defaults",
@@ -290,11 +290,11 @@ def test_search_web_populates_retrieved_contexts_jev(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_generate_from_kb_populates_retrieved_contexts_jev(monkeypatch):
-    """generate_from_kb in fix_single_jev includes exact chunk strings in retrieved_contexts."""
+    """generate_from_kb in engine includes exact chunk strings in retrieved_contexts."""
     mock_response = MagicMock(content="WiFi password is securepass.")
     mock_llm_instance = MagicMock()
     mock_llm_instance.ainvoke = AsyncMock(return_value=mock_response)
-    monkeypatch.setattr(fix_single_jev, "llm", lambda: mock_llm_instance)
+    monkeypatch.setattr(engine, "llm", lambda: mock_llm_instance)
 
     docs = [Document(page_content="WiFi password is securepass.", metadata={"source": "kb/wifi.md"})]
     state: AgentState = {
@@ -312,18 +312,18 @@ async def test_generate_from_kb_populates_retrieved_contexts_jev(monkeypatch):
         "retrieved_contexts": ["WiFi password is securepass."],
     }
 
-    result = await fix_single_jev.generate_from_kb(state)
+    result = await engine.generate_from_kb(state)
     assert "retrieved_contexts" in result, "generate_from_kb must return 'retrieved_contexts'"
     assert result["retrieved_contexts"] == ["WiFi password is securepass."]
 
 
 @pytest.mark.asyncio
 async def test_generate_from_web_populates_retrieved_contexts_jev(monkeypatch):
-    """generate_from_web in fix_single_jev includes web snippets in retrieved_contexts."""
+    """generate_from_web in engine includes web snippets in retrieved_contexts."""
     mock_response = MagicMock(content="Router docs suggest power cycle.")
     mock_llm_instance = MagicMock()
     mock_llm_instance.ainvoke = AsyncMock(return_value=mock_response)
-    monkeypatch.setattr(fix_single_jev, "llm", lambda: mock_llm_instance)
+    monkeypatch.setattr(engine, "llm", lambda: mock_llm_instance)
 
     web_snippet = "Title: Router Support\nURL: https://example.com/wifi\nContent: Power cycle router"
     state: AgentState = {
@@ -341,18 +341,18 @@ async def test_generate_from_web_populates_retrieved_contexts_jev(monkeypatch):
         "retrieved_contexts": [web_snippet],
     }
 
-    result = await fix_single_jev.generate_from_web(state)
+    result = await engine.generate_from_web(state)
     assert "retrieved_contexts" in result, "generate_from_web must return 'retrieved_contexts'"
     assert result["retrieved_contexts"] == [web_snippet]
 
 
 @pytest.mark.asyncio
 async def test_direct_answer_returns_empty_retrieved_contexts_jev(monkeypatch):
-    """direct_answer in fix_single_jev returns empty list for retrieved_contexts."""
+    """direct_answer in engine returns empty list for retrieved_contexts."""
     mock_response = MagicMock(content="Hello! How can I help you today?")
     mock_llm_instance = MagicMock()
     mock_llm_instance.ainvoke = AsyncMock(return_value=mock_response)
-    monkeypatch.setattr(fix_single_jev, "llm", lambda: mock_llm_instance)
+    monkeypatch.setattr(engine, "llm", lambda: mock_llm_instance)
 
     state: AgentState = {
         "question": "hello",
@@ -369,13 +369,13 @@ async def test_direct_answer_returns_empty_retrieved_contexts_jev(monkeypatch):
         "retrieved_contexts": [],
     }
 
-    result = await fix_single_jev.direct_answer(state)
+    result = await engine.direct_answer(state)
     assert "retrieved_contexts" in result, "direct_answer must return 'retrieved_contexts'"
     assert result["retrieved_contexts"] == []
 
 
 def test_insufficient_returns_empty_retrieved_contexts_jev():
-    """insufficient in fix_single_jev returns empty list for retrieved_contexts."""
+    """insufficient in engine returns empty list for retrieved_contexts."""
     state: AgentState = {
         "question": "obscure question",
         "current_query": "obscure query",
@@ -391,7 +391,7 @@ def test_insufficient_returns_empty_retrieved_contexts_jev():
         "retrieved_contexts": ["stale weak chunk"],
     }
 
-    result = fix_single_jev.insufficient(state)
+    result = engine.insufficient(state)
     assert "retrieved_contexts" in result, "insufficient must return 'retrieved_contexts'"
     assert result["retrieved_contexts"] == []
 

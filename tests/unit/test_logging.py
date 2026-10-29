@@ -13,8 +13,7 @@ from app.core.logger import (
     scrub_sensitive_data,
 )
 from app.main import app
-from app.rag.fix_single_jev import direct_answer as jev_direct_answer
-from app.rag.fix_single_llm import direct_answer as llm_direct_answer
+from app.rag.engine import direct_answer
 
 
 @pytest.fixture(autouse=True)
@@ -219,18 +218,11 @@ async def test_langgraph_step_contextvars(monkeypatch):
     mock_llm.ainvoke = AsyncMock(return_value=MagicMock(content="answer"))
     mock_llm.invoke = MagicMock(return_value=MagicMock(content="answer"))
 
-    from app.rag import fix_single_llm, fix_single_jev
-    monkeypatch.setattr(fix_single_llm, "llm", lambda: mock_llm)
-    monkeypatch.setattr(fix_single_jev, "llm", lambda: mock_llm)
+    from app.rag import engine
+    monkeypatch.setattr(engine, "llm", lambda: mock_llm)
 
     structlog.contextvars.clear_contextvars()
-    res = llm_direct_answer(state)
-    if inspect.iscoroutine(res):
-        await res
-    assert structlog.contextvars.get_contextvars().get("step") == "direct_answer"
-
-    structlog.contextvars.clear_contextvars()
-    res = jev_direct_answer(state)
+    res = direct_answer(state)
     if inspect.iscoroutine(res):
         await res
     assert structlog.contextvars.get_contextvars().get("step") == "direct_answer"
