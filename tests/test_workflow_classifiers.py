@@ -1,7 +1,15 @@
+from unittest.mock import MagicMock, patch
 import pytest
 from langchain_core.documents import Document
 
-from app.rag.classifiers import FakeClassifierAdapter, WorkflowClassifier
+from app.rag.classifiers import (
+    FakeClassifierAdapter,
+    JevClassifierAdapter,
+    OpenAIClassifierAdapter,
+    WorkflowClassifier,
+    _build_prompt_config,
+    _estimate_jev_tokens,
+)
 from app.rag.state import EvidenceGrade, RouteDecision
 
 
@@ -103,3 +111,186 @@ def test_fake_classifier_adapter_mutation():
 
     adapter.web_grade = "weak"
     assert adapter.grade_web("q", "cq", "").grade == "weak"
+
+
+# ==============================================================================
+# OpenAIClassifierAdapter Tests
+# ==============================================================================
+
+def test_openai_classifier_adapter_satisfies_protocol():
+    adapter = OpenAIClassifierAdapter(chat_model=MagicMock())
+    assert isinstance(adapter, WorkflowClassifier)
+
+
+def test_openai_classifier_adapter_route():
+    mock_chat_model = MagicMock()
+    mock_structured = MagicMock()
+    mock_structured.invoke.return_value = RouteDecision(route="kb")
+    mock_chat_model.with_structured_output.return_value = mock_structured
+
+    adapter = OpenAIClassifierAdapter(chat_model=mock_chat_model)
+    config = {"metadata": {"trace_id": "test-trace"}}
+    decision = adapter.route("How do I connect to VPN?", config=config)
+
+    assert isinstance(decision, RouteDecision)
+    assert decision.route == "kb"
+    mock_chat_model.with_structured_output.assert_called_once_with(
+        RouteDecision, method="json_mode"
+    )
+
+    call_args = mock_structured.invoke.call_args
+    prompt_used = call_args[0][0]
+    run_cfg = call_args[1]["config"]
+    assert "How do I connect to VPN?" in prompt_used
+    assert "metadata" in run_cfg
+    assert run_cfg["metadata"]["trace_id"] == "test-trace"
+    assert "prompt_name" in run_cfg["metadata"] or "langfuse_prompt" in run_cfg["metadata"]
+
+
+def test_openai_classifier_adapter_grade_kb():
+    mock_chat_model = MagicMock()
+    mock_structured = MagicMock()
+    mock_structured.invoke.return_value = {"grade": "good"}
+    mock_chat_model.with_structured_output.return_value = mock_structured
+
+    adapter = OpenAIClassifierAdapter(chat_model=mock_chat_model)
+    docs = [Document(page_content="VPN guide text", metadata={"source": "vpn.md"})]
+    grade = adapter.grade_kb("Need VPN", "VPN setup", docs)
+
+    assert isinstance(grade, EvidenceGrade)
+    assert grade.grade == "good"
+    mock_chat_model.with_structured_output.assert_called_once_with(
+        EvidenceGrade, method="json_mode"
+    )
+
+    call_args = mock_structured.invoke.call_args
+    prompt_used = call_args[0][0]
+    assert "Need VPN" in prompt_used
+    assert "VPN setup" in prompt_used
+    assert "VPN guide text" in prompt_used
+
+
+def test_openai_classifier_adapter_grade_web():
+    mock_chat_model = MagicMock()
+    mock_structured = MagicMock()
+    mock_structured.invoke.return_value = EvidenceGrade(grade="weak")
+    mock_chat_model.with_structured_output.return_value = mock_structured
+
+    adapter = OpenAIClassifierAdapter(chat_model=mock_chat_model)
+    grade = adapter.grade_web("Driver issue", "download driver", "Search results text")
+
+    assert isinstance(grade, EvidenceGrade)
+    assert grade.grade == "weak"
+    mock_chat_model.with_structured_output.assert_called_once_with(
+        EvidenceGrade, method="json_mode"
+    )
+
+    call_args = mock_structured.invoke.call_args
+    prompt_used = call_args[0][0]
+    assert "Driver issue" in prompt_used
+    assert "download driver" in prompt_used
+    assert "Search results text" in prompt_used
+
+
+# ==============================================================================
+# JevClassifierAdapter Tests
+# ==============================================================================
+
+def test_jev_classifier_adapter_satisfies_protocol():
+    adapter = JevClassifierAdapter(classifier=MagicMock())
+    assert isinstance(adapter, WorkflowClassifier)
+
+
+def test_estimate_jev_tokens():
+    assert _estimate_jev_tokens("", "") == {"input": 1, "output": 1, "total": 2}
+    assert _estimate_jev_tokens("hi", "no") == {"input": 1, "output": 1, "total": 2}
+    assert _estimate_jev_tokens("12345678", "abcd") == {"input": 2, "output": 1, "total": 3}
+
+
+def test_jev_classifier_adapter_route():
+    mock_jev = MagicMock()
+    mock_choice = MagicMock()
+    mock_choice.choice = "direct"
+    mock_choice.confidence = 0.99
+    mock_result = MagicMock()
+    mock_result.choices = {"route": mock_choice}
+    mock_jev.invoke.return_value = mock_result
+
+    adapter = JevClassifierAdapter(classifier=mock_jev)
+    decision = adapter.route("Hello there")
+
+    assert isinstance(decision, RouteDecision)
+    assert decision.route == "direct"
+    mock_jev.invoke.assert_called_once()
+    payload = mock_jev.invoke.call_args[0][0]
+    assert payload["state"] == "Hello there"
+    assert "route" in payload["questions"]
+
+
+def test_jev_classifier_adapter_grade_kb():
+    mock_jev = MagicMock()
+    mock_choice = MagicMock()
+    mock_choice.choice = "good"
+    mock_result = MagicMock()
+    mock_result.choices = {"grade": mock_choice}
+    mock_jev.invoke.return_value = mock_result
+
+    adapter = JevClassifierAdapter(classifier=mock_jev)
+    docs = [Document(page_content="Internal SSO troubleshooting steps", metadata={"source": "sso.md"})]
+    grade = adapter.grade_kb("SSO login failed", "SSO troubleshoot", docs)
+
+    assert isinstance(grade, EvidenceGrade)
+    assert grade.grade == "good"
+    mock_jev.invoke.assert_called_once()
+    payload = mock_jev.invoke.call_args[0][0]
+    assert "SSO login failed" in payload["state"]
+    assert "SSO troubleshoot" in payload["state"]
+    assert "Internal SSO troubleshooting steps" in payload["state"]
+
+
+def test_jev_classifier_adapter_grade_web():
+    mock_jev = MagicMock()
+    mock_choice = MagicMock()
+    mock_choice.choice = "weak"
+    mock_result = MagicMock()
+    mock_result.choices = {"grade": mock_choice}
+    mock_jev.invoke.return_value = mock_result
+
+    adapter = JevClassifierAdapter(classifier=mock_jev)
+    grade = adapter.grade_web("Printer offline", "printer wifi fix", "Generic manufacturer website")
+
+    assert isinstance(grade, EvidenceGrade)
+    assert grade.grade == "weak"
+    mock_jev.invoke.assert_called_once()
+    payload = mock_jev.invoke.call_args[0][0]
+    assert "Printer offline" in payload["state"]
+    assert "printer wifi fix" in payload["state"]
+    assert "Generic manufacturer website" in payload["state"]
+
+
+def test_jev_classifier_adapter_records_telemetry():
+    mock_jev = MagicMock()
+    mock_choice = MagicMock()
+    mock_choice.choice = "kb"
+    mock_result = MagicMock()
+    mock_result.choices = {"route": mock_choice}
+    mock_jev.invoke.return_value = mock_result
+
+    mock_langfuse = MagicMock()
+    mock_obs = MagicMock()
+    mock_langfuse.start_observation.return_value = mock_obs
+
+    with patch("app.rag.classifiers.get_langfuse_client", return_value=mock_langfuse):
+        adapter = JevClassifierAdapter(classifier=mock_jev)
+        decision = adapter.route("Question", config={"metadata": {"trace_id": "test-trace"}})
+
+        assert decision.route == "kb"
+        mock_langfuse.start_observation.assert_called_once()
+        obs_kwargs = mock_langfuse.start_observation.call_args[1]
+        assert obs_kwargs["name"] == "jev_router"
+        assert obs_kwargs["as_type"] == "generation"
+        assert obs_kwargs["trace_context"] == {"trace_id": "test-trace"}
+        assert "usage_details" in obs_kwargs
+        assert obs_kwargs["usage_details"]["input"] >= 1
+        assert obs_kwargs["usage_details"]["output"] >= 1
+        mock_obs.end.assert_called_once()
