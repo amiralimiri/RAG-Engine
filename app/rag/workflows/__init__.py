@@ -2,6 +2,7 @@
 
 from app.rag.classifiers import JevClassifierAdapter, OpenAIClassifierAdapter
 from app.rag.workflows.base import EvalContext, WorkflowDefinition, WorkflowInfo
+from app.rag.workflows.react_agent import ReActAgentWorkflow
 from app.rag.workflows.registry import (
     WorkflowRegistry,
     get_workflow_registry,
@@ -26,9 +27,15 @@ def register_default_workflows(registry: WorkflowRegistry | None = None) -> None
         classifier=JevClassifierAdapter(),
         description="Canonical 10-node self-corrective RAG workflow using TypeSafe JEV classifier for routing and grading.",
     )
+    workflow_react = ReActAgentWorkflow(
+        id="react_agent",
+        name="Autonomous ReAct Agent",
+        description="Dynamic multi-turn autonomous tool-calling agent with memory, private KB retrieval, and web search.",
+    )
 
     target_registry.register(workflow_llm, override=True)
     target_registry.register(workflow_jev, override=True)
+    target_registry.register(workflow_react, override=True)
 
 
 # Auto-register defaults on package import
@@ -42,5 +49,6 @@ __all__ = [
     "get_workflow_registry",
     "register_workflow",
     "SelfCorrectiveRagWorkflow",
+    "ReActAgentWorkflow",
     "register_default_workflows",
 ]

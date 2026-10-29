@@ -59,8 +59,8 @@
 | **Ticket 03** | Central Thread-Safe `WorkflowRegistry` | `app/rag/workflows/registry.py`, `tests/rag/test_registry.py` | None (Ticket 01 completed) | `completed` |
 | **Ticket 04** | Reusable Conformance Test Harness | `tests/rag/test_workflow_contracts.py` | None (Ticket 01 completed) | `completed` |
 | **Ticket 05** | Parameterized `SelfCorrectiveRagWorkflow` | `app/rag/workflows/self_corrective.py`, `app/rag/workflows/__init__.py`, `tests/rag/test_self_corrective_contract.py` | None (Tickets 01, 03, 04 completed) | `completed` |
-| **Ticket 06** | Autonomous ReAct Agent Reference Workflow | `app/rag/workflows/react_agent.py`, `app/rag/workflows/__init__.py`, `tests/rag/test_react_agent.py` | None (Tickets 01, 02, 03, 04 completed) | `ready` |
-| **Ticket 07** | Modernize Transport Layer & SSE Token Filtering | `app/api/routes.py`, `tests/api/test_routes_multi_workflow.py` | Ticket 03, Ticket 05, Ticket 06 | `blocked` |
+| **Ticket 06** | Autonomous ReAct Agent Reference Workflow | `app/rag/workflows/react_agent.py`, `app/rag/workflows/__init__.py`, `tests/rag/test_react_agent.py` | None (Tickets 01, 02, 03, 04 completed) | `completed` |
+| **Ticket 07** | Modernize Transport Layer & SSE Token Filtering | `app/api/routes.py`, `tests/api/test_routes_multi_workflow.py` | None (Tickets 03, 05, 06 completed) | `ready` |
 | **Ticket 08** | End-to-End Verification & Regression Suite | `tests/test_chat_stream.py`, `tests/test_e2e_observability.py`, full suite | Ticket 07 | `blocked` |
 
 ---
@@ -206,19 +206,19 @@ Implement `SelfCorrectiveRagWorkflow` satisfying `WorkflowDefinition`. Encapsula
   - `app/rag/workflows/__init__.py`
   - `tests/rag/test_react_agent.py`
 - **Blockers:** Ticket 01, Ticket 02, Ticket 03, Ticket 04
-- **Status:** `blocked`
+- **Status:** `completed`
 
 ### What to build:
 Implement `ReActAgentWorkflow` using `langgraph.prebuilt.create_react_agent`. Bind tools from `app/rag/tools/` (`retriever_tool` and `web_search_tool`). Attach `MemorySaver` checkpointer. Map `session_id` to `thread_id` so conversation history persists across calls. Extract tool citations and evaluate contexts.
 
 ### Acceptance Criteria:
-- [ ] `ReActAgentWorkflow` satisfies `WorkflowDefinition` with `id="react_agent"` and `is_conversational=True`.
-- [ ] Graph compiled with `create_react_agent(llm, tools=[...], checkpointer=MemorySaver())`.
-- [ ] `to_initial_state` maps `request.question` and optional `request.messages` into a message list (`HumanMessage`, `AIMessage`).
-- [ ] `to_chat_response` parses final message sequence: extracts final AI message as `answer`, parses `ToolMessage` outputs into `citations` and `retrieved_contexts`, and sets `source_used="react_agent"`.
-- [ ] `handle_error` provides a graceful fallback response when a tool throws.
-- [ ] Multi-turn test demonstrates that calling the workflow twice with the same `session_id` remembers facts stated in turn 1 without re-passing messages.
-- [ ] Passes `BaseWorkflowContractTest`.
+- [x] `ReActAgentWorkflow` satisfies `WorkflowDefinition` with `id="react_agent"` and `is_conversational=True`.
+- [x] Graph compiled with `create_react_agent(llm, tools=[...], checkpointer=MemorySaver())`.
+- [x] `to_initial_state` maps `request.question` and optional `request.messages` into a message list (`HumanMessage`, `AIMessage`).
+- [x] `to_chat_response` parses final message sequence: extracts final AI message as `answer`, parses `ToolMessage` outputs into `citations` and `retrieved_contexts`, and sets `source_used="react_agent"`.
+- [x] `handle_error` provides a graceful fallback response when a tool throws.
+- [x] Multi-turn test demonstrates that calling the workflow twice with the same `session_id` remembers facts stated in turn 1 without re-passing messages.
+- [x] Passes `BaseWorkflowContractTest`.
 
 ---
 
