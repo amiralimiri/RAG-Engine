@@ -23,3 +23,7 @@ VectorStoreAdapter protocol seam, deterministic chunk hashing, and offline test 
 ### Workflow execution & pipeline
 
 WorkflowRunner execution pipeline, dependency injection, and streaming guardrails. See `docs/agents/workflow-execution.md`.
+
+### Codebase unification & zero-shim architecture
+
+Zero-shim dependency injection standards, obsolete symbol pruning, and modern Pytest fixture architecture. See `docs/agents/codebase-unification.md`.

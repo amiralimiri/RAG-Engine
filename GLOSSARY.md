@@ -9,11 +9,12 @@ A self-corrective Retrieval-Augmented Generation architecture powered by LangGra
 
 ### Workflow Backend
 The execution persona selected per request, determining which classifier adapter drives decision routing and evidence grading:
-- `fix_single_llm`: Relies on standard OpenAI structured outputs (`deepseek-v4-flash`) via `OpenAIClassifierAdapter`.
-- `fix_single_jev`: Utilizes TypeSafe Classifier (`typesafe/jev-1.13`) via `JevClassifierAdapter` for deterministic categorical decisions and custom token telemetry.
+- `fix_single_llm`: Canonical SelfCorrectiveRagWorkflow registered in WorkflowRegistry relying on OpenAI structured outputs (`deepseek-v4-flash`) via `OpenAIClassifierAdapter`.
+- `fix_single_jev`: Canonical SelfCorrectiveRagWorkflow registered in WorkflowRegistry utilizing TypeSafe Classifier (`typesafe/jev-1.13`) via `JevClassifierAdapter` for deterministic categorical decisions and custom token telemetry.
+- `react_agent`: Canonical ReActAgentWorkflow registered in WorkflowRegistry providing multi-turn autonomous tool-calling.
 
 ### Workflow Engine
-The unified, deep LangGraph execution pipeline (`app/rag/engine.py`) that orchestrates the self-corrective RAG lifecycle (routing, retrieval, grading, query rewriting, and generation). Exposes a small interface (`ask` and `create_agentic_rag_graph`) while hiding state transitions, citation formatting, and streaming token dispatch.
+The unified, stateless LangGraph topology factory (`app/rag/engine.py`) that constructs the 10-node self-corrective RAG lifecycle (routing, retrieval, grading, query rewriting, and generation). Exposes a pure factory interface (`create_agentic_rag_graph`) with explicit dependency injection for chat models (`model`) and tools (`kb_tool`, `web_tool`), free from mutable module globals or vestigial synchronous wrappers.
 
 ### Workflow Classifier (Classifier Seam)
 A strongly-typed decision protocol (`app/rag/classifiers.py`) defining discrete methods (`route`, `grade_kb`, `grade_web`) required by the Workflow Engine to make routing and evidence sufficiency decisions.
