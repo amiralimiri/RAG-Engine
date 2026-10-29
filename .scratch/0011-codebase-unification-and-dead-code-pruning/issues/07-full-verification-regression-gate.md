@@ -4,13 +4,13 @@
 
 **Blocked by:** 01: Test Isolation Fixture Foundation, 02: Canonical Ingestion & Storage Facade Pruning, 03: Pure Engine Factory & Tool Decoupling, 04: Legacy Workflow Shims & Dictionary Deletion, 05: Route & Observability Test Suite Modernization, 06: Telemetry, Contexts & Spans Test Suite Consolidation
 
-**Status:** open
+**Status:** closed
 
 ---
 
 ## Tasks
 
-- [ ] Verify deleted files no longer exist:
+- [x] Verify deleted files no longer exist:
   - `app/rag/workflows/legacy.py`
   - `app/rag/fix_single_llm.py`
   - `app/rag/fix_single_jev.py`
@@ -18,16 +18,16 @@
   - `app/services/ingestion.py`
   - `tests/rag/test_legacy_compat.py`
   - `tests/test_indexing_regression.py`
-- [ ] Scan codebase for deprecated symbol usage:
+- [x] Scan codebase for deprecated symbol usage:
   - No occurrences of `WORKFLOW_ASKS` or `WORKFLOW_GRAPHS` across `app/` and `tests/`.
   - No occurrences of `_LegacyUnifiedWorkflowAdapter` or `reset_legacy_defaults`.
   - No occurrences of `app.rag.vectorstore` or `app.services.ingestion`.
   - No occurrences of `app.rag.fix_single_llm` or `app.rag.fix_single_jev`.
   - No occurrences of `web_search_tool` or `_llm` in `app/rag/engine.py`.
-- [ ] Run full test suite:
+- [x] Run full test suite:
   - `uv run pytest -v`
   - Verify all tests pass with zero failures.
-- [ ] Verify external scripts:
+- [x] Verify external scripts:
   - `uv run python evaluation/run_experiment.py --help` runs without error.
   - `uv run python run.py --help` (or checking app startup) executes cleanly.
 

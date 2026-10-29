@@ -1,4 +1,3 @@
-import ast
 from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from langfuse.model import TextPromptClient
@@ -210,32 +209,58 @@ class TestPromptCMSWiringAcrossJEVNodes:
     @pytest.mark.asyncio
     async def test_rewrite_query_wires_prompt(self, monkeypatch):
         """rewrite_query compiles 'rag:rewrite_query'."""
-        mock_prompt = MagicMock()
-        mock_prompt.compile.return_value = "Compiled rewrite prompt"
-        mock_get_prompt = MagicMock(return_value=mock_prompt)
-        monkeypatch.setattr(engine, "get_workflow_prompt", mock_get_prompt)
+        mock_rewrite_prompt = MagicMock()
+        mock_rewrite_prompt.compile.return_value = "Compiled rewrite prompt"
+        mock_gen_prompt = MagicMock()
+        mock_gen_prompt.compile.return_value = "Compiled gen prompt"
+
+        def fake_get_prompt(name):
+            if name == "rag:rewrite_query":
+                return mock_rewrite_prompt
+            return mock_gen_prompt
+
+        monkeypatch.setattr(engine, "get_workflow_prompt", fake_get_prompt)
 
         mock_llm = MagicMock()
         mock_llm.ainvoke = AsyncMock(return_value=MagicMock(content="improved search query"))
-        monkeypatch.setattr(engine, "llm", lambda: mock_llm)
 
+        mock_classifier = MagicMock()
+        mock_classifier.route.return_value = MagicMock(route="kb")
+        mock_classifier.grade_kb.side_effect = [MagicMock(grade="weak"), MagicMock(grade="good")]
+        mock_classifier.grade_web.return_value = MagicMock(grade="weak")
+
+        kb_tool = MagicMock()
+        kb_tool.ainvoke = AsyncMock(return_value=("kb content", {"documents": [], "citations": []}))
+        web_tool = MagicMock()
+        web_tool.ainvoke = AsyncMock(return_value=("web content", {"retrieved_contexts": [], "citations": []}))
+
+        graph = engine.create_agentic_rag_graph(mock_classifier, model=mock_llm, kb_tool=kb_tool, web_tool=web_tool)
         state = {
             "question": "VPN broken",
             "current_query": "vpn help",
             "retry_count": 0,
+            "kb_docs": [],
+            "web_results": "",
+            "kb_grade": "",
+            "web_grade": "",
+            "answer": "",
+            "source_used": "",
+            "trace": [],
+            "citations": [],
+            "retrieved_contexts": [],
         }
-        res = await engine.rewrite_query(state)
+        await graph.ainvoke(state)
 
-        assert res["current_query"] == "improved search query"
-        mock_get_prompt.assert_called_with("rag:rewrite_query")
-        mock_prompt.compile.assert_called_once_with(
+        mock_rewrite_prompt.compile.assert_called_once_with(
             question="VPN broken",
-            current_query="vpn help",
+            current_query="VPN broken",
         )
-        mock_llm.ainvoke.assert_called_once_with(
-            "Compiled rewrite prompt",
-            config={"metadata": {"langfuse_prompt": mock_prompt}},
-        )
+        rewrite_calls = [
+            c for c in mock_llm.ainvoke.call_args_list
+            if c[1].get("config", {}).get("metadata", {}).get("langfuse_prompt") == mock_rewrite_prompt
+        ]
+        assert len(rewrite_calls) >= 1
+        assert rewrite_calls[0][0][0] == "Compiled rewrite prompt"
 
     @pytest.mark.asyncio
     async def test_generate_from_kb_wires_prompt(self, monkeypatch):
@@ -247,24 +272,41 @@ class TestPromptCMSWiringAcrossJEVNodes:
 
         mock_llm = MagicMock()
         mock_llm.ainvoke = AsyncMock(return_value=MagicMock(content="KB Answer"))
-        monkeypatch.setattr(engine, "llm", lambda: mock_llm)
+
+        mock_classifier = MagicMock()
+        mock_classifier.route.return_value = MagicMock(route="kb")
+        mock_classifier.grade_kb.return_value = MagicMock(grade="good")
 
         doc = MagicMock()
         doc.metadata = {"source": "vpn.md"}
         doc.page_content = "VPN Guide details"
+
+        kb_tool = MagicMock()
+        kb_tool.ainvoke = AsyncMock(return_value=("kb content", {"documents": [doc], "citations": []}))
+
+        graph = engine.create_agentic_rag_graph(mock_classifier, model=mock_llm, kb_tool=kb_tool)
         state = {
             "question": "Setup VPN",
-            "kb_docs": [doc],
+            "current_query": "Setup VPN",
+            "retry_count": 0,
+            "kb_docs": [],
+            "web_results": "",
+            "kb_grade": "",
+            "web_grade": "",
+            "answer": "",
+            "source_used": "",
+            "trace": [],
+            "citations": [],
+            "retrieved_contexts": [],
         }
-        res = await engine.generate_from_kb(state)
+        res = await graph.ainvoke(state)
 
         assert res["answer"] == "KB Answer"
-        mock_get_prompt.assert_called_with("rag:generate_kb")
+        mock_get_prompt.assert_any_call("rag:generate_kb")
         mock_prompt.compile.assert_called_once()
-        mock_llm.ainvoke.assert_called_once_with(
-            "Compiled KB prompt",
-            config={"metadata": {"langfuse_prompt": mock_prompt}},
-        )
+        args, kwargs = mock_llm.ainvoke.call_args
+        assert args[0] == "Compiled KB prompt"
+        assert kwargs["config"]["metadata"]["langfuse_prompt"] == mock_prompt
 
     @pytest.mark.asyncio
     async def test_generate_from_web_wires_prompt(self, monkeypatch):
@@ -276,24 +318,43 @@ class TestPromptCMSWiringAcrossJEVNodes:
 
         mock_llm = MagicMock()
         mock_llm.ainvoke = AsyncMock(return_value=MagicMock(content="Web Answer"))
-        monkeypatch.setattr(engine, "llm", lambda: mock_llm)
 
+        mock_classifier = MagicMock()
+        mock_classifier.route.return_value = MagicMock(route="kb")
+        mock_classifier.grade_kb.return_value = MagicMock(grade="weak")
+        mock_classifier.grade_web.return_value = MagicMock(grade="good")
+
+        kb_tool = MagicMock()
+        kb_tool.ainvoke = AsyncMock(return_value=("kb content", {"documents": [], "citations": []}))
+        web_tool = MagicMock()
+        web_tool.ainvoke = AsyncMock(return_value=("External web info", {"retrieved_contexts": [], "citations": []}))
+
+        graph = engine.create_agentic_rag_graph(mock_classifier, model=mock_llm, kb_tool=kb_tool, web_tool=web_tool)
         state = {
             "question": "Setup VPN",
-            "web_results": "External web info",
+            "current_query": "Setup VPN",
+            "retry_count": 0,
+            "kb_docs": [],
+            "web_results": "",
+            "kb_grade": "",
+            "web_grade": "",
+            "answer": "",
+            "source_used": "",
+            "trace": [],
+            "citations": [],
+            "retrieved_contexts": [],
         }
-        res = await engine.generate_from_web(state)
+        res = await graph.ainvoke(state)
 
         assert res["answer"] == "Web Answer"
-        mock_get_prompt.assert_called_with("rag:generate_web")
+        mock_get_prompt.assert_any_call("rag:generate_web")
         mock_prompt.compile.assert_called_once_with(
             question="Setup VPN",
             web_results="External web info",
         )
-        mock_llm.ainvoke.assert_called_once_with(
-            "Compiled Web prompt",
-            config={"metadata": {"langfuse_prompt": mock_prompt}},
-        )
+        args, kwargs = mock_llm.ainvoke.call_args
+        assert args[0] == "Compiled Web prompt"
+        assert kwargs["config"]["metadata"]["langfuse_prompt"] == mock_prompt
 
     @pytest.mark.asyncio
     async def test_direct_answer_wires_prompt(self, monkeypatch):
@@ -305,12 +366,11 @@ class TestPromptCMSWiringAcrossJEVNodes:
 
         mock_llm = MagicMock()
         mock_llm.ainvoke = AsyncMock(return_value=MagicMock(content="Direct Answer"))
-        monkeypatch.setattr(engine, "llm", lambda: mock_llm)
 
         state = {
             "question": "Hi",
         }
-        res = await engine.direct_answer(state)
+        res = await engine.direct_answer(state, model=mock_llm)
 
         assert res["answer"] == "Direct Answer"
         mock_get_prompt.assert_called_with("rag:direct_answer")
@@ -321,42 +381,9 @@ class TestPromptCMSWiringAcrossJEVNodes:
         )
 
 
-class TestZeroCouplingStrict:
-    """Verifies fix_single_llm and fix_single_jev do not cross-import."""
-
-    def test_no_cross_imports(self):
-        from pathlib import Path
-
-        repo_root = Path(__file__).resolve().parent.parent
-        jev_file = repo_root / "app" / "rag" / "fix_single_jev.py"
-        llm_file = repo_root / "app" / "rag" / "fix_single_llm.py"
-
-        jev_tree = ast.parse(jev_file.read_text(encoding="utf-8"))
-        llm_tree = ast.parse(llm_file.read_text(encoding="utf-8"))
-
-        # Check imports in fix_single_jev
-        for node in ast.walk(jev_tree):
-            if isinstance(node, ast.Import):
-                for alias in node.names:
-                    assert "fix_single_llm" not in alias.name
-            elif isinstance(node, ast.ImportFrom):
-                assert node.module is not None
-                assert "fix_single_llm" not in node.module
-
-        # Check imports in fix_single_llm
-        for node in ast.walk(llm_tree):
-            if isinstance(node, ast.Import):
-                for alias in node.names:
-                    assert "fix_single_jev" not in alias.name
-            elif isinstance(node, ast.ImportFrom):
-                assert node.module is not None
-                assert "fix_single_jev" not in node.module
-
-
 class TestChatOpenAIStreamUsage:
     """Verifies stream_usage=True is enabled on ChatOpenAI instances."""
 
     def test_engine_has_stream_usage_enabled(self, monkeypatch):
-        engine._llm = None
-        client = engine.llm()
+        client = engine.get_chat_model()
         assert getattr(client, "stream_usage", None) is True

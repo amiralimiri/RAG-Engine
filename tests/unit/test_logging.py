@@ -219,10 +219,10 @@ async def test_langgraph_step_contextvars(monkeypatch):
     mock_llm.invoke = MagicMock(return_value=MagicMock(content="answer"))
 
     from app.rag import engine
-    monkeypatch.setattr(engine, "llm", lambda: mock_llm)
+    monkeypatch.setattr(engine, "get_chat_model", lambda: mock_llm)
 
     structlog.contextvars.clear_contextvars()
-    res = direct_answer(state)
+    res = direct_answer(state, model=mock_llm)
     if inspect.iscoroutine(res):
         await res
     assert structlog.contextvars.get_contextvars().get("step") == "direct_answer"
