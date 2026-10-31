@@ -402,7 +402,7 @@ class TestRouteIntegration:
         client = TestClient(app)
 
         mock_eval = AsyncMock()
-        monkeypatch.setattr("app.api.routes.run_online_evaluation_task", mock_eval)
+        monkeypatch.setattr("app.rag.workflows.runner.run_online_evaluation_task", mock_eval)
 
         register_mock_workflow(
             "fix_single_llm",
@@ -412,7 +412,7 @@ class TestRouteIntegration:
             trace=["retrieve_kb", "generate_from_kb"],
             citations=[],
         )
-        monkeypatch.setattr("app.api.routes.extract_trace_id", lambda handler: "trace-sync-123")
+        monkeypatch.setattr("app.rag.workflows.runner.extract_trace_id", lambda handler: "trace-sync-123")
 
         payload = {
             "question": "How to resolve sync issue?",
@@ -441,7 +441,7 @@ class TestRouteIntegration:
             captured_kwargs = kwargs
             eval_task_called.set()
 
-        monkeypatch.setattr("app.api.routes.run_online_evaluation_task", fake_eval_task)
+        monkeypatch.setattr("app.rag.workflows.runner.run_online_evaluation_task", fake_eval_task)
 
         async def mock_astream_events(*args, **kwargs):
             yield {"event": "on_chain_start", "metadata": {"langgraph_node": "retrieve_kb"}, "data": {}}
@@ -481,7 +481,7 @@ class TestRouteIntegration:
         mock_graph = MagicMock()
         mock_graph.astream_events = mock_astream_events
         register_mock_workflow("fix_single_llm", graph=mock_graph)
-        monkeypatch.setattr("app.api.routes.extract_trace_id", lambda handler: "trace-stream-456")
+        monkeypatch.setattr("app.rag.workflows.runner.extract_trace_id", lambda handler: "trace-stream-456")
 
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app), base_url="http://test"

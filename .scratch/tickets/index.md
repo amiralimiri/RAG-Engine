@@ -9,7 +9,7 @@
 - [x] [01: WorkflowRunner Constructor Auto-Wiring, Interface Shrinkage & Singleton Reset](./01-runner-constructor-and-reset.md) (Completed)
 - [x] [02: Transport Layer Simplification (`app/api/routes.py`)](./02-routes-simplification.md) (Completed)
 - [x] [03: Telemetry, Contexts, and Experiment Caller Migration](./03-telemetry-and-callers-migration.md) (Completed)
-- [ ] [04: WorkflowRunner Test Suite Modernization & Conformance Gate](./04-runner-tests-and-conformance.md) (Unblocked - ready to start)
+- [x] [04: WorkflowRunner Test Suite Modernization & Conformance Gate](./04-runner-tests-and-conformance.md) (Completed)
 
 ## Dependency Pipeline
 

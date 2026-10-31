@@ -211,11 +211,11 @@ def test_api_chat_contract_success(client, monkeypatch, register_mock_workflow):
     mock_handler.last_trace_id = "trace-frontend-test-999"
 
     monkeypatch.setattr(
-        "app.api.routes.get_langfuse_callback",
+        "app.rag.workflows.runner.get_langfuse_callback",
         lambda **kwargs: mock_handler,
     )
     monkeypatch.setattr(
-        "app.api.routes.extract_trace_id",
+        "app.rag.workflows.runner.extract_trace_id",
         lambda handler: getattr(handler, "last_trace_id", None),
     )
 

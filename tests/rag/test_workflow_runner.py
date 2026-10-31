@@ -21,6 +21,11 @@ from app.api.schemas import (
     StreamStepEvent,
     StreamTokenEvent,
 )
+from app.core.telemetry import (
+    extract_trace_id,
+    flush_telemetry,
+    get_langfuse_callback,
+)
 from app.rag.workflows.base import EvalContext, WorkflowDefinition, WorkflowInfo
 from app.rag.workflows.registry import WorkflowRegistry, get_workflow_registry
 from app.rag.workflows.runner import (
@@ -31,7 +36,9 @@ from app.rag.workflows.runner import (
     format_sse,
     get_workflow_runner,
     is_tool_call_chunk,
+    reset_workflow_runner,
 )
+from app.services.evaluation import run_online_evaluation_task
 
 
 class MockWorkflow:
@@ -828,17 +835,23 @@ async def test_stream_finally_block_flushes_telemetry():
     mock_wf.mock_graph.astream_events = mock_events
     custom_registry.register(mock_wf)
 
-    runner = WorkflowRunner(registry=custom_registry)
-    request = ChatRequest(question="Telemetry test", workflow="telemetry_stream_wf")
-
     mock_handler = MagicMock()
     mock_handler.flush = MagicMock()
+    mock_cb_factory = MagicMock(return_value=mock_handler)
+    mock_flush = MagicMock()
 
-    with patch("app.rag.workflows.runner.get_langfuse_callback", return_value=mock_handler):
-        with patch("app.rag.workflows.runner.flush_telemetry") as mock_flush:
-            _ = [frame async for frame in runner.stream(request)]
-            assert mock_flush.called
-            assert mock_handler.flush.called
+    runner = WorkflowRunner(
+        registry=custom_registry,
+        callback_factory=mock_cb_factory,
+        telemetry_flusher=mock_flush,
+    )
+    request = ChatRequest(question="Telemetry test", workflow="telemetry_stream_wf")
+
+    frames = [frame async for frame in runner.stream(request)]
+    assert len(frames) >= 1
+    assert mock_cb_factory.called
+    assert mock_flush.called
+    assert mock_handler.flush.called
 
 
 @pytest.mark.asyncio
@@ -863,32 +876,372 @@ async def test_stream_background_evaluation_task_safeguarded():
     mock_wf.mock_graph.astream_events = mock_events
     custom_registry.register(mock_wf)
 
-    runner = WorkflowRunner(registry=custom_registry)
+    async def slow_eval(*args, **kwargs):
+        await asyncio.sleep(0.01)
+
+    mock_eval_task = AsyncMock(side_effect=slow_eval)
+    runner = WorkflowRunner(registry=custom_registry, eval_task_fn=mock_eval_task)
     request = ChatRequest(
         question="Eval stream?",
         workflow="stream_eval_wf",
         trace_id="eval-stream-trace",
     )
 
-    with patch("app.rag.workflows.runner.run_online_evaluation_task", new_callable=AsyncMock) as mock_eval_task:
-        # Give mock task a small sleep so we can verify it was in the task set
-        async def slow_eval(*args, **kwargs):
-            await asyncio.sleep(0.01)
+    frames = [frame async for frame in runner.stream(request)]
+    events = parse_sse_events(frames)
+    assert len(events) >= 1
 
-        mock_eval_task.side_effect = slow_eval
+    # Verify task is currently safeguarded in runner._background_tasks and module _background_tasks
+    assert len(runner._background_tasks) >= 1
+    assert len(_background_tasks) >= 1
 
+    # Await tasks to complete
+    await asyncio.gather(*list(runner._background_tasks), return_exceptions=True)
+
+    # After completion callbacks, sets should be clean
+    assert len(runner._background_tasks) == 0
+    assert len(_background_tasks) == 0
+    assert mock_eval_task.called
+
+
+# ==============================================================================
+# 9. Canonical Production Hooks Auto-Wiring & Singleton Reset
+# ==============================================================================
+
+
+def test_default_workflow_runner_auto_wires_canonical_production_hooks():
+    """Verify WorkflowRunner defaults auto-wire canonical adapters without manual injection."""
+    runner = WorkflowRunner()
+    assert runner.callback_factory is get_langfuse_callback
+    assert runner.trace_extractor is extract_trace_id
+    assert runner.telemetry_flusher is flush_telemetry
+    assert runner.eval_task_fn is run_online_evaluation_task
+    assert runner.registry is get_workflow_registry()
+
+    default_runner = get_workflow_runner()
+    assert default_runner.callback_factory is get_langfuse_callback
+    assert default_runner.trace_extractor is extract_trace_id
+    assert default_runner.telemetry_flusher is flush_telemetry
+    assert default_runner.eval_task_fn is run_online_evaluation_task
+
+
+def test_reset_workflow_runner_cleanly_resets_singleton():
+    """Verify reset_workflow_runner discards _default_runner singleton instance."""
+    r1 = get_workflow_runner()
+    r2 = get_workflow_runner()
+    assert r1 is r2
+
+    reset_workflow_runner()
+    r3 = get_workflow_runner()
+    assert r3 is not r1
+    assert isinstance(r3, WorkflowRunner)
+
+
+# ==============================================================================
+# 10. Constructor-Based Hook Injection
+# ==============================================================================
+
+
+def test_constructor_hook_injection_sync_execute():
+    """Verify WorkflowRunner(callback_factory=...) passes handler to execution config."""
+    custom_registry = WorkflowRegistry()
+    mock_wf = MockWorkflow("cb_inject_sync_wf")
+    custom_registry.register(mock_wf)
+
+    mock_handler = MagicMock()
+    mock_cb_factory = MagicMock(return_value=mock_handler)
+    mock_flusher = MagicMock()
+
+    runner = WorkflowRunner(
+        registry=custom_registry,
+        callback_factory=mock_cb_factory,
+        telemetry_flusher=mock_flusher,
+    )
+    request = ChatRequest(
+        question="How to configure constructor hooks?",
+        workflow="cb_inject_sync_wf",
+        session_id="sess-cb-sync",
+    )
+
+    response = runner.execute(request)
+    assert response.workflow == "cb_inject_sync_wf"
+    assert mock_cb_factory.called
+    cb_kwargs = mock_cb_factory.call_args[1]
+    assert cb_kwargs["workflow_name"] == "cb_inject_sync_wf"
+    assert cb_kwargs["session_id"] == "sess-cb-sync"
+
+    # Verify handler was injected into LangGraph run_config callbacks
+    call_args = mock_wf.mock_graph.invoke.call_args
+    config = call_args[1].get("config") if "config" in call_args[1] else call_args[0][1]
+    assert config["callbacks"] == [mock_handler]
+    assert mock_flusher.called
+
+
+@pytest.mark.asyncio
+async def test_constructor_hook_injection_async_aexecute():
+    """Verify WorkflowRunner(callback_factory=...) passes handler to aexecute config."""
+    custom_registry = WorkflowRegistry()
+    mock_wf = MockWorkflow("cb_inject_async_wf")
+    mock_wf.mock_graph.ainvoke = AsyncMock(return_value={
+        "answer": "Async Answer",
+        "source_used": "direct",
+        "trace": [],
+        "citations": [],
+    })
+    custom_registry.register(mock_wf)
+
+    mock_handler = MagicMock()
+    mock_cb_factory = MagicMock(return_value=mock_handler)
+    mock_flusher = MagicMock()
+
+    runner = WorkflowRunner(
+        registry=custom_registry,
+        callback_factory=mock_cb_factory,
+        telemetry_flusher=mock_flusher,
+    )
+    request = ChatRequest(
+        question="Async constructor hooks?",
+        workflow="cb_inject_async_wf",
+        session_id="sess-cb-async",
+    )
+
+    response = await runner.aexecute(request)
+    assert response.answer == "Async Answer"
+    assert mock_cb_factory.called
+    call_args = mock_wf.mock_graph.ainvoke.call_args
+    config = call_args[1].get("config") if "config" in call_args[1] else call_args[0][1]
+    assert config["callbacks"] == [mock_handler]
+    assert mock_flusher.called
+
+
+@pytest.mark.asyncio
+async def test_constructor_hook_injection_stream():
+    """Verify WorkflowRunner(callback_factory=...) activates handler during stream."""
+    custom_registry = WorkflowRegistry()
+    mock_wf = MockWorkflow("cb_inject_stream_wf")
+
+    async def mock_events(*args, **kwargs):
+        yield {
+            "event": "on_chain_end",
+            "metadata": {"langgraph_node": "step_1"},
+            "data": {"output": {"answer": "Stream constructor answer"}},
+        }
+
+    mock_wf.mock_graph.astream_events = mock_events
+    custom_registry.register(mock_wf)
+
+    mock_handler = MagicMock()
+    mock_handler.flush = MagicMock()
+    mock_cb_factory = MagicMock(return_value=mock_handler)
+    mock_flusher = MagicMock()
+
+    runner = WorkflowRunner(
+        registry=custom_registry,
+        callback_factory=mock_cb_factory,
+        telemetry_flusher=mock_flusher,
+    )
+    request = ChatRequest(
+        question="Stream constructor hooks?",
+        workflow="cb_inject_stream_wf",
+        session_id="sess-cb-stream",
+    )
+
+    frames = [frame async for frame in runner.stream(request)]
+    assert len(frames) >= 1
+    assert mock_cb_factory.called
+    assert mock_flusher.called
+    assert mock_handler.flush.called
+
+
+# ==============================================================================
+# 11. Background Evaluation Exception Shielding & Warning Logging
+# ==============================================================================
+
+
+def test_online_evaluation_scheduling_exception_shielded_with_warning():
+    """Verify exceptions in BackgroundTasks.add_task are logged as warnings and never abort execute()."""
+    custom_registry = WorkflowRegistry()
+    mock_wf = MockWorkflow("failing_bg_task_wf")
+    custom_registry.register(mock_wf)
+
+    runner = WorkflowRunner(registry=custom_registry)
+    request = ChatRequest(
+        question="Will bg_task error crash execute?",
+        workflow="failing_bg_task_wf",
+        trace_id="eval-crash-trace",
+    )
+
+    failing_bg_tasks = MagicMock()
+    failing_bg_tasks.add_task.side_effect = RuntimeError("BackgroundTasks queue pool exhausted")
+
+    with patch("app.rag.workflows.runner.logger.warning") as mock_log_warn:
+        response = runner.execute(request, background_tasks=failing_bg_tasks)
+        assert response.workflow == "failing_bg_task_wf"
+        assert response.answer == "Mock Answer"
+        assert mock_log_warn.called
+        log_event = mock_log_warn.call_args[0][0]
+        assert log_event == "online_evaluation_scheduling_failed"
+        assert "BackgroundTasks queue pool exhausted" in mock_log_warn.call_args[1]["error"]
+
+
+@pytest.mark.asyncio
+async def test_online_evaluation_task_exception_shielded_in_aexecute():
+    """Verify exceptions inside eval_task_fn during aexecute() are caught, logged, and never raised."""
+    custom_registry = WorkflowRegistry()
+    mock_wf = MockWorkflow("failing_eval_task_wf")
+    mock_wf.mock_graph.ainvoke = AsyncMock(return_value={
+        "answer": "Async eval shielded answer",
+        "source_used": "vectorstore",
+        "trace": [],
+        "citations": [],
+    })
+    custom_registry.register(mock_wf)
+
+    mock_failing_eval = AsyncMock(side_effect=RuntimeError("Langfuse evaluation timeout"))
+    runner = WorkflowRunner(registry=custom_registry, eval_task_fn=mock_failing_eval)
+    request = ChatRequest(
+        question="Will eval crash aexecute?",
+        workflow="failing_eval_task_wf",
+        trace_id="eval-aexec-trace",
+    )
+
+    with patch("app.rag.workflows.runner.logger.warning") as mock_log_warn:
+        response = await runner.aexecute(request)
+        assert response.answer == "Async eval shielded answer"
+
+        # Await any spawned background evaluation tasks
+        await asyncio.gather(*list(runner._background_tasks), return_exceptions=True)
+
+        assert mock_failing_eval.called
+        assert mock_log_warn.called
+        log_event = mock_log_warn.call_args[0][0]
+        assert log_event == "online_evaluation_failed_shielded"
+        assert "Langfuse evaluation timeout" in mock_log_warn.call_args[1]["error"]
+
+
+@pytest.mark.asyncio
+async def test_online_evaluation_task_exception_shielded_in_stream():
+    """Verify exceptions inside eval_task_fn during stream() are caught, logged, and never abort stream."""
+    custom_registry = WorkflowRegistry()
+    mock_wf = MockWorkflow("failing_stream_eval_wf")
+
+    async def mock_events(*args, **kwargs):
+        yield {
+            "event": "on_chain_end",
+            "metadata": {"langgraph_node": "step_1"},
+            "data": {"output": {"answer": "Stream eval shielded answer"}},
+        }
+
+    mock_wf.mock_graph.astream_events = mock_events
+    custom_registry.register(mock_wf)
+
+    mock_failing_eval = AsyncMock(side_effect=ValueError("DeepEval connection refused"))
+    runner = WorkflowRunner(registry=custom_registry, eval_task_fn=mock_failing_eval)
+    request = ChatRequest(
+        question="Will eval crash stream?",
+        workflow="failing_stream_eval_wf",
+        trace_id="stream-failing-trace",
+    )
+
+    with patch("app.rag.workflows.runner.logger.warning") as mock_log_warn:
         frames = [frame async for frame in runner.stream(request)]
         events = parse_sse_events(frames)
         assert len(events) >= 1
 
-        # Verify task is currently safeguarded in runner._background_tasks and module _background_tasks
-        assert len(runner._background_tasks) >= 1
-        assert len(_background_tasks) >= 1
+        # Verify no error SSE frame was emitted due to eval failure
+        error_events = [e for e in events if e["event"] == "error"]
+        assert len(error_events) == 0
 
-        # Await tasks to complete
+        # Await background evaluation tasks
         await asyncio.gather(*list(runner._background_tasks), return_exceptions=True)
 
-        # After completion callbacks, sets should be clean
-        assert len(runner._background_tasks) == 0
-        assert len(_background_tasks) == 0
+        assert mock_failing_eval.called
+        assert mock_log_warn.called
+        log_event = mock_log_warn.call_args[0][0]
+        assert log_event == "online_evaluation_failed_shielded"
+        assert "DeepEval connection refused" in mock_log_warn.call_args[1]["error"]
+
+
+# ==============================================================================
+# 12. Extraneous Hook Kwargs Handling
+# ==============================================================================
+
+
+def test_execute_and_aexecute_ignore_extraneous_hook_kwargs_cleanly():
+    """Verify execute() and aexecute() cleanly ignore extraneous hook kwargs without overriding injected hooks."""
+    custom_registry = WorkflowRegistry()
+    mock_wf = MockWorkflow("ignore_kwargs_wf")
+    mock_wf.mock_graph.ainvoke = AsyncMock(return_value={
+        "answer": "Async answer",
+        "source_used": "direct",
+        "trace": [],
+        "citations": [],
+    })
+    custom_registry.register(mock_wf)
+
+    injected_cb = MagicMock(return_value=MagicMock())
+    bogus_cb = MagicMock()
+    bogus_eval = MagicMock()
+
+    runner = WorkflowRunner(registry=custom_registry, callback_factory=injected_cb)
+    request = ChatRequest(question="Ignore hook kwargs?", workflow="ignore_kwargs_wf")
+
+    # Sync execute with extraneous hook kwargs
+    response_sync = runner.execute(
+        request,
+        callback_factory=bogus_cb,
+        eval_task_fn=bogus_eval,
+        unexpected_hook_param="should_be_ignored",
+    )
+    assert response_sync.answer == "Mock Answer"
+    assert injected_cb.called
+    assert not bogus_cb.called
+    assert not bogus_eval.called
+
+
+@pytest.mark.asyncio
+async def test_aexecute_ignores_extraneous_hook_kwargs_cleanly():
+    """Verify aexecute() cleanly ignores extraneous hook kwargs."""
+    custom_registry = WorkflowRegistry()
+    mock_wf = MockWorkflow("async_ignore_kwargs_wf")
+    mock_wf.mock_graph.ainvoke = AsyncMock(return_value={
+        "answer": "Async ignore answer",
+        "source_used": "direct",
+        "trace": [],
+        "citations": [],
+    })
+    custom_registry.register(mock_wf)
+
+    injected_cb = MagicMock(return_value=MagicMock())
+    bogus_cb = MagicMock()
+
+    runner = WorkflowRunner(registry=custom_registry, callback_factory=injected_cb)
+    request = ChatRequest(question="Async ignore kwargs?", workflow="async_ignore_kwargs_wf")
+
+    response_async = await runner.aexecute(
+        request,
+        callback_factory=bogus_cb,
+        extraneous_kwarg="ignore_me",
+    )
+    assert response_async.answer == "Async ignore answer"
+    assert injected_cb.called
+    assert not bogus_cb.called
+
+
+def test_stream_rejects_extraneous_hook_kwargs_with_type_error():
+    """Verify stream() rejects extraneous hook kwargs cleanly by raising TypeError."""
+    runner = WorkflowRunner()
+    request = ChatRequest(question="Stream reject kwargs?", workflow="any_wf")
+
+    with pytest.raises(TypeError) as exc_info1:
+        runner.stream(request, callback_factory=MagicMock())  # type: ignore[call-arg]
+    assert "unexpected keyword argument" in str(exc_info1.value)
+
+    with pytest.raises(TypeError) as exc_info2:
+        runner.stream(request, eval_task_fn=MagicMock())  # type: ignore[call-arg]
+    assert "unexpected keyword argument" in str(exc_info2.value)
+
+    with pytest.raises(TypeError) as exc_info3:
+        runner.stream(request, trace_extractor=MagicMock())  # type: ignore[call-arg]
+    assert "unexpected keyword argument" in str(exc_info3.value)
 

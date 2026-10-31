@@ -45,9 +45,9 @@ def test_e2e_flow_with_langfuse_mocked(client, monkeypatch, register_mock_workfl
 
     monkeypatch.setattr("app.core.telemetry.get_langfuse_client", lambda: mock_client)
     monkeypatch.setattr("app.api.routes.get_langfuse_client", lambda: mock_client)
-    monkeypatch.setattr("app.api.routes.get_langfuse_callback", lambda **kwargs: mock_handler)
-    monkeypatch.setattr("app.api.routes.extract_trace_id", lambda handler: getattr(handler, "last_trace_id", None))
-    monkeypatch.setattr("app.api.routes.run_online_evaluation_task", mock_eval)
+    monkeypatch.setattr("app.rag.workflows.runner.get_langfuse_callback", lambda **kwargs: mock_handler)
+    monkeypatch.setattr("app.rag.workflows.runner.extract_trace_id", lambda handler: getattr(handler, "last_trace_id", None))
+    monkeypatch.setattr("app.rag.workflows.runner.run_online_evaluation_task", mock_eval)
 
     register_mock_workflow(
         "fix_single_llm",
@@ -108,7 +108,7 @@ def test_e2e_flow_with_langfuse_disabled(client, monkeypatch, register_mock_work
     settings = get_settings()
     monkeypatch.setattr(settings, "langfuse_enabled", False)
     mock_eval = AsyncMock()
-    monkeypatch.setattr("app.api.routes.run_online_evaluation_task", mock_eval)
+    monkeypatch.setattr("app.rag.workflows.runner.run_online_evaluation_task", mock_eval)
 
     mock_graph = MagicMock()
     mock_graph.invoke.return_value = {
@@ -160,9 +160,9 @@ def test_e2e_flow_with_fix_single_jev_mocked(client, monkeypatch, register_mock_
 
     monkeypatch.setattr("app.core.telemetry.get_langfuse_client", lambda: mock_client)
     monkeypatch.setattr("app.api.routes.get_langfuse_client", lambda: mock_client)
-    monkeypatch.setattr("app.api.routes.get_langfuse_callback", lambda **kwargs: mock_handler)
-    monkeypatch.setattr("app.api.routes.extract_trace_id", lambda handler: getattr(handler, "last_trace_id", None))
-    monkeypatch.setattr("app.api.routes.run_online_evaluation_task", mock_eval)
+    monkeypatch.setattr("app.rag.workflows.runner.get_langfuse_callback", lambda **kwargs: mock_handler)
+    monkeypatch.setattr("app.rag.workflows.runner.extract_trace_id", lambda handler: getattr(handler, "last_trace_id", None))
+    monkeypatch.setattr("app.rag.workflows.runner.run_online_evaluation_task", mock_eval)
 
     mock_graph = MagicMock()
     mock_graph.invoke.return_value = {
@@ -252,8 +252,8 @@ async def test_e2e_streaming_flow_with_observability_and_evaluation(monkeypatch,
 
     monkeypatch.setattr("app.core.telemetry.get_langfuse_client", lambda: mock_client)
     monkeypatch.setattr("app.api.routes.get_langfuse_client", lambda: mock_client)
-    monkeypatch.setattr("app.api.routes.get_langfuse_callback", lambda **kwargs: mock_handler)
-    monkeypatch.setattr("app.api.routes.extract_trace_id", lambda handler: "trace-e2e-stream-888")
+    monkeypatch.setattr("app.rag.workflows.runner.get_langfuse_callback", lambda **kwargs: mock_handler)
+    monkeypatch.setattr("app.rag.workflows.runner.extract_trace_id", lambda handler: "trace-e2e-stream-888")
 
     eval_called = asyncio.Event()
     eval_kwargs = {}
@@ -263,7 +263,7 @@ async def test_e2e_streaming_flow_with_observability_and_evaluation(monkeypatch,
         eval_kwargs = kwargs
         eval_called.set()
 
-    monkeypatch.setattr("app.api.routes.run_online_evaluation_task", mock_eval_task)
+    monkeypatch.setattr("app.rag.workflows.runner.run_online_evaluation_task", mock_eval_task)
 
     async def mock_astream_events(*args, **kwargs):
         yield {"event": "on_chain_start", "metadata": {"langgraph_node": "retrieve_kb"}, "data": {}}
@@ -366,9 +366,9 @@ def test_e2e_switching_all_workflows_sync_and_stream(client, monkeypatch):
 
     monkeypatch.setattr("app.core.telemetry.get_langfuse_client", lambda: mock_client)
     monkeypatch.setattr("app.api.routes.get_langfuse_client", lambda: mock_client)
-    monkeypatch.setattr("app.api.routes.get_langfuse_callback", lambda **kwargs: mock_handler)
-    monkeypatch.setattr("app.api.routes.extract_trace_id", lambda handler: getattr(handler, "last_trace_id", None))
-    monkeypatch.setattr("app.api.routes.run_online_evaluation_task", mock_eval)
+    monkeypatch.setattr("app.rag.workflows.runner.get_langfuse_callback", lambda **kwargs: mock_handler)
+    monkeypatch.setattr("app.rag.workflows.runner.extract_trace_id", lambda handler: getattr(handler, "last_trace_id", None))
+    monkeypatch.setattr("app.rag.workflows.runner.run_online_evaluation_task", mock_eval)
 
     registry = get_workflow_registry()
     jev_wf = registry.get("fix_single_jev")
@@ -447,9 +447,9 @@ def test_e2e_multi_turn_session_persistence_http(client, monkeypatch):
 
     monkeypatch.setattr("app.core.telemetry.get_langfuse_client", lambda: mock_client)
     monkeypatch.setattr("app.api.routes.get_langfuse_client", lambda: mock_client)
-    monkeypatch.setattr("app.api.routes.get_langfuse_callback", lambda **kwargs: mock_handler)
-    monkeypatch.setattr("app.api.routes.extract_trace_id", lambda handler: getattr(handler, "last_trace_id", None))
-    monkeypatch.setattr("app.api.routes.run_online_evaluation_task", mock_eval)
+    monkeypatch.setattr("app.rag.workflows.runner.get_langfuse_callback", lambda **kwargs: mock_handler)
+    monkeypatch.setattr("app.rag.workflows.runner.extract_trace_id", lambda handler: getattr(handler, "last_trace_id", None))
+    monkeypatch.setattr("app.rag.workflows.runner.run_online_evaluation_task", mock_eval)
 
     class MemoryEchoChatModel(SimpleChatModel):
         @property
@@ -521,8 +521,8 @@ def test_e2e_langfuse_trace_spans_for_fixed_dag_and_react(client, monkeypatch):
     mock_client = MagicMock()
     monkeypatch.setattr("app.core.telemetry.get_langfuse_client", lambda: mock_client)
     monkeypatch.setattr("app.api.routes.get_langfuse_client", lambda: mock_client)
-    monkeypatch.setattr("app.api.routes.get_langfuse_callback", mock_get_langfuse_callback)
-    monkeypatch.setattr("app.api.routes.run_online_evaluation_task", AsyncMock())
+    monkeypatch.setattr("app.rag.workflows.runner.get_langfuse_callback", mock_get_langfuse_callback)
+    monkeypatch.setattr("app.rag.workflows.runner.run_online_evaluation_task", AsyncMock())
 
     registry = get_workflow_registry()
     jev_wf = registry.get("fix_single_jev")
@@ -591,15 +591,15 @@ async def test_e2e_online_evaluation_scores_recorded_for_all_workflows_without_s
 
     monkeypatch.setattr("app.core.telemetry.get_langfuse_client", lambda: mock_client)
     monkeypatch.setattr("app.api.routes.get_langfuse_client", lambda: mock_client)
-    monkeypatch.setattr("app.api.routes.get_langfuse_callback", lambda **kwargs: mock_handler)
-    monkeypatch.setattr("app.api.routes.extract_trace_id", lambda handler: "trace-eval-multi-wf-999")
+    monkeypatch.setattr("app.rag.workflows.runner.get_langfuse_callback", lambda **kwargs: mock_handler)
+    monkeypatch.setattr("app.rag.workflows.runner.extract_trace_id", lambda handler: "trace-eval-multi-wf-999")
 
     captured_eval_tasks = []
 
     def mock_run_online_eval(**kwargs):
         captured_eval_tasks.append(kwargs)
 
-    monkeypatch.setattr("app.api.routes.run_online_evaluation_task", mock_run_online_eval)
+    monkeypatch.setattr("app.rag.workflows.runner.run_online_evaluation_task", mock_run_online_eval)
 
     registry = get_workflow_registry()
     workflows_to_test = ["fix_single_llm", "fix_single_jev", "react_agent"]

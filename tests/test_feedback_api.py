@@ -9,7 +9,8 @@ from tests.conftest import MockWorkflowDefinition
 
 @pytest.fixture(autouse=True)
 def mock_online_evaluation(monkeypatch):
-    monkeypatch.setattr("app.api.routes.run_online_evaluation_task", AsyncMock())
+    monkeypatch.setattr("app.rag.workflows.runner.run_online_evaluation_task", AsyncMock())
+    monkeypatch.setattr("app.services.evaluation.run_online_evaluation_task", AsyncMock())
 
 
 @pytest.fixture
@@ -23,11 +24,11 @@ def test_chat_endpoint_returns_trace_id(client, monkeypatch, register_mock_workf
     mock_handler.last_trace_id = "trace-test-123"
 
     monkeypatch.setattr(
-        "app.api.routes.get_langfuse_callback",
+        "app.rag.workflows.runner.get_langfuse_callback",
         lambda **kwargs: mock_handler,
     )
     monkeypatch.setattr(
-        "app.api.routes.extract_trace_id",
+        "app.rag.workflows.runner.extract_trace_id",
         lambda handler: getattr(handler, "last_trace_id", None),
     )
 
@@ -58,7 +59,7 @@ def test_chat_endpoint_passes_session_and_user_id_to_ask(client, monkeypatch, cl
     mock_handler = MagicMock()
 
     monkeypatch.setattr(
-        "app.api.routes.get_langfuse_callback",
+        "app.rag.workflows.runner.get_langfuse_callback",
         lambda **kwargs: mock_handler,
     )
 
