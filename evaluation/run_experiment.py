@@ -131,7 +131,7 @@ def run_workflow_benchmark(
 
         start_t = time.perf_counter()
         req = ChatRequest(question=question, workflow=workflow_name)
-        chat_resp, final_state = active_runner.execute_with_state(req)
+        chat_resp, final_state = active_runner._execute_with_state(req)
         latency = time.perf_counter() - start_t
         eval_ctx = wf_def.extract_eval_context(final_state) if wf_def is not None else None
         answer = chat_resp.answer or ""

@@ -89,7 +89,7 @@ def test_workflow_runner_telemetry_jev_execution(jev_runner_and_mock_graph):
     runner, mock_invoke = jev_runner_and_mock_graph
     request = ChatRequest(question="hello", workflow="fix_single_jev")
 
-    response, final_state = runner.execute_with_state(request)
+    response, final_state = runner._execute_with_state(request)
 
     assert response.answer == "mock answer"
     assert response.source_used == "direct"
@@ -123,7 +123,7 @@ def test_ask_jev_passes_callback(jev_runner_and_mock_graph):
     dummy_cb = object()
     request = ChatRequest(question="hello", workflow="fix_single_jev")
 
-    response, _ = runner.execute_with_state(request, callback=dummy_cb)
+    response, _ = runner._execute_with_state(request, callback=dummy_cb)
 
     assert response.answer == "mock answer"
     mock_invoke.assert_called_once()
@@ -142,7 +142,7 @@ def test_ask_jev_accepts_all_telemetry_kwargs(jev_runner_and_mock_graph):
         user_id="user-456",
     )
 
-    response, _ = runner.execute_with_state(
+    response, _ = runner._execute_with_state(
         request,
         metadata={"env": "test"},
         tags=["unit-test"],
@@ -164,7 +164,7 @@ def test_ask_jev_propagates_tags_and_metadata_without_callback(jev_runner_and_mo
     runner, mock_invoke = jev_runner_and_mock_graph
     request = ChatRequest(question="hello", workflow="fix_single_jev")
 
-    response, _ = runner.execute_with_state(
+    response, _ = runner._execute_with_state(
         request,
         tags=["standalone-tag"],
         metadata={"source": "cli"},

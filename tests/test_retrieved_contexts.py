@@ -316,7 +316,7 @@ def test_workflow_runner_extracts_eval_context_with_retrieved_contexts(workflow_
     wf_def._compiled_graph = mock_graph
 
     runner = WorkflowRunner(registry=registry)
-    chat_resp, final_state = runner.execute_with_state(ChatRequest(question="hello", workflow=workflow_id))
+    chat_resp, final_state = runner._execute_with_state(ChatRequest(question="hello", workflow=workflow_id))
 
     assert chat_resp.answer == "Answer with contexts"
     eval_ctx = wf_def.extract_eval_context(final_state)

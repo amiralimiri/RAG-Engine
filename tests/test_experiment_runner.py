@@ -158,7 +158,7 @@ def test_run_benchmark_workflow_execution_and_metrics():
         "source_used": "vectorstore",
         "retrieved_contexts": ["Pulse Secure installation guide."],
     }
-    mock_runner.execute_with_state.return_value = (mock_chat_response, final_state)
+    mock_runner._execute_with_state.return_value = (mock_chat_response, final_state)
     mock_wf_def.extract_eval_context.return_value = EvalContext(
         source_used="vectorstore",
         retrieved_contexts=["Pulse Secure installation guide."],
@@ -220,7 +220,7 @@ def test_run_benchmark_skips_faithfulness_for_direct_source():
         "answer": "Hello, how can I assist you?",
         "source_used": "direct",
     }
-    mock_runner.execute_with_state.return_value = (mock_chat_response, final_state)
+    mock_runner._execute_with_state.return_value = (mock_chat_response, final_state)
     mock_wf_def.extract_eval_context.return_value = EvalContext(
         source_used="direct",
         retrieved_contexts=[],
@@ -283,7 +283,7 @@ def test_run_benchmark_workflow_execution_via_runner():
         trace_id="tr-runner-123",
     )
     final_state = {"answer": "Install VPN client.", "source_used": "vectorstore"}
-    mock_runner.execute_with_state.return_value = (mock_chat_response, final_state)
+    mock_runner._execute_with_state.return_value = (mock_chat_response, final_state)
     mock_wf_def.extract_eval_context.return_value = EvalContext(
         source_used="vectorstore",
         retrieved_contexts=["VPN setup guide"],
@@ -314,7 +314,7 @@ def test_run_benchmark_workflow_execution_via_runner():
         assert summary["Avg Latency (s)"] >= 0.0
 
         mock_runner.registry.get.assert_called_once_with("fix_single_llm")
-        mock_runner.execute_with_state.assert_called_once()
+        mock_runner._execute_with_state.assert_called_once()
         mock_wf_def.extract_eval_context.assert_called_once_with(final_state)
 
 

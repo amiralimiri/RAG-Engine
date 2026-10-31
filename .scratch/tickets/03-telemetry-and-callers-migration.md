@@ -5,12 +5,12 @@ Update test suites and external experiment runners that previously invoked or mo
 
 **Blocked by:** 01: WorkflowRunner Constructor Auto-Wiring, Interface Shrinkage & Singleton Reset
 
-**Status:** ready-for-agent
+**Status:** complete
 
 ### Acceptance Criteria
-- [ ] `evaluation/run_experiment.py` updates line 134 to call `active_runner._execute_with_state(req)` or `active_runner.execute(req)`.
-- [ ] `tests/test_jev_telemetry.py` fixtures and tests migrate from `execute_with_state` to `_execute_with_state`.
-- [ ] `tests/test_llm_telemetry.py` fixtures and tests migrate from `execute_with_state` to `_execute_with_state`.
-- [ ] `tests/test_retrieved_contexts.py` line 319 migrates from `execute_with_state` to `_execute_with_state`.
-- [ ] `tests/test_experiment_runner.py` mocks for `WorkflowRunner` align with the deepened runner interface (`execute` / `_execute_with_state`).
-- [ ] All targeted telemetry and experiment test modules pass with zero errors.
+- [x] `evaluation/run_experiment.py` updates line 134 to call `active_runner._execute_with_state(req)` or `active_runner.execute(req)`.
+- [x] `tests/test_jev_telemetry.py` fixtures and tests migrate from `execute_with_state` to `_execute_with_state`.
+- [x] `tests/test_llm_telemetry.py` fixtures and tests migrate from `execute_with_state` to `_execute_with_state`.
+- [x] `tests/test_retrieved_contexts.py` line 319 migrates from `execute_with_state` to `_execute_with_state`.
+- [x] `tests/test_experiment_runner.py` mocks for `WorkflowRunner` align with the deepened runner interface (`execute` / `_execute_with_state`).
+- [x] All targeted telemetry and experiment test modules pass with zero errors.
