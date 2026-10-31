@@ -51,22 +51,15 @@ def list_workflows():
     )
 
 
-def _runner_hooks() -> dict[str, Any]:
-    return {
-        "callback_factory": get_langfuse_callback, "trace_extractor": extract_trace_id,
-        "telemetry_flusher": flush_telemetry, "eval_task_fn": run_online_evaluation_task,
-    }
-
-
 @router.post("/chat", response_model=ChatResponse)
 def chat(payload: ChatRequest, background_tasks: BackgroundTasks):
-    return get_workflow_runner().execute(payload, background_tasks=background_tasks, **_runner_hooks())
+    return get_workflow_runner().execute(payload, background_tasks=background_tasks)
 
 
 @router.post("/chat/stream")
 async def chat_stream(payload: ChatRequest):
     return StreamingResponse(
-        get_workflow_runner().stream(payload, **_runner_hooks()),
+        get_workflow_runner().stream(payload),
         media_type="text/event-stream; charset=utf-8",
         headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
     )

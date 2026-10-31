@@ -147,7 +147,7 @@ class TestPostChatMultiWorkflow:
         def mock_eval_task(**kwargs):
             captured_eval.update(kwargs)
 
-        monkeypatch.setattr("app.api.routes.run_online_evaluation_task", mock_eval_task)
+        monkeypatch.setattr("app.rag.workflows.runner.run_online_evaluation_task", mock_eval_task)
 
         resp = client.post(
             "/api/chat",
