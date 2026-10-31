@@ -3,13 +3,13 @@ from deepeval import assert_test
 from deepeval.metrics import GEval
 from deepeval.test_case import LLMTestCase, SingleTurnParams
 
-from app.rag.evaluation import get_judge_models
+from app.rag.evaluation.judge import get_judge_models
 
 judge = get_judge_models()
 
 
 def test_correctness():
-     
+
     correctness_metric = GEval(
         name="Correctness",
         criteria=(
@@ -18,18 +18,15 @@ def test_correctness():
         ),
         evaluation_params=[SingleTurnParams.ACTUAL_OUTPUT, SingleTurnParams.EXPECTED_OUTPUT],
         model=judge.llm,
-        threshold=0.5
+        threshold=0.5,
     )
-    
-    test_case = LLMTestCase(
-        input="What is 5 / 2?",
-        actual_output="The result is 2.5.",
-        expected_output="2.5"
-    )
+
+    test_case = LLMTestCase(input="What is 5 / 2?", actual_output="The result is 2.5.", expected_output="2.5")
     try:
         assert_test(test_case, [correctness_metric])
     except Exception as exc:
         if any(term in type(exc).__name__ for term in ("Timeout", "Connect", "RetryError")):
             import pytest
+
             pytest.skip(f"Live judge API unavailable: {exc}")
         raise

@@ -258,14 +258,16 @@ async def test_aexecute_with_native_async_graph():
     mock_wf = MockWorkflow("async_wf")
 
     # Add ainvoke to mock graph
-    mock_wf.mock_graph.ainvoke = AsyncMock(return_value={
-        "answer": "Async Answer",
-        "source_used": "vectorstore",
-        "trace": ["step_1"],
-        "citations": [],
-        "retrieved_contexts": [],
-        "current_query": "async query",
-    })
+    mock_wf.mock_graph.ainvoke = AsyncMock(
+        return_value={
+            "answer": "Async Answer",
+            "source_used": "vectorstore",
+            "trace": ["step_1"],
+            "citations": [],
+            "retrieved_contexts": [],
+            "current_query": "async query",
+        }
+    )
     custom_registry.register(mock_wf)
 
     runner = WorkflowRunner(registry=custom_registry)
@@ -459,9 +461,9 @@ def parse_sse_events(raw_chunks: list[str]) -> list[dict[str, Any]]:
         data_lines = []
         for line in chunk.splitlines():
             if line.startswith("event:"):
-                ev_name = line[len("event:"):].strip()
+                ev_name = line[len("event:") :].strip()
             elif line.startswith("data:"):
-                data_lines.append(line[len("data:"):].strip())
+                data_lines.append(line[len("data:") :].strip())
         if ev_name:
             payload_str = "\n".join(data_lines)
             try:
@@ -578,7 +580,11 @@ async def test_stream_emits_whitelisted_steps_filtered_tokens_and_metadata():
         tool_chunk = MagicMock()
         tool_chunk.tool_call_chunks = [{"name": "private_kb"}]
         tool_chunk.content = ""
-        yield {"event": "on_chat_model_stream", "metadata": {"langgraph_node": "generate"}, "data": {"chunk": tool_chunk}}
+        yield {
+            "event": "on_chat_model_stream",
+            "metadata": {"langgraph_node": "generate"},
+            "data": {"chunk": tool_chunk},
+        }
 
         # 4. Empty text chunk during generation (filtered out)
         empty_chunk = MagicMock()
@@ -586,13 +592,21 @@ async def test_stream_emits_whitelisted_steps_filtered_tokens_and_metadata():
         empty_chunk.tool_calls = None
         empty_chunk.message = None
         empty_chunk.content = ""
-        yield {"event": "on_chat_model_stream", "metadata": {"langgraph_node": "generate"}, "data": {"chunk": empty_chunk}}
+        yield {
+            "event": "on_chat_model_stream",
+            "metadata": {"langgraph_node": "generate"},
+            "data": {"chunk": empty_chunk},
+        }
 
         # 5. Non-generation node stream chunk (filtered out)
         other_node_chunk = MagicMock()
         other_node_chunk.tool_call_chunks = None
         other_node_chunk.content = "should be ignored"
-        yield {"event": "on_chat_model_stream", "metadata": {"langgraph_node": "other_node"}, "data": {"chunk": other_node_chunk}}
+        yield {
+            "event": "on_chat_model_stream",
+            "metadata": {"langgraph_node": "other_node"},
+            "data": {"chunk": other_node_chunk},
+        }
 
         # 6. Real conversational text tokens
         text_chunk_1 = MagicMock()
@@ -600,14 +614,22 @@ async def test_stream_emits_whitelisted_steps_filtered_tokens_and_metadata():
         text_chunk_1.tool_calls = None
         text_chunk_1.message = None
         text_chunk_1.content = "Hello "
-        yield {"event": "on_chat_model_stream", "metadata": {"langgraph_node": "generate"}, "data": {"chunk": text_chunk_1}}
+        yield {
+            "event": "on_chat_model_stream",
+            "metadata": {"langgraph_node": "generate"},
+            "data": {"chunk": text_chunk_1},
+        }
 
         text_chunk_2 = MagicMock()
         text_chunk_2.tool_call_chunks = None
         text_chunk_2.tool_calls = None
         text_chunk_2.message = None
         text_chunk_2.content = "World!"
-        yield {"event": "on_chat_model_stream", "metadata": {"langgraph_node": "generate"}, "data": {"chunk": text_chunk_2}}
+        yield {
+            "event": "on_chat_model_stream",
+            "metadata": {"langgraph_node": "generate"},
+            "data": {"chunk": text_chunk_2},
+        }
 
         # 7. Chain end event
         yield {
@@ -977,12 +999,14 @@ async def test_constructor_hook_injection_async_aexecute():
     """Verify WorkflowRunner(callback_factory=...) passes handler to aexecute config."""
     custom_registry = WorkflowRegistry()
     mock_wf = MockWorkflow("cb_inject_async_wf")
-    mock_wf.mock_graph.ainvoke = AsyncMock(return_value={
-        "answer": "Async Answer",
-        "source_used": "direct",
-        "trace": [],
-        "citations": [],
-    })
+    mock_wf.mock_graph.ainvoke = AsyncMock(
+        return_value={
+            "answer": "Async Answer",
+            "source_used": "direct",
+            "trace": [],
+            "citations": [],
+        }
+    )
     custom_registry.register(mock_wf)
 
     mock_handler = MagicMock()
@@ -1084,12 +1108,14 @@ async def test_online_evaluation_task_exception_shielded_in_aexecute():
     """Verify exceptions inside eval_task_fn during aexecute() are caught, logged, and never raised."""
     custom_registry = WorkflowRegistry()
     mock_wf = MockWorkflow("failing_eval_task_wf")
-    mock_wf.mock_graph.ainvoke = AsyncMock(return_value={
-        "answer": "Async eval shielded answer",
-        "source_used": "vectorstore",
-        "trace": [],
-        "citations": [],
-    })
+    mock_wf.mock_graph.ainvoke = AsyncMock(
+        return_value={
+            "answer": "Async eval shielded answer",
+            "source_used": "vectorstore",
+            "trace": [],
+            "citations": [],
+        }
+    )
     custom_registry.register(mock_wf)
 
     mock_failing_eval = AsyncMock(side_effect=RuntimeError("Langfuse evaluation timeout"))
@@ -1166,12 +1192,14 @@ def test_execute_and_aexecute_ignore_extraneous_hook_kwargs_cleanly():
     """Verify execute() and aexecute() cleanly ignore extraneous hook kwargs without overriding injected hooks."""
     custom_registry = WorkflowRegistry()
     mock_wf = MockWorkflow("ignore_kwargs_wf")
-    mock_wf.mock_graph.ainvoke = AsyncMock(return_value={
-        "answer": "Async answer",
-        "source_used": "direct",
-        "trace": [],
-        "citations": [],
-    })
+    mock_wf.mock_graph.ainvoke = AsyncMock(
+        return_value={
+            "answer": "Async answer",
+            "source_used": "direct",
+            "trace": [],
+            "citations": [],
+        }
+    )
     custom_registry.register(mock_wf)
 
     injected_cb = MagicMock(return_value=MagicMock())
@@ -1199,12 +1227,14 @@ async def test_aexecute_ignores_extraneous_hook_kwargs_cleanly():
     """Verify aexecute() cleanly ignores extraneous hook kwargs."""
     custom_registry = WorkflowRegistry()
     mock_wf = MockWorkflow("async_ignore_kwargs_wf")
-    mock_wf.mock_graph.ainvoke = AsyncMock(return_value={
-        "answer": "Async ignore answer",
-        "source_used": "direct",
-        "trace": [],
-        "citations": [],
-    })
+    mock_wf.mock_graph.ainvoke = AsyncMock(
+        return_value={
+            "answer": "Async ignore answer",
+            "source_used": "direct",
+            "trace": [],
+            "citations": [],
+        }
+    )
     custom_registry.register(mock_wf)
 
     injected_cb = MagicMock(return_value=MagicMock())
@@ -1247,7 +1277,7 @@ def test_stream_rejects_extraneous_hook_kwargs_with_type_error():
 
 
 def test_execution_result_model():
-    """Verify ExecutionResult schema bundles ChatResponse and EvalContext."""
+    """Verify ExecutionResult schema bundles response and EvalContext without transport coupling."""
     resp = ChatResponse(
         workflow="mock_workflow",
         answer="Normalized test answer",
@@ -1261,6 +1291,10 @@ def test_execution_result_model():
     assert result.eval_context is ctx
     assert result.eval_context.source_used == "vectorstore"
     assert len(result.eval_context.retrieved_contexts) == 2
+
+    # Verify decoupling: accepts arbitrary domain or mock objects
+    raw_result = ExecutionResult(response={"raw": "payload"}, eval_context=ctx)
+    assert raw_result.response == {"raw": "payload"}
 
 
 def test_execute_with_context_returns_execution_result():
@@ -1279,32 +1313,6 @@ def test_execute_with_context_returns_execution_result():
     assert result.response.answer == "Mock Answer"
     assert result.eval_context.source_used == "vectorstore"
     assert result.eval_context.retrieved_contexts == ["chunk context 1"]
-
-
-@pytest.mark.asyncio
-async def test_aexecute_with_context_returns_execution_result():
-    """Verify aexecute_with_context returns ExecutionResult with response and eval_context."""
-    custom_registry = WorkflowRegistry()
-    mock_wf = MockWorkflow("async_context_wf")
-    mock_wf.mock_graph.ainvoke = AsyncMock(return_value={
-        "answer": "Async Context Answer",
-        "source_used": "web_search",
-        "retrieved_contexts": ["web context doc"],
-        "trace": ["step_1"],
-        "citations": [],
-    })
-    custom_registry.register(mock_wf)
-
-    runner = WorkflowRunner(registry=custom_registry)
-    request = ChatRequest(question="Async test context extraction?", workflow="async_context_wf", trace_id="trace-actx-1")
-
-    result = await runner.aexecute_with_context(request)
-    assert isinstance(result, ExecutionResult)
-    assert isinstance(result.response, ChatResponse)
-    assert isinstance(result.eval_context, EvalContext)
-    assert result.response.answer == "Async Context Answer"
-    assert result.eval_context.source_used == "web_search"
-    assert result.eval_context.retrieved_contexts == ["web context doc"]
 
 
 def test_workflow_runner_evaluator_injection_and_default():
@@ -1420,12 +1428,14 @@ async def test_evaluator_exception_shielded_in_finalize_and_stream():
     """Verify exceptions inside injected evaluator.aevaluate are caught, logged, and never crash execution."""
     custom_registry = WorkflowRegistry()
     mock_wf = MockWorkflow("shielded_eval_wf")
-    mock_wf.mock_graph.ainvoke = AsyncMock(return_value={
-        "answer": "Async shielded answer",
-        "source_used": "vectorstore",
-        "trace": [],
-        "citations": [],
-    })
+    mock_wf.mock_graph.ainvoke = AsyncMock(
+        return_value={
+            "answer": "Async shielded answer",
+            "source_used": "vectorstore",
+            "trace": [],
+            "citations": [],
+        }
+    )
 
     async def mock_events(*args, **kwargs):
         yield {
@@ -1444,7 +1454,9 @@ async def test_evaluator_exception_shielded_in_finalize_and_stream():
 
     # 1. Test in aexecute
     with patch("app.rag.workflows.runner.logger.warning") as mock_warn:
-        resp = await runner.aexecute(ChatRequest(question="Shield test?", workflow="shielded_eval_wf", trace_id="trace-s1"))
+        resp = await runner.aexecute(
+            ChatRequest(question="Shield test?", workflow="shielded_eval_wf", trace_id="trace-s1")
+        )
         assert resp.answer == "Async shielded answer"
         await asyncio.gather(*list(runner._background_tasks), return_exceptions=True)
         assert failing_eval.aevaluate.called
@@ -1454,10 +1466,13 @@ async def test_evaluator_exception_shielded_in_finalize_and_stream():
 
     # 2. Test in stream
     with patch("app.rag.workflows.runner.logger.warning") as mock_warn:
-        frames = [frame async for frame in runner.stream(ChatRequest(question="Shield stream?", workflow="shielded_eval_wf", trace_id="trace-s2"))]
+        frames = [
+            frame
+            async for frame in runner.stream(
+                ChatRequest(question="Shield stream?", workflow="shielded_eval_wf", trace_id="trace-s2")
+            )
+        ]
         assert len(frames) >= 1
         await asyncio.gather(*list(runner._background_tasks), return_exceptions=True)
         assert failing_eval.aevaluate.called
         assert mock_warn.called
-
-

@@ -1,20 +1,19 @@
 from deepeval.metrics import ContextualRelevancyMetric
 from deepeval.test_case import LLMTestCase
 
-from app.rag.evaluation import get_judge_models
+from app.rag.evaluation.judge import get_judge_models
 
 judge = get_judge_models()
 
 test_case = LLMTestCase(
     input="Where do penguins live?",
     actual_output="Penguins live in a variety of environments in the Southern Hemisphere. They are commonly associated with the icy coasts of Antarctica, but they also inhabit the cool shores of South America, southern Africa, and even the Galapagos Islands near the equator.",
-    retrieval_context=["Penguins are flightless seabirds that are specially adapted for life in the Southern Hemisphere."]
+    retrieval_context=[
+        "Penguins are flightless seabirds that are specially adapted for life in the Southern Hemisphere."
+    ],
 )
 
-metric = ContextualRelevancyMetric(
-    threshold=0.7,
-    model=judge.llm
-)
+metric = ContextualRelevancyMetric(threshold=0.7, model=judge.llm)
 
 metric.measure(test_case)
 

@@ -50,24 +50,10 @@ _background_tasks: set[asyncio.Task[Any]] = set()
 
 
 class ExecutionResult(BaseModel):
-    """Normalized execution result bundling transport ChatResponse and domain EvalContext."""
+    """Normalized execution result bundling response and domain EvalContext."""
 
-    response: ChatResponse
+    response: Any
     eval_context: EvalContext
-
-    @classmethod
-    def _ensure_rebuilt(cls) -> None:
-        if not getattr(cls, "__pydantic_complete__", True):
-            try:
-                from app.api.schemas import ChatResponse
-
-                cls.model_rebuild(_types_namespace={"ChatResponse": ChatResponse})
-            except Exception:
-                pass
-
-    def __init__(self, **data: Any) -> None:
-        self._ensure_rebuilt()
-        super().__init__(**data)
 
 
 def format_sse(event: str, data: dict[str, Any] | BaseModel) -> str:
@@ -108,8 +94,6 @@ def is_tool_call_chunk(chunk: Any) -> bool:
 class WorkflowRunner:
     """Deep module coordinating workflow execution, token streaming, telemetry, and evaluation."""
 
-    _eval_task_fn: Callable[..., Any] | None = None
-
     def __init__(
         self,
         registry: WorkflowRegistry | None = None,
@@ -130,7 +114,7 @@ class WorkflowRunner:
 
     @property
     def eval_task_fn(self) -> Callable[..., Any] | None:
-        return self._eval_task_fn if self._eval_task_fn is not None else type(self)._eval_task_fn
+        return self._eval_task_fn
 
     @eval_task_fn.setter
     def eval_task_fn(self, val: Callable[..., Any] | None) -> None:
@@ -180,6 +164,7 @@ class WorkflowRunner:
         """Resolve workflow definition from registry, auto-registering defaults if empty."""
         if len(self.registry) == 0:
             from app.rag.workflows import register_default_workflows
+
             register_default_workflows(self.registry)
 
         try:
@@ -202,8 +187,8 @@ class WorkflowRunner:
         cb_factory = self.callback_factory
         tr_extractor = self.trace_extractor
 
-        sanitized_tid = request.trace_id.replace("-", "").lower() if request.trace_id else (
-            uuid.uuid4().hex if streaming else None
+        sanitized_tid = (
+            request.trace_id.replace("-", "").lower() if request.trace_id else (uuid.uuid4().hex if streaming else None)
         )
         telemetry_metadata = dict(wf_def.info.metadata) if getattr(wf_def.info, "metadata", None) else {}
         if metadata:
@@ -282,9 +267,8 @@ class WorkflowRunner:
     ) -> None:
         """Shielded online evaluation execution delegating to injected evaluator or hooks."""
         try:
-            ev_task_fn = self.eval_task_fn or getattr(self, "_evaluation_task", None)
-            if ev_task_fn is not None:
-                res = ev_task_fn(
+            if self.eval_task_fn is not None:
+                res = self.eval_task_fn(
                     trace_id=trace_id,
                     question=question,
                     answer=answer,
@@ -523,9 +507,13 @@ class WorkflowRunner:
 
             try:
                 if hasattr(graph, "ainvoke") and callable(graph.ainvoke):
-                    final_state = await cast(Awaitable[Any], graph.ainvoke(initial_state, config=run_config if run_config else None))
+                    final_state = await cast(
+                        Awaitable[Any], graph.ainvoke(initial_state, config=run_config if run_config else None)
+                    )
                 else:
-                    final_state = await run_in_threadpool(graph.invoke, initial_state, config=run_config if run_config else None)
+                    final_state = await run_in_threadpool(
+                        graph.invoke, initial_state, config=run_config if run_config else None
+                    )
 
                 if not isinstance(final_state, dict):
                     final_state = {"answer": str(final_state)}
@@ -574,29 +562,6 @@ class WorkflowRunner:
         )
         return response
 
-    async def aexecute_with_context(
-        self,
-        request: ChatRequest,
-        background_tasks: BackgroundTasks | None = None,
-        *,
-        callback: Any | None = None,
-        metadata: dict[str, Any] | None = None,
-        config: dict[str, Any] | None = None,
-        **kwargs: Any,
-    ) -> ExecutionResult:
-        """Public asynchronous execution entrypoint returning both ChatResponse and normalized EvalContext."""
-        response, final_state = await self._aexecute_with_state(
-            request,
-            background_tasks=background_tasks,
-            callback=callback,
-            metadata=metadata,
-            config=config,
-            **kwargs,
-        )
-        wf_def = self._resolve_workflow(request.workflow)
-        eval_context = wf_def.extract_eval_context(final_state)
-        return ExecutionResult(response=response, eval_context=eval_context)
-
     def stream(
         self,
         request: ChatRequest,
@@ -639,7 +604,9 @@ class WorkflowRunner:
             )
             graph = wf_def.get_compiled_graph()
             step_labels = (wf_def.info.step_labels if wf_def and wf_def.info else None) or DEFAULT_STEP_LABELS
-            generation_nodes = (wf_def.info.generation_nodes if wf_def and wf_def.info else None) or DEFAULT_GENERATION_NODES
+            generation_nodes = (
+                wf_def.info.generation_nodes if wf_def and wf_def.info else None
+            ) or DEFAULT_GENERATION_NODES
             stream_steps = getattr(request, "stream_steps", True)
 
             async for event in graph.astream_events(initial_state, version="v2", config=config if config else None):
@@ -786,7 +753,7 @@ class WorkflowRunner:
                 trace_id=resolved_tid,
             )
 
-        except (asyncio.CancelledError, GeneratorExit):
+        except asyncio.CancelledError, GeneratorExit:
             disconnect_trace = (
                 accumulated_trace
                 or (final_output.get("trace") if isinstance(final_output.get("trace"), list) else [])
@@ -822,11 +789,7 @@ class WorkflowRunner:
                     yield self.format_sse("token", StreamTokenEvent(delta=str(fallback_answer)))
                     tokens_delivered += 1
 
-                resolved_tid = (
-                    tr_extractor(handler)
-                    or trace_id
-                    or fallback_state.get("trace_id")
-                )
+                resolved_tid = tr_extractor(handler) or trace_id or fallback_state.get("trace_id")
                 err_trace = (accumulated_trace or []) + fallback_state.get("trace", [f"Error: {str(exc)}"])
                 err_metadata = {
                     "trace_id": resolved_tid,
@@ -873,7 +836,10 @@ def get_workflow_runner(
 ) -> WorkflowRunner:
     """Return the global default WorkflowRunner singleton or a customized instance."""
     global _default_runner
-    if any(arg is not None for arg in (registry, evaluator, callback_factory, trace_extractor, telemetry_flusher, eval_task_fn)):
+    if any(
+        arg is not None
+        for arg in (registry, evaluator, callback_factory, trace_extractor, telemetry_flusher, eval_task_fn)
+    ):
         return WorkflowRunner(
             registry=registry,
             evaluator=evaluator,
@@ -891,10 +857,6 @@ def reset_workflow_runner() -> None:
     """Reset the global default WorkflowRunner singleton (for test isolation)."""
     global _default_runner
     _default_runner = None
-    WorkflowRunner._eval_task_fn = None
-
-
-ExecutionResult._ensure_rebuilt()
 
 
 __all__ = [

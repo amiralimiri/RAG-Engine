@@ -13,7 +13,7 @@ from opentelemetry.sdk.trace.export import SpanExporter, SpanExportResult
 
 import app.core.telemetry as telemetry
 from app.api.schemas import ChatRequest, ChatResponse
-from app.rag.evaluation import FakeEvaluator, get_evaluator, reset_evaluator
+from app.rag.evaluation import reset_evaluator
 from app.rag.workflows import register_default_workflows
 from app.rag.workflows.base import EvalContext, WorkflowInfo
 from app.rag.workflows.registry import WorkflowRegistry, get_workflow_registry
@@ -88,7 +88,9 @@ class MockWorkflowDefinition:
             is_conversational=is_conversational,
             supports_streaming=supports_streaming,
             step_labels=step_labels if step_labels is not None else dict(DEFAULT_STEP_LABELS),
-            generation_nodes=generation_nodes if generation_nodes is not None else (set(DEFAULT_GENERATION_NODES) | {"agent"}),
+            generation_nodes=generation_nodes
+            if generation_nodes is not None
+            else (set(DEFAULT_GENERATION_NODES) | {"agent"}),
             metadata=metadata or {},
         )
         self.answer = answer
@@ -127,7 +129,11 @@ class MockWorkflowDefinition:
 
         async def _astream_events(state: Any, version: str = "v2", **kwargs: Any):
             if self._stream_events is not None:
-                events = self._stream_events(state, version=version, **kwargs) if callable(self._stream_events) else self._stream_events
+                events = (
+                    self._stream_events(state, version=version, **kwargs)
+                    if callable(self._stream_events)
+                    else self._stream_events
+                )
                 if hasattr(events, "__aiter__"):
                     async for evt in events:
                         yield evt
@@ -158,7 +164,9 @@ class MockWorkflowDefinition:
             source_used=final_state.get("source_used") or self.source_used,
             trace=final_state.get("trace") or self.trace,
             citations=final_state.get("citations") or self.citations,
-            rewritten_query=final_state.get("rewritten_query") or final_state.get("current_query") or final_state.get("question"),
+            rewritten_query=final_state.get("rewritten_query")
+            or final_state.get("current_query")
+            or final_state.get("question"),
             trace_id=trace_id or final_state.get("trace_id"),
         )
 
@@ -222,10 +230,12 @@ def clean_telemetry() -> Generator[None]:
 @pytest.fixture
 def register_mock_workflow(clean_registry: WorkflowRegistry) -> Callable[..., MockWorkflowDefinition]:
     """Helper fixture to create and register a MockWorkflowDefinition into clean_registry."""
+
     def _register(workflow_id: str, **kwargs: Any) -> MockWorkflowDefinition:
         wf = MockWorkflowDefinition(id=workflow_id, **kwargs)
         clean_registry.register(wf, override=True)
         return wf
+
     return _register
 
 

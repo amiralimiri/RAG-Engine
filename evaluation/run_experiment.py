@@ -3,6 +3,7 @@
 Usage:
     uv run python evaluation/run_experiment.py [--dataset-name it-support-benchmark] [--workflows fix_single_llm,fix_single_jev]
 """
+
 import argparse
 import json
 import logging
@@ -20,7 +21,6 @@ from app.api.schemas import ChatRequest
 from app.core.config import get_settings
 from app.core.telemetry import get_langfuse_client
 from app.rag.evaluation import Evaluator, get_evaluator
-from app.rag.workflows.registry import get_workflow_registry
 from app.rag.workflows.runner import WorkflowRunner, get_workflow_runner
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -46,7 +46,7 @@ def ensure_dataset(
     benchmark_path: Path | str | None = None,
 ) -> Any:
     """Ensures that the benchmark dataset exists in Langfuse.
-    
+
     If not found, creates the dataset and seeds the benchmark cases.
     Degrades gracefully if client is None or disconnected.
     """
@@ -106,11 +106,7 @@ def run_workflow_benchmark(
     logger.info("=== Running Experiment for Workflow: %s (%s) ===", workflow_name, run_name)
 
     active_runner = runner or get_workflow_runner()
-    active_evaluator = (
-        evaluator
-        or getattr(active_runner, "evaluator", None)
-        or get_evaluator(client=client)
-    )
+    active_evaluator = evaluator or getattr(active_runner, "evaluator", None) or get_evaluator(client=client)
     try:
         wf_def = active_runner.registry.get(workflow_name)
     except KeyError:
@@ -161,25 +157,11 @@ def run_workflow_benchmark(
         if rel_val is not None:
             relevancy_scores.append(rel_val)
 
-        # Submit evaluation scores to Langfuse trace if available
-        if client and trace_id:
-            score_func = getattr(client, "create_score", None) or getattr(client, "score", None)
-            if score_func and callable(score_func):
-                if faith_val is not None:
-                    try:
-                        score_func(trace_id=trace_id, name="faithfulness", value=faith_val)
-                    except Exception as exc:
-                        logger.warning("Failed to score faithfulness on trace %s: %s", trace_id, exc)
-                if rel_val is not None:
-                    try:
-                        score_func(trace_id=trace_id, name="answer_relevancy", value=rel_val)
-                    except Exception as exc:
-                        logger.warning("Failed to score answer_relevancy on trace %s: %s", trace_id, exc)
-
         # Link dataset item to experiment run if supported
-        if hasattr(item, "link") and callable(getattr(item, "link")) and trace_id:
+        link_fn = getattr(item, "link", None)
+        if callable(link_fn) and trace_id:
             try:
-                item.link(trace_or_observation=trace_id, run_name=run_name)
+                link_fn(trace_or_observation=trace_id, run_name=run_name)
             except Exception as exc:
                 logger.debug("Failed linking dataset item to run %s: %s", run_name, exc)
 

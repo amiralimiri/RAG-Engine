@@ -188,7 +188,6 @@ def test_run_benchmark_workflow_execution_and_metrics():
     assert eval_call["retrieved_contexts"] == ["Pulse Secure installation guide."]
     assert eval_call["trace_id"] == "tr-test-123"
 
-    assert mock_client.create_score.call_count == 2
     mock_item.link.assert_called_once()
 
 
@@ -363,11 +362,22 @@ def test_main_cli_execution_with_fallback(capsys, register_mock_workflow):
     fake_evaluator = FakeEvaluator(faithfulness=0.95, answer_relevancy=0.90)
     get_evaluator(evaluator=fake_evaluator)
 
-    with patch("evaluation.run_experiment.get_langfuse_client", return_value=None), \
-         patch("evaluation.run_experiment.load_gold_benchmarks", return_value=[
-             {"id": "tc-01-greeting", "input": "Hello", "expected_output": "Hi", "expected_route": "direct", "expected_source": "direct", "category": "direct_conversation"}
-         ]):
-
+    with (
+        patch("evaluation.run_experiment.get_langfuse_client", return_value=None),
+        patch(
+            "evaluation.run_experiment.load_gold_benchmarks",
+            return_value=[
+                {
+                    "id": "tc-01-greeting",
+                    "input": "Hello",
+                    "expected_output": "Hi",
+                    "expected_route": "direct",
+                    "expected_source": "direct",
+                    "category": "direct_conversation",
+                }
+            ],
+        ),
+    ):
         results = main(["--workflows", "fix_single_llm"])
         assert len(results) == 1
         assert results[0]["Workflow"] == "fix_single_llm"
@@ -384,4 +394,3 @@ def test_main_cli_invalid_workflow():
 
     results = main(["--workflows", "nonexistent_workflow"])
     assert results == []
-

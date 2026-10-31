@@ -3,18 +3,17 @@
 from __future__ import annotations
 
 import asyncio
-from concurrent.futures import ThreadPoolExecutor
 import logging
 import random
 import threading
 from collections.abc import Callable
-from typing import Any
+from concurrent.futures import ThreadPoolExecutor
+from typing import Any, cast
 
 from starlette.concurrency import run_in_threadpool
 
-from app.core.config import Settings, get_settings
-from app.core.telemetry import get_langfuse_client
 import app.core.telemetry as telemetry
+from app.core.config import Settings, get_settings
 from app.rag.evaluation.base import EvaluationResult, Evaluator
 from app.rag.evaluation.judge import get_judge_models
 
@@ -38,6 +37,8 @@ class EvaluationEngine:
     def client(self) -> Any:
         if self._client is not None:
             return self._client
+        if not self.settings.langfuse_enabled:
+            return None
         return telemetry.get_langfuse_client()
 
     def score_metric(
@@ -48,6 +49,8 @@ class EvaluationEngine:
         comment: str | None = None,
     ) -> bool:
         """Submit a normalized score and optional comment to Langfuse."""
+        if not self.settings.langfuse_enabled:
+            return False
         try:
             client = self.client
             if not client:
@@ -92,15 +95,6 @@ class EvaluationEngine:
         trace_id: str | None = None,
     ) -> EvaluationResult:
         """Core measurement pipeline executed synchronously."""
-        if not self.settings.langfuse_enabled:
-            return EvaluationResult()
-
-        if self.settings.eval_sample_rate <= 0.0:
-            return EvaluationResult()
-
-        if self.settings.eval_sample_rate < 1.0 and random.random() >= self.settings.eval_sample_rate:
-            return EvaluationResult()
-
         if not question or not answer:
             return EvaluationResult()
 
@@ -114,56 +108,48 @@ class EvaluationEngine:
         details: dict[str, Any] = {}
         contexts = retrieved_contexts or []
 
-        should_run_faith = (
-            "faithfulness" in self.settings.eval_metrics
-            and source_used != "direct"
-            and bool(contexts)
-        )
+        should_run_faith = "faithfulness" in self.settings.eval_metrics and source_used != "direct" and bool(contexts)
         should_run_rel = "answer_relevancy" in self.settings.eval_metrics
 
-        def _calc_faith() -> tuple[float | None, str | None]:
+        should_dispatch_scores = bool(
+            trace_id
+            and self.settings.langfuse_enabled
+            and self.settings.eval_sample_rate > 0.0
+            and (self.settings.eval_sample_rate >= 1.0 or random.random() < self.settings.eval_sample_rate)
+        )
+
+        def _measure_metric(
+            metric_class: type[Any],
+            metric_name: str,
+            test_case: Any,
+        ) -> tuple[float | None, str | None]:
             try:
-                tc = LLMTestCase(input=question, actual_output=answer, retrieval_context=contexts)
-                fm = FaithfulnessMetric(threshold=0.5, model=judge_llm, async_mode=False)
+                metric = metric_class(threshold=0.5, model=judge_llm, async_mode=False)
                 try:
-                    fm.measure(tc, _show_indicator=False)
+                    metric.measure(test_case, _show_indicator=False)
                 except TypeError:
-                    fm.measure(tc)
-                val = max(0.0, min(1.0, float(fm.score)))
-                reason = getattr(fm, "reason", None) or "Evaluated via DeepEval LocalModel judge"
-                if trace_id:
+                    metric.measure(test_case)
+                val = max(0.0, min(1.0, float(metric.score)))
+                reason = getattr(metric, "reason", None) or "Evaluated via DeepEval LocalModel judge"
+                if should_dispatch_scores and trace_id:
                     self.score_metric(
                         trace_id=trace_id,
-                        metric_name="faithfulness",
+                        metric_name=metric_name,
                         score=val,
                         comment=reason,
                     )
                 return val, reason
             except Exception as exc:
-                logger.warning("Faithfulness calculation failed for trace %s: %s", trace_id, exc)
+                logger.warning("%s calculation failed for trace %s: %s", metric_name, trace_id, exc)
                 return None, None
 
+        def _calc_faith() -> tuple[float | None, str | None]:
+            tc = LLMTestCase(input=question, actual_output=answer, retrieval_context=cast(Any, contexts))
+            return _measure_metric(FaithfulnessMetric, "faithfulness", tc)
+
         def _calc_rel() -> tuple[float | None, str | None]:
-            try:
-                tc = LLMTestCase(input=question, actual_output=answer)
-                arm = AnswerRelevancyMetric(threshold=0.5, model=judge_llm, async_mode=False)
-                try:
-                    arm.measure(tc, _show_indicator=False)
-                except TypeError:
-                    arm.measure(tc)
-                val = max(0.0, min(1.0, float(arm.score)))
-                reason = getattr(arm, "reason", None) or "Evaluated via DeepEval LocalModel judge"
-                if trace_id:
-                    self.score_metric(
-                        trace_id=trace_id,
-                        metric_name="answer_relevancy",
-                        score=val,
-                        comment=reason,
-                    )
-                return val, reason
-            except Exception as exc:
-                logger.warning("Answer relevancy calculation failed for trace %s: %s", trace_id, exc)
-                return None, None
+            tc = LLMTestCase(input=question, actual_output=answer)
+            return _measure_metric(AnswerRelevancyMetric, "answer_relevancy", tc)
 
         faith_val: float | None = None
         rel_val: float | None = None
@@ -280,13 +266,15 @@ class FakeEvaluator:
         retrieved_contexts: list[str],
         trace_id: str | None = None,
     ) -> EvaluationResult:
-        self.evaluate_calls.append({
-            "question": question,
-            "answer": answer,
-            "source_used": source_used,
-            "retrieved_contexts": retrieved_contexts,
-            "trace_id": trace_id,
-        })
+        self.evaluate_calls.append(
+            {
+                "question": question,
+                "answer": answer,
+                "source_used": source_used,
+                "retrieved_contexts": retrieved_contexts,
+                "trace_id": trace_id,
+            }
+        )
         scores: dict[str, float] = dict(self.custom_scores)
         if self.faithfulness is not None:
             scores["faithfulness"] = self.faithfulness
@@ -322,12 +310,14 @@ class FakeEvaluator:
         score: float,
         comment: str | None = None,
     ) -> bool:
-        self.score_calls.append({
-            "trace_id": trace_id,
-            "name": metric_name,
-            "score": score,
-            "comment": comment,
-        })
+        self.score_calls.append(
+            {
+                "trace_id": trace_id,
+                "name": metric_name,
+                "score": score,
+                "comment": comment,
+            }
+        )
         return True
 
 

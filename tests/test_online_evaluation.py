@@ -8,7 +8,7 @@ from starlette.testclient import TestClient
 
 from app.core.config import Settings
 from app.main import app
-from app.rag.evaluation import EvaluationEngine, FakeEvaluator, get_evaluator
+from app.rag.evaluation import EvaluationEngine, FakeEvaluator
 from app.rag.workflows.runner import get_workflow_runner
 
 
@@ -36,16 +36,35 @@ class TestSamplingGate:
             client=mock_client,
         )
 
-        res = await engine.aevaluate(
-            trace_id="trace-001",
-            question="What is X?",
-            answer="X is Y",
-            source_used="kb",
-            retrieved_contexts=["ctx 1"],
-        )
+        class MockFaith:
+            def __init__(self, **kwargs):
+                self.score = 0.9
 
-        assert res.faithfulness is None
-        assert res.answer_relevancy is None
+            def measure(self, tc, _show_indicator=False):
+                return self.score
+
+        class MockRel:
+            def __init__(self, **kwargs):
+                self.score = 0.95
+
+            def measure(self, tc, _show_indicator=False):
+                return self.score
+
+        with (
+            patch("deepeval.metrics.FaithfulnessMetric", MockFaith),
+            patch("deepeval.metrics.AnswerRelevancyMetric", MockRel),
+        ):
+            res = await engine.aevaluate(
+                trace_id="trace-001",
+                question="What is X?",
+                answer="X is Y",
+                source_used="kb",
+                retrieved_contexts=["ctx 1"],
+            )
+
+        # Metric calculated offline, but no dispatch to Langfuse
+        assert res.faithfulness == 0.9
+        assert res.answer_relevancy == 0.95
         assert mock_client.create_score.call_count == 0
 
     async def test_eval_skipped_when_random_ge_sample_rate(self, base_eval_settings, monkeypatch):
@@ -59,16 +78,34 @@ class TestSamplingGate:
             client=mock_client,
         )
 
-        res = await engine.aevaluate(
-            trace_id="trace-002",
-            question="What is X?",
-            answer="X is Y",
-            source_used="kb",
-            retrieved_contexts=["ctx 1"],
-        )
+        class MockFaith:
+            def __init__(self, **kwargs):
+                self.score = 0.9
 
-        assert res.faithfulness is None
-        assert res.answer_relevancy is None
+            def measure(self, tc, _show_indicator=False):
+                return self.score
+
+        class MockRel:
+            def __init__(self, **kwargs):
+                self.score = 0.95
+
+            def measure(self, tc, _show_indicator=False):
+                return self.score
+
+        with (
+            patch("deepeval.metrics.FaithfulnessMetric", MockFaith),
+            patch("deepeval.metrics.AnswerRelevancyMetric", MockRel),
+        ):
+            res = await engine.aevaluate(
+                trace_id="trace-002",
+                question="What is X?",
+                answer="X is Y",
+                source_used="kb",
+                retrieved_contexts=["ctx 1"],
+            )
+
+        assert res.faithfulness == 0.9
+        assert res.answer_relevancy == 0.95
         assert mock_client.create_score.call_count == 0
 
     async def test_eval_runs_when_random_lt_sample_rate(self, base_eval_settings, monkeypatch):
@@ -96,8 +133,9 @@ class TestSamplingGate:
             def measure(self, tc, _show_indicator=False):
                 return self.score
 
-        with patch("deepeval.metrics.FaithfulnessMetric", MockFaith), patch(
-            "deepeval.metrics.AnswerRelevancyMetric", MockRel
+        with (
+            patch("deepeval.metrics.FaithfulnessMetric", MockFaith),
+            patch("deepeval.metrics.AnswerRelevancyMetric", MockRel),
         ):
             res = await engine.aevaluate(
                 trace_id="trace-003",
@@ -121,16 +159,35 @@ class TestSamplingGate:
             client=mock_client,
         )
 
-        res = await engine.aevaluate(
-            trace_id="trace-004",
-            question="What is X?",
-            answer="X is Y",
-            source_used="kb",
-            retrieved_contexts=["ctx 1"],
-        )
+        class MockFaith:
+            def __init__(self, **kwargs):
+                self.score = 0.9
 
-        assert res.faithfulness is None
-        assert res.answer_relevancy is None
+            def measure(self, tc, _show_indicator=False):
+                return self.score
+
+        class MockRel:
+            def __init__(self, **kwargs):
+                self.score = 0.95
+
+            def measure(self, tc, _show_indicator=False):
+                return self.score
+
+        with (
+            patch("deepeval.metrics.FaithfulnessMetric", MockFaith),
+            patch("deepeval.metrics.AnswerRelevancyMetric", MockRel),
+        ):
+            res = await engine.aevaluate(
+                trace_id="trace-004",
+                question="What is X?",
+                answer="X is Y",
+                source_used="kb",
+                retrieved_contexts=["ctx 1"],
+            )
+
+        # Computes metrics offline, but skips telemetry dispatch
+        assert res.faithfulness == 0.9
+        assert res.answer_relevancy == 0.95
         assert mock_client.create_score.call_count == 0
 
     async def test_eval_skipped_when_empty_inputs(self, base_eval_settings):
@@ -286,8 +343,9 @@ class TestKBAndWebGroundedEvaluation:
                 assert tc.actual_output == "Follow chunk 1 and 2 instructions."
                 return self.score
 
-        with patch("deepeval.metrics.FaithfulnessMetric", MockFaith), patch(
-            "deepeval.metrics.AnswerRelevancyMetric", MockRel
+        with (
+            patch("deepeval.metrics.FaithfulnessMetric", MockFaith),
+            patch("deepeval.metrics.AnswerRelevancyMetric", MockRel),
         ):
             res = await engine.aevaluate(
                 trace_id="trace-kb-001",
@@ -325,8 +383,9 @@ class TestKBAndWebGroundedEvaluation:
                 return self.score
 
         contexts = ["Web snippet: Error code 0x800"]
-        with patch("deepeval.metrics.FaithfulnessMetric", MockFaith), patch(
-            "deepeval.metrics.AnswerRelevancyMetric", MockRel
+        with (
+            patch("deepeval.metrics.FaithfulnessMetric", MockFaith),
+            patch("deepeval.metrics.AnswerRelevancyMetric", MockRel),
         ):
             res = await engine.aevaluate(
                 trace_id="trace-web-001",
@@ -430,8 +489,9 @@ class TestTimeoutAndFailOpenSafety:
             def measure(self, tc, _show_indicator=False):
                 return self.score
 
-        with patch("deepeval.metrics.FaithfulnessMetric", SlowFaith), patch(
-            "deepeval.metrics.AnswerRelevancyMetric", FastRel
+        with (
+            patch("deepeval.metrics.FaithfulnessMetric", SlowFaith),
+            patch("deepeval.metrics.AnswerRelevancyMetric", FastRel),
         ):
             # Must not raise asyncio.TimeoutError
             res = await engine.aevaluate(
@@ -466,8 +526,9 @@ class TestTimeoutAndFailOpenSafety:
             def measure(self, tc, _show_indicator=False):
                 return self.score
 
-        with patch("deepeval.metrics.FaithfulnessMetric", FailingFaith), patch(
-            "deepeval.metrics.AnswerRelevancyMetric", GoodRel
+        with (
+            patch("deepeval.metrics.FaithfulnessMetric", FailingFaith),
+            patch("deepeval.metrics.AnswerRelevancyMetric", GoodRel),
         ):
             res = await engine.aevaluate(
                 trace_id="trace-fail-001",
@@ -503,8 +564,9 @@ class TestTimeoutAndFailOpenSafety:
             def measure(self, tc, _show_indicator=False):
                 raise ValueError("DeepEval parser failure")
 
-        with patch("deepeval.metrics.FaithfulnessMetric", GoodFaith), patch(
-            "deepeval.metrics.AnswerRelevancyMetric", FailingRel
+        with (
+            patch("deepeval.metrics.FaithfulnessMetric", GoodFaith),
+            patch("deepeval.metrics.AnswerRelevancyMetric", FailingRel),
         ):
             res = await engine.aevaluate(
                 trace_id="trace-fail-002",
@@ -558,8 +620,9 @@ class TestTimeoutAndFailOpenSafety:
                     both_running = True
                 return self.score
 
-        with patch("deepeval.metrics.FaithfulnessMetric", SlowFaith), patch(
-            "deepeval.metrics.AnswerRelevancyMetric", SlowRel
+        with (
+            patch("deepeval.metrics.FaithfulnessMetric", SlowFaith),
+            patch("deepeval.metrics.AnswerRelevancyMetric", SlowRel),
         ):
             t0 = time.perf_counter()
             await engine.aevaluate(
@@ -618,15 +681,22 @@ class TestRouteIntegration:
 
         class RecordingEvaluator(FakeEvaluator):
             async def aevaluate(
-                self, question: str, answer: str, source_used: str, retrieved_contexts: list[str], trace_id: str | None = None
+                self,
+                question: str,
+                answer: str,
+                source_used: str,
+                retrieved_contexts: list[str],
+                trace_id: str | None = None,
             ):
-                captured_call.update({
-                    "question": question,
-                    "answer": answer,
-                    "source_used": source_used,
-                    "retrieved_contexts": retrieved_contexts,
-                    "trace_id": trace_id,
-                })
+                captured_call.update(
+                    {
+                        "question": question,
+                        "answer": answer,
+                        "source_used": source_used,
+                        "retrieved_contexts": retrieved_contexts,
+                        "trace_id": trace_id,
+                    }
+                )
                 eval_event.set()
                 return await super().aevaluate(question, answer, source_used, retrieved_contexts, trace_id)
 
@@ -674,9 +744,7 @@ class TestRouteIntegration:
         mock_graph.astream_events = mock_astream_events
         register_mock_workflow("fix_single_llm", graph=mock_graph)
 
-        async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url="http://test"
-        ) as ac:
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as ac:
             async with ac.stream(
                 "POST",
                 "/api/chat/stream",

@@ -95,7 +95,10 @@ async def test_fake_evaluator_async_execution() -> None:
 
 def test_judge_models_lazy_initialization() -> None:
     """Verify JudgeModels defers instantiation until properties are accessed."""
-    with patch("deepeval.models.LocalModel") as mock_local_model, patch("deepeval.models.TypeSafeModel") as mock_typesafe_model:
+    with (
+        patch("deepeval.models.LocalModel") as mock_local_model,
+        patch("deepeval.models.TypeSafeModel") as mock_typesafe_model,
+    ):
         judge = JudgeModels(settings=Settings(llm_model="test-model", jev_model="test-jev"))
         # Verify no models initialized on object creation
         assert mock_local_model.call_count == 0
@@ -112,29 +115,57 @@ def test_judge_models_lazy_initialization() -> None:
 
 
 def test_evaluation_engine_sampling_gate() -> None:
-    """Verify EvaluationEngine skips metric execution when disabled or sampled out."""
-    # Disabled in settings
+    """Verify EvaluationEngine computes metrics offline but gates Langfuse score dispatch."""
     mock_client = MagicMock()
-    engine_disabled = EvaluationEngine(
-        settings=Settings(langfuse_enabled=False),
-        client=mock_client,
-    )
-    res = engine_disabled.evaluate(
-        question="Q", answer="A", source_used="vectorstore", retrieved_contexts=["ctx"]
-    )
-    assert res.faithfulness is None
-    assert res.answer_relevancy is None
-    assert mock_client.create_score.call_count == 0
+    mock_judge = MagicMock()
+    mock_judge.llm = MagicMock()
 
-    # Sample rate <= 0.0
-    engine_sampled_out = EvaluationEngine(
-        settings=Settings(langfuse_enabled=True, eval_sample_rate=0.0),
-        client=mock_client,
-    )
-    res_sampled = engine_sampled_out.evaluate(
-        question="Q", answer="A", source_used="vectorstore", retrieved_contexts=["ctx"]
-    )
-    assert res_sampled.faithfulness is None
+    with (
+        patch("deepeval.metrics.FaithfulnessMetric") as mock_fm_cls,
+        patch("deepeval.metrics.AnswerRelevancyMetric") as mock_arm_cls,
+    ):
+        mock_fm = MagicMock()
+        mock_fm.score = 0.95
+        mock_fm.reason = "Faithful context"
+        mock_fm_cls.return_value = mock_fm
+
+        mock_arm = MagicMock()
+        mock_arm.score = 0.90
+        mock_arm.reason = "Highly relevant"
+        mock_arm_cls.return_value = mock_arm
+
+        # Disabled in settings: metrics computed, but no scores dispatched to Langfuse
+        engine_disabled = EvaluationEngine(
+            settings=Settings(
+                langfuse_enabled=False,
+                eval_metrics=["faithfulness", "answer_relevancy"],
+            ),
+            judge_provider=lambda: mock_judge,
+            client=mock_client,
+        )
+        res = engine_disabled.evaluate(
+            question="Q", answer="A", source_used="vectorstore", retrieved_contexts=["ctx"], trace_id="tr-disabled"
+        )
+        assert res.faithfulness == 0.95
+        assert res.answer_relevancy == 0.90
+        assert mock_client.create_score.call_count == 0
+
+        # Sample rate <= 0.0: metrics computed, but no scores dispatched
+        engine_sampled_out = EvaluationEngine(
+            settings=Settings(
+                langfuse_enabled=True,
+                eval_sample_rate=0.0,
+                eval_metrics=["faithfulness", "answer_relevancy"],
+            ),
+            judge_provider=lambda: mock_judge,
+            client=mock_client,
+        )
+        res_sampled = engine_sampled_out.evaluate(
+            question="Q", answer="A", source_used="vectorstore", retrieved_contexts=["ctx"], trace_id="tr-sampled"
+        )
+        assert res_sampled.faithfulness == 0.95
+        assert res_sampled.answer_relevancy == 0.90
+        assert mock_client.create_score.call_count == 0
 
 
 def test_evaluation_engine_score_metric_delegation() -> None:
@@ -194,7 +225,10 @@ def test_evaluation_engine_metric_computation_and_scoring() -> None:
         client=mock_client,
     )
 
-    with patch("deepeval.metrics.FaithfulnessMetric") as mock_fm_cls, patch("deepeval.metrics.AnswerRelevancyMetric") as mock_arm_cls:
+    with (
+        patch("deepeval.metrics.FaithfulnessMetric") as mock_fm_cls,
+        patch("deepeval.metrics.AnswerRelevancyMetric") as mock_arm_cls,
+    ):
         mock_fm = MagicMock()
         mock_fm.score = 0.95
         mock_fm.reason = "Faithful context"
@@ -238,7 +272,10 @@ def test_evaluation_engine_skips_faithfulness_for_direct_source() -> None:
         client=mock_client,
     )
 
-    with patch("deepeval.metrics.FaithfulnessMetric") as mock_fm_cls, patch("deepeval.metrics.AnswerRelevancyMetric") as mock_arm_cls:
+    with (
+        patch("deepeval.metrics.FaithfulnessMetric") as mock_fm_cls,
+        patch("deepeval.metrics.AnswerRelevancyMetric") as mock_arm_cls,
+    ):
         mock_arm = MagicMock()
         mock_arm.score = 0.88
         mock_arm_cls.return_value = mock_arm
@@ -284,4 +321,3 @@ async def test_evaluation_engine_aevaluate_threadpool_offloading() -> None:
             retrieved_contexts=["Tokens can be generated via OAuth."],
         )
         assert res.answer_relevancy == 0.92
-

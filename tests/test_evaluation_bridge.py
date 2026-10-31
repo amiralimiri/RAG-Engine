@@ -107,20 +107,33 @@ def test_score_trace_metric_normalizes_scores():
 
 
 def test_score_trace_faithfulness_disabled_telemetry():
-    """If Langfuse is disabled/None, evaluate returns None for faithfulness without raising."""
+    """If Langfuse is disabled/None, evaluate calculates faithfulness offline without pushing scores."""
+    mock_judge = MagicMock()
+    mock_judge.llm = MagicMock()
     engine = EvaluationEngine(
-        settings=Settings(langfuse_enabled=False),
+        settings=Settings(langfuse_enabled=False, eval_metrics=["faithfulness"]),
+        judge_provider=lambda: mock_judge,
         client=None,
     )
 
-    res = engine.evaluate(
-        trace_id="tr-disabled",
-        question="What is the WiFi password?",
-        answer="The password is guest123.",
-        source_used="kb",
-        retrieved_contexts=["Guest WiFi password is guest123."],
-    )
-    assert res.faithfulness is None
+    class MockFaithfulnessMetric:
+        def __init__(self, **kwargs):
+            self.score = 0.92
+            self.reason = "Offline context check."
+
+        def measure(self, test_case, _show_indicator=False):
+            return self.score
+
+    with patch("deepeval.metrics.FaithfulnessMetric", MockFaithfulnessMetric):
+        res = engine.evaluate(
+            trace_id="tr-disabled",
+            question="What is the WiFi password?",
+            answer="The password is guest123.",
+            source_used="kb",
+            retrieved_contexts=["Guest WiFi password is guest123."],
+        )
+    assert res.faithfulness == 0.92
+    assert engine.score_metric("tr-disabled", "faithfulness", 0.92) is False
 
 
 def test_score_trace_faithfulness_success():
@@ -210,9 +223,10 @@ def test_score_trace_faithfulness_fails_when_metric_submission_fails():
         def measure(self, test_case, _show_indicator=False):
             return self.score
 
-    with patch("deepeval.metrics.FaithfulnessMetric", MockFaithfulnessMetric), patch.object(
-        engine, "score_metric", return_value=False
-    ) as mock_score:
+    with (
+        patch("deepeval.metrics.FaithfulnessMetric", MockFaithfulnessMetric),
+        patch.object(engine, "score_metric", return_value=False) as mock_score,
+    ):
         res = engine.evaluate(
             trace_id="tr-fail-sub",
             question="How do I reset password?",
@@ -263,20 +277,33 @@ def test_score_trace_answer_relevancy_success():
 
 
 def test_score_trace_answer_relevancy_disabled_telemetry():
-    """If Langfuse client is None, answer relevancy returns None without raising."""
+    """If Langfuse client is None, evaluate calculates relevancy offline without pushing scores."""
+    mock_judge = MagicMock()
+    mock_judge.llm = MagicMock()
     engine = EvaluationEngine(
-        settings=Settings(langfuse_enabled=False),
+        settings=Settings(langfuse_enabled=False, eval_metrics=["answer_relevancy"]),
+        judge_provider=lambda: mock_judge,
         client=None,
     )
 
-    res = engine.evaluate(
-        trace_id="tr-disabled-rel",
-        question="What is MFA?",
-        answer="MFA is multi-factor authentication.",
-        source_used="direct",
-        retrieved_contexts=[],
-    )
-    assert res.answer_relevancy is None
+    class MockAnswerRelevancyMetric:
+        def __init__(self, **kwargs):
+            self.score = 0.88
+            self.reason = "Offline relevancy check."
+
+        def measure(self, test_case, _show_indicator=False):
+            return self.score
+
+    with patch("deepeval.metrics.AnswerRelevancyMetric", MockAnswerRelevancyMetric):
+        res = engine.evaluate(
+            trace_id="tr-disabled-rel",
+            question="What is MFA?",
+            answer="MFA is multi-factor authentication.",
+            source_used="direct",
+            retrieved_contexts=[],
+        )
+    assert res.answer_relevancy == 0.88
+    assert engine.score_metric("tr-disabled-rel", "answer_relevancy", 0.88) is False
 
 
 def test_score_trace_answer_relevancy_handles_judge_error():
