@@ -29,3 +29,12 @@ Guidelines and lessons learned from ADR-0010 (Workflow Runner Execution Pipeline
 
 6. **Streaming Error Fallback Preservation**:
    - When an unhandled exception occurs in `WorkflowRunner.stream()`, invoke `workflow_def.handle_error(exc, state)` and yield fallback tokens and metadata frames before terminating with the final SSE error frame.
+
+7. **Autonomous ReAct Agent & `create_agent` Seam Standards (ADR-0014)**:
+   - Modernize agent workflows to compile via `from langchain.agents import create_agent` rather than deprecated `langgraph.prebuilt.create_react_agent`.
+   - Pass instructions to `create_agent` using `system_prompt=...` (not `prompt=...`).
+   - Node identifiers in `create_agent` default to `"model"` for reasoning and `"tools"` for execution.
+   - Dual-map generation nodes (`DEFAULT_REACT_GENERATION_NODES = {"agent", "model"}`) and step labels (`DEFAULT_REACT_STEP_LABELS`) in workflow metadata to preserve SSE token streaming and step updates across both modern topologies and mock test fixtures.
+   - Resilient query fallback: When converting graph states to `ChatResponse`, fall back to the latest `HumanMessage` in conversation history if `final_state.get("question")` is omitted by the agent state schema.
+   - Harmonized evidence attribution: Evidence source resolution (`source_used`) must strictly align across `to_chat_response` and `extract_eval_context` using a dedicated helper (`_resolve_source_used(tools_called=...)`).
+   - Tool message identification: Consolidate duck-typed message checking using a private helper `_is_tool_message(m)` (`isinstance(m, ToolMessage) or getattr(m, "type", "") == "tool"`).

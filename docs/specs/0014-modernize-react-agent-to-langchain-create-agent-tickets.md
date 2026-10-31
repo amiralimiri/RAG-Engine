@@ -3,7 +3,7 @@
 - **Specification Reference:** [`docs/specs/0014-modernize-react-agent-to-langchain-create-agent-spec.md`](./0014-modernize-react-agent-to-langchain-create-agent-spec.md)
 - **ADR Reference:** [`docs/adr/0014-modernize-react-agent-to-langchain-create-agent.md`](../adr/0014-modernize-react-agent-to-langchain-create-agent.md)
 - **Domain Guidelines:** [`GLOSSARY.md`](../../GLOSSARY.md) | [`docs/agents/workflow-execution.md`](../agents/workflow-execution.md)
-- **Status:** Proposed
+- **Status:** Completed
 
 ---
 

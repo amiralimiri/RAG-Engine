@@ -2,7 +2,7 @@
 
 - **ADR Reference:** `docs/adr/0014-modernize-react-agent-to-langchain-create-agent.md`
 - **Target Version:** `0.14.0`
-- **Status:** Proposed
+- **Status:** Implemented
 - **Triage Label:** `ready-for-agent`
 - **Work Packages / Tickets:** `docs/specs/0014-modernize-react-agent-to-langchain-create-agent-tickets.md`
 
