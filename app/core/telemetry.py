@@ -86,8 +86,18 @@ class LangfuseCallbackHandler(CallbackHandler):
         user_id: str | None = None,
         tags: list[str] | None = None,
         metadata: dict[str, Any] | None = None,
+        client: Langfuse | None = None,
     ):
-        super().__init__(public_key=public_key, trace_context=trace_context)
+        settings = get_settings()
+        effective_public_key = public_key or settings.langfuse_public_key
+        # Ensure client is initialized before super().__init__ so CallbackHandler's get_client finds it
+        try:
+            resolved_client = client or get_langfuse_client(settings)
+        except TypeError:
+            resolved_client = client or get_langfuse_client()
+        super().__init__(public_key=effective_public_key, trace_context=trace_context)
+        if resolved_client is not None:
+            self._langfuse_client = resolved_client
         self.trace_name = trace_name
         self.session_id = session_id
         self.user_id = user_id
@@ -158,19 +168,33 @@ class LangfuseCallbackHandler(CallbackHandler):
         )
 
 
-def get_langfuse_client() -> Langfuse | None:
+def get_langfuse_client(settings: Any | None = None) -> Langfuse | None:
     global _langfuse_client
-    settings = get_settings()
+    settings = settings or get_settings()
     if not settings.langfuse_enabled:
         return None
     if not settings.langfuse_public_key or not settings.langfuse_secret_key:
         return None
+
+    secret = (
+        settings.langfuse_secret_key.get_secret_value()
+        if hasattr(settings.langfuse_secret_key, "get_secret_value")
+        else str(settings.langfuse_secret_key)
+    )
+
+    if _langfuse_client is not None:
+        client_base_url = getattr(_langfuse_client, "_base_url", None)
+        target_base_url = (settings.langfuse_host or "").rstrip("/")
+        if client_base_url and client_base_url.rstrip("/") != target_base_url:
+            _langfuse_client = None
+
     if _langfuse_client is None:
         try:
             _langfuse_client = Langfuse(
                 public_key=settings.langfuse_public_key,
-                secret_key=settings.langfuse_secret_key.get_secret_value(),
+                secret_key=secret,
                 host=settings.langfuse_host,
+                base_url=settings.langfuse_host,
             )
         except Exception as exc:
             logger.warning("Failed to initialize Langfuse client: %s", exc)
@@ -193,7 +217,10 @@ def get_langfuse_callback(
     if not settings.langfuse_public_key or not settings.langfuse_secret_key:
         return None
 
-    client = get_langfuse_client()
+    try:
+        client = get_langfuse_client(settings)
+    except TypeError:
+        client = get_langfuse_client()
     if not client:
         return None
 
@@ -221,6 +248,7 @@ def get_langfuse_callback(
             user_id=user_id,
             tags=list(set(combined_tags)),
             metadata=metadata or {},
+            client=client,
         )
     except Exception as exc:
         logger.warning("Failed to create Langfuse callback handler: %s", exc)

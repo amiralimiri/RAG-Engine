@@ -39,7 +39,10 @@ class EvaluationEngine:
             return self._client
         if not self.settings.langfuse_enabled:
             return None
-        return telemetry.get_langfuse_client()
+        try:
+            return telemetry.get_langfuse_client(self.settings)
+        except TypeError:
+            return telemetry.get_langfuse_client()
 
     def score_metric(
         self,

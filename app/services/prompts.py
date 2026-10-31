@@ -141,7 +141,10 @@ def seed_prompt(name: str) -> bool:
     settings = get_settings()
     if not settings.langfuse_enabled:
         return False
-    client = get_langfuse_client()
+    try:
+        client = get_langfuse_client(settings)
+    except TypeError:
+        client = get_langfuse_client()
     if not client:
         return False
     fallback_text = LOCAL_PROMPTS.get(name)
@@ -193,7 +196,10 @@ def seed_all_prompts() -> dict[str, bool]:
     settings = get_settings()
     if not settings.langfuse_enabled:
         return results
-    client = get_langfuse_client()
+    try:
+        client = get_langfuse_client(settings)
+    except TypeError:
+        client = get_langfuse_client()
     if not client or not hasattr(client, "create_prompt"):
         return results
 
@@ -207,7 +213,10 @@ def get_workflow_prompt(name: str) -> TextPromptClient | FallbackPrompt:
     settings = get_settings()
     fallback_text = LOCAL_PROMPTS.get(name, "")
 
-    client = get_langfuse_client()
+    try:
+        client = get_langfuse_client(settings)
+    except TypeError:
+        client = get_langfuse_client()
     if client and settings.langfuse_enabled:
         try:
             prompt = client.get_prompt(

@@ -8,6 +8,7 @@ def test_default_langfuse_settings(monkeypatch):
     monkeypatch.delenv("LANGFUSE_PUBLIC_KEY", raising=False)
     monkeypatch.delenv("LANGFUSE_SECRET_KEY", raising=False)
     monkeypatch.delenv("LANGFUSE_HOST", raising=False)
+    monkeypatch.delenv("LANGFUSE_BASE_URL", raising=False)
     monkeypatch.delenv("LANGFUSE_ENABLED", raising=False)
 
     settings = Settings(
@@ -42,6 +43,22 @@ def test_custom_langfuse_settings(monkeypatch):
     assert settings.langfuse_secret_key.get_secret_value() == "sk-456"
     assert settings.langfuse_host == "https://my-langfuse.example.com"
     assert settings.langfuse_enabled is False
+
+
+def test_langfuse_base_url_alias(monkeypatch):
+    monkeypatch.delenv("LANGFUSE_HOST", raising=False)
+    monkeypatch.setenv("LANGFUSE_BASE_URL", "https://us.cloud.langfuse.com")
+
+    settings = Settings(
+        _env_file=None,
+        api_key="dummy-api-key",
+        tavily_api_key="dummy-tavily-key",
+        pinecone_api_key="dummy-pinecone-key",
+        admin_api_key="dummy-admin-key",
+    )
+
+    assert settings.langfuse_host == "https://us.cloud.langfuse.com"
+    assert settings.langfuse_base_url == "https://us.cloud.langfuse.com"
 
 
 def test_default_evaluation_and_cost_settings():

@@ -2,7 +2,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import Field, SecretStr, field_validator
+from pydantic import AliasChoices, Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
 
 BASE_DIR = Path(__file__).resolve().parents[2]
@@ -49,9 +49,26 @@ class Settings(BaseSettings):
 
     langfuse_public_key: str | None = None
     langfuse_secret_key: SecretStr | None = None
-    langfuse_host: str = "https://cloud.langfuse.com"
+    langfuse_host: str = Field(
+        default="https://cloud.langfuse.com",
+        validation_alias=AliasChoices(
+            "LANGFUSE_HOST",
+            "LANGFUSE_BASE_URL",
+            "langfuse_host",
+            "langfuse_base_url",
+        ),
+    )
     langfuse_enabled: bool = True
     langfuse_prompt_cache_ttl_seconds: int = Field(default=300, ge=0)
+
+    @property
+    def langfuse_base_url(self) -> str:
+        return self.langfuse_host
+
+    @field_validator("langfuse_host")
+    @classmethod
+    def validate_langfuse_host(cls, v: str) -> str:
+        return v.rstrip("/")
 
     # Online Evaluation Settings
     eval_sample_rate: float = Field(default=1.0, ge=0.0, le=1.0)

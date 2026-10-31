@@ -244,4 +244,73 @@ def test_callback_on_chain_start_injects_attributes(monkeypatch):
     assert captured["metadata"]["existing"] == "data"
 
 
+def test_get_langfuse_client_respects_settings_credentials_and_host(monkeypatch):
+    """get_langfuse_client explicitly passes public_key, secret_key, and host from Settings."""
+    import app.core.telemetry as telemetry
+
+    telemetry._langfuse_client = None
+    captured_init = {}
+
+    class MockLangfuse:
+        def __init__(self, **kwargs):
+            captured_init.update(kwargs)
+            self._base_url = kwargs.get("host")
+
+    monkeypatch.setattr(telemetry, "Langfuse", MockLangfuse)
+
+    custom_settings = Settings(
+        _env_file=None,
+        api_key="dummy",
+        tavily_api_key="dummy",
+        pinecone_api_key="dummy",
+        admin_api_key="dummy",
+        langfuse_enabled=True,
+        langfuse_public_key="pk-custom-host",
+        langfuse_secret_key="sk-custom-host",
+        langfuse_host="https://us.cloud.langfuse.com",
+    )
+
+    client = telemetry.get_langfuse_client(custom_settings)
+    assert client is not None
+    assert captured_init["public_key"] == "pk-custom-host"
+    assert captured_init["secret_key"] == "sk-custom-host"
+    assert captured_init["host"] == "https://us.cloud.langfuse.com"
+    assert captured_init["base_url"] == "https://us.cloud.langfuse.com"
+
+
+def test_evaluation_engine_client_respects_engine_settings(monkeypatch):
+    """EvaluationEngine.client passes engine's injected settings to get_langfuse_client."""
+    import app.core.telemetry as telemetry
+    from app.rag.evaluation.evaluator import EvaluationEngine
+
+    telemetry._langfuse_client = None
+    captured_init = {}
+
+    class MockLangfuse:
+        def __init__(self, **kwargs):
+            captured_init.update(kwargs)
+            self._base_url = kwargs.get("host")
+
+    monkeypatch.setattr(telemetry, "Langfuse", MockLangfuse)
+
+    custom_settings = Settings(
+        _env_file=None,
+        api_key="dummy",
+        tavily_api_key="dummy",
+        pinecone_api_key="dummy",
+        admin_api_key="dummy",
+        langfuse_enabled=True,
+        langfuse_public_key="pk-eval-custom",
+        langfuse_secret_key="sk-eval-custom",
+        langfuse_host="https://eval.cloud.langfuse.com",
+    )
+
+    engine = EvaluationEngine(settings=custom_settings)
+    client = engine.client
+    assert client is not None
+    assert captured_init["public_key"] == "pk-eval-custom"
+    assert captured_init["secret_key"] == "sk-eval-custom"
+    assert captured_init["host"] == "https://eval.cloud.langfuse.com"
+
+
 
