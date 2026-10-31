@@ -25,10 +25,11 @@ if TYPE_CHECKING:
 
 DEFAULT_REACT_STEP_LABELS: dict[str, str] = {
     "agent": "Reasoning & planning response...",
+    "model": "Reasoning & planning response...",
     "tools": "Executing selected tool...",
 }
 
-DEFAULT_REACT_GENERATION_NODES: set[str] = {"agent"}
+DEFAULT_REACT_GENERATION_NODES: set[str] = {"agent", "model"}
 
 DEFAULT_REACT_PROMPT: str = (
     "You are an expert Enterprise IT Support Assistant. "
@@ -36,6 +37,41 @@ DEFAULT_REACT_PROMPT: str = (
     "If internal documentation is insufficient, use web_search. "
     "Provide clear, accurate, and direct answers citing your sources."
 )
+
+
+def _resolve_source_used(
+    messages: list[Any],
+    tools_called: list[str] | None = None,
+    explicit_source: str | None = None,
+) -> str:
+    """Consistently resolves evidence source used across chat responses and evaluation contexts."""
+    if explicit_source in ("error", "error_fallback"):
+        return "error"
+    if explicit_source and explicit_source not in ("direct", "react_agent"):
+        return explicit_source
+
+    if tools_called is None:
+        tools_called = []
+        for m in messages:
+            tool_name = getattr(m, "name", None)
+            if hasattr(m, "tool_calls") and m.tool_calls:
+                for tc in m.tool_calls:
+                    tc_name = tc.get("name") if isinstance(tc, dict) else getattr(tc, "name", "")
+                    if tc_name and tc_name not in tools_called:
+                        tools_called.append(tc_name)
+            if isinstance(m, ToolMessage) or getattr(m, "type", "") == "tool":
+                if tool_name and tool_name not in tools_called:
+                    tools_called.append(tool_name)
+
+    if "knowledge_base_search" in tools_called and "web_search" in tools_called:
+        return "react_agent"
+    if "knowledge_base_search" in tools_called:
+        return "vectorstore"
+    if "web_search" in tools_called:
+        return "web_search"
+    if tools_called:
+        return "react_agent"
+    return explicit_source or "direct"
 
 
 class ReActAgentWorkflow:
@@ -194,23 +230,22 @@ class ReActAgentWorkflow:
                         if not any(c.get("url") == url for c in citations):
                             citations.append({"title": title or url, "url": url, "type": "web"})
 
-        if final_state.get("source_used") in ("error", "error_fallback"):
-            source_used = "error"
-        elif "knowledge_base_search" in tools_called and "web_search" in tools_called:
-            source_used = "react_agent"
-        elif "knowledge_base_search" in tools_called:
-            source_used = "vectorstore"
-        elif "web_search" in tools_called:
-            source_used = "web_search"
-        elif tools_called:
-            source_used = "react_agent"
-        else:
-            source_used = final_state.get("source_used") or "direct"
+        source_used = _resolve_source_used(
+            messages,
+            tools_called=tools_called,
+            explicit_source=final_state.get("source_used"),
+        )
+
+        question = final_state.get("question")
+        if not question:
+            for m in reversed(messages):
+                if isinstance(m, HumanMessage):
+                    question = m.content if isinstance(m.content, str) else str(m.content)
+                    break
 
         trace: list[str] = []
-        q = final_state.get("question") or ""
-        if q:
-            trace.append(f"Inquiry received: '{q}'")
+        if question:
+            trace.append(f"Inquiry received: '{question}'")
         for t in tools_called:
             trace.append(f"ReAct Tool Executed: {t}")
         trace.append("Synthesized conversational response")
@@ -222,18 +257,19 @@ class ReActAgentWorkflow:
             source_used=source_used,
             citations=citations or final_state.get("citations", []),
             trace=trace or final_state.get("trace", []),
-            rewritten_query=final_state.get("question"),
+            rewritten_query=question,
             trace_id=resolved_tid,
         )
 
     def extract_eval_context(self, final_state: dict[str, Any]) -> EvalContext:
+        messages = final_state.get("messages", [])
         retrieved: list[str] = list(final_state.get("retrieved_contexts", []))
         if not retrieved:
-            for m in final_state.get("messages", []):
+            for m in messages:
                 if isinstance(m, ToolMessage) or getattr(m, "type", "") == "tool":
                     retrieved.append(str(m.content))
-        source = final_state.get("source_used") or ("react_agent" if retrieved else "direct")
-        if source in ("error", "error_fallback"):
+        source = _resolve_source_used(messages, explicit_source=final_state.get("source_used"))
+        if source == "error":
             source = "direct"
         return EvalContext(source_used=source, retrieved_contexts=retrieved)
 

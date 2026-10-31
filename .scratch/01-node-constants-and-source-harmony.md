@@ -10,11 +10,11 @@ Update `app/rag/workflows/react_agent.py` constants and state converters ahead o
 
 **Blocked by:** None (can start immediately)
 
-**Status:** proposed
+**Status:** closed
 
-- [ ] `DEFAULT_REACT_GENERATION_NODES` contains `{"agent", "model"}`
-- [ ] `DEFAULT_REACT_STEP_LABELS` contains `"agent"`, `"model"`, and `"tools"`
-- [ ] `_resolve_source_used` helper implemented and shared across `to_chat_response` and `extract_eval_context`
-- [ ] `to_chat_response` resolves question from `HumanMessage` when `final_state.get("question")` is absent
-- [ ] Unit tests added in `tests/rag/test_react_agent.py` covering node constants, source resolution, and query extraction
-- [ ] Run `uv run pytest tests/rag/test_react_agent.py` green
+- [x] `DEFAULT_REACT_GENERATION_NODES` contains `{"agent", "model"}`
+- [x] `DEFAULT_REACT_STEP_LABELS` contains `"agent"`, `"model"`, and `"tools"`
+- [x] `_resolve_source_used` helper implemented and shared across `to_chat_response` and `extract_eval_context`
+- [x] `to_chat_response` resolves question from `HumanMessage` when `final_state.get("question")` is absent
+- [x] Unit tests added in `tests/rag/test_react_agent.py` covering node constants, source resolution, and query extraction
+- [x] Run `uv run pytest tests/rag/test_react_agent.py` green

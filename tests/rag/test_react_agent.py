@@ -10,7 +10,11 @@ from langgraph.checkpoint.memory import MemorySaver
 
 from app.api.schemas import ChatMessage, ChatRequest
 from app.rag.workflows import get_workflow_registry
-from app.rag.workflows.react_agent import ReActAgentWorkflow
+from app.rag.workflows.react_agent import (
+    DEFAULT_REACT_GENERATION_NODES,
+    DEFAULT_REACT_STEP_LABELS,
+    ReActAgentWorkflow,
+)
 from tests.rag.test_workflow_contracts import BaseWorkflowContractTest
 
 
@@ -162,3 +166,66 @@ def test_react_agent_multi_turn_memory_persistence():
     assert "My name is Bob" in resp2.answer
     assert "What is my name?" in resp2.answer
     assert len(res2["messages"]) == 4  # Human1, AI1, Human2, AI2
+
+
+def test_react_agent_node_constants_dual_mapping():
+    """Verify DEFAULT_REACT_GENERATION_NODES and DEFAULT_REACT_STEP_LABELS support both agent and model."""
+    assert "agent" in DEFAULT_REACT_GENERATION_NODES
+    assert "model" in DEFAULT_REACT_GENERATION_NODES
+    assert DEFAULT_REACT_STEP_LABELS.get("agent") == "Reasoning & planning response..."
+    assert DEFAULT_REACT_STEP_LABELS.get("model") == "Reasoning & planning response..."
+    assert DEFAULT_REACT_STEP_LABELS.get("tools") == "Executing selected tool..."
+
+    wf = ReActAgentWorkflow()
+    assert "agent" in wf.info.generation_nodes
+    assert "model" in wf.info.generation_nodes
+    assert wf.info.step_labels.get("model") == "Reasoning & planning response..."
+
+
+def test_react_agent_query_fallback_from_human_message():
+    """When final_state lacks 'question', extract query from latest HumanMessage for rewritten_query and trace."""
+    wf = ReActAgentWorkflow(llm=MockChatModel(), tools=[mock_dummy_tool])
+    final_state = {
+        "messages": [
+            HumanMessage(content="First greeting"),
+            AIMessage(content="Hello!"),
+            HumanMessage(content="How do I change my network password?"),
+            AIMessage(content="Go to IT portal and select reset."),
+        ]
+    }
+    response = wf.to_chat_response(final_state)
+    assert response.rewritten_query == "How do I change my network password?"
+    assert response.trace[0] == "Inquiry received: 'How do I change my network password?'"
+
+
+@pytest.mark.parametrize(
+    "tools_in_messages,expected_source,expected_eval_source",
+    [
+        (["knowledge_base_search"], "vectorstore", "vectorstore"),
+        (["web_search"], "web_search", "web_search"),
+        (["knowledge_base_search", "web_search"], "react_agent", "react_agent"),
+        ([], "direct", "direct"),
+    ],
+)
+def test_react_agent_harmonized_source_resolution(tools_in_messages, expected_source, expected_eval_source):
+    """Verify source resolution is harmonized between to_chat_response and extract_eval_context."""
+    wf = ReActAgentWorkflow(llm=MockChatModel(), tools=[mock_dummy_tool])
+
+    messages = [HumanMessage(content="Test inquiry")]
+    for i, tool_name in enumerate(tools_in_messages):
+        messages.append(
+            ToolMessage(
+                content=f"Result from {tool_name}",
+                name=tool_name,
+                tool_call_id=f"call_{i}",
+            )
+        )
+    messages.append(AIMessage(content="Final synthesized answer"))
+
+    final_state = {"messages": messages}
+    resp = wf.to_chat_response(final_state)
+    eval_ctx = wf.extract_eval_context(final_state)
+
+    assert resp.source_used == expected_source
+    assert eval_ctx.source_used == expected_eval_source
+
