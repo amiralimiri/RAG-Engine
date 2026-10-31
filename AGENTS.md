@@ -27,3 +27,7 @@ WorkflowRunner execution pipeline, dependency injection, and streaming guardrail
 ### Codebase unification & zero-shim architecture
 
 Zero-shim dependency injection standards, obsolete symbol pruning, and modern Pytest fixture architecture. See `docs/agents/codebase-unification.md`.
+
+### Evaluation engine & evaluator seam
+
+Unified Evaluator protocol seam, lazy judge lifecycles, execution context retrieval, and offline test doubles. See `docs/agents/evaluation-engine.md`.

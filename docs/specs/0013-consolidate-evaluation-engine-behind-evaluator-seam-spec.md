@@ -2,8 +2,9 @@
 
 - **ADR Reference:** `docs/adr/0013-consolidate-evaluation-engine-behind-evaluator-seam.md`
 - **Target Version:** `0.13.0`
-- **Status:** Proposed
+- **Status:** Completed
 - **Triage Label:** `ready-for-agent`
+- **Work Packages / Tickets:** [`docs/specs/0013-consolidate-evaluation-engine-behind-evaluator-seam-tickets.md`](./0013-consolidate-evaluation-engine-behind-evaluator-seam-tickets.md)
 
 ---
 
