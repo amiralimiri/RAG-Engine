@@ -13,6 +13,7 @@ from opentelemetry.sdk.trace.export import SpanExporter, SpanExportResult
 
 import app.core.telemetry as telemetry
 from app.api.schemas import ChatRequest, ChatResponse
+from app.rag.evaluation import reset_evaluator
 from app.rag.workflows import register_default_workflows
 from app.rag.workflows.base import EvalContext, WorkflowInfo
 from app.rag.workflows.registry import WorkflowRegistry, get_workflow_registry
@@ -198,6 +199,16 @@ def clean_runner() -> Generator[None]:
         yield
     finally:
         reset_workflow_runner()
+
+
+@pytest.fixture(autouse=True)
+def clean_evaluator() -> Generator[None]:
+    """Autouse fixture resetting global Evaluator singleton before and after each test."""
+    reset_evaluator()
+    try:
+        yield
+    finally:
+        reset_evaluator()
 
 
 @pytest.fixture(autouse=True)

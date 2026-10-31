@@ -63,6 +63,10 @@ _Avoid_: Raw tool output, metadata dictionary
 ### Evaluation Context
 A normalized data structure (`EvalContext`) extracted from arbitrary workflow states containing `source_used` and `retrieved_contexts`, enabling online evaluation tasks to grade answers across diverse topologies without assuming fixed vectorstore structures.
 
+### Evaluation Engine (Evaluator Seam)
+The unified evaluation subsystem (`app/rag/evaluation/`) encapsulating judge model lifecycles, test case synthesis, and metric scoring (e.g. faithfulness, answer relevancy) behind a cohesive protocol seam (`Evaluator`). Serves both online background telemetry and offline benchmark experiments without leaking internal state.
+_Avoid_: Ad-hoc scoring script, judge singleton, eval helper
+
 ### Thread ID (Checkpointer Lifecycle)
 The LangGraph configuration key (`configurable: {"thread_id": session_id}`) tying stateful, multi-turn conversational agents to durable in-memory (`MemorySaver`) or external checkpointer storage.
 
