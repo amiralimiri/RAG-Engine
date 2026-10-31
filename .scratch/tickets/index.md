@@ -6,7 +6,9 @@
 
 ## Active Frontier
 
-- [ ] [01: WorkflowRunner Constructor Auto-Wiring, Interface Shrinkage & Singleton Reset](./01-runner-constructor-and-reset.md) (Unblocked - ready to start)
+- [x] [01: WorkflowRunner Constructor Auto-Wiring, Interface Shrinkage & Singleton Reset](./01-runner-constructor-and-reset.md) (Completed)
+- [ ] [02: Transport Layer Simplification (`app/api/routes.py`)](./02-routes-simplification.md) (Unblocked - ready to start)
+- [ ] [03: Telemetry, Contexts, and Experiment Caller Migration](./03-telemetry-and-callers-migration.md) (Unblocked - ready to start)
 
 ## Dependency Pipeline
 

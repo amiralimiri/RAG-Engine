@@ -101,10 +101,10 @@ class WorkflowRunner:
         eval_task_fn: Callable[..., Any] | None = None,
     ) -> None:
         self.registry = registry if registry is not None else get_workflow_registry()
-        self.callback_factory = callback_factory
-        self.trace_extractor = trace_extractor
-        self.telemetry_flusher = telemetry_flusher
-        self.eval_task_fn = eval_task_fn
+        self.callback_factory = callback_factory if callback_factory is not None else get_langfuse_callback
+        self.trace_extractor = trace_extractor if trace_extractor is not None else extract_trace_id
+        self.telemetry_flusher = telemetry_flusher if telemetry_flusher is not None else flush_telemetry
+        self.eval_task_fn = eval_task_fn if eval_task_fn is not None else run_online_evaluation_task
         self._background_tasks: set[asyncio.Task[Any]] = set()
 
     def format_sse(self, event: str, data: dict[str, Any] | BaseModel) -> str:
@@ -133,15 +133,13 @@ class WorkflowRunner:
         callback: Any = None,
         metadata: dict[str, Any] | None = None,
         config: dict[str, Any] | None = None,
-        callback_factory: Callable[..., Any] | None = None,
-        trace_extractor: Callable[[Any], str | None] | None = None,
         **kwargs: Any,
     ) -> tuple[WorkflowDefinition, str, Any, dict[str, Any], dict[str, Any]]:
         """Resolve workflow definition, initialize telemetry contextvars, and prepare initial state."""
         wf_def = self._resolve_workflow(request.workflow)
 
-        cb_factory = callback_factory or self.callback_factory or get_langfuse_callback
-        tr_extractor = trace_extractor or self.trace_extractor or extract_trace_id
+        cb_factory = self.callback_factory
+        tr_extractor = self.trace_extractor
 
         sanitized_tid = request.trace_id.replace("-", "").lower() if request.trace_id else (
             uuid.uuid4().hex if streaming else None
@@ -220,12 +218,10 @@ class WorkflowRunner:
         trace_id: str,
         handler: Any,
         background_tasks: BackgroundTasks | None = None,
-        trace_extractor: Callable[[Any], str | None] | None = None,
-        eval_task_fn: Callable[..., Any] | None = None,
     ) -> ChatResponse:
         """Convert final state to ChatResponse, bind resolved trace context, and schedule online evaluation."""
-        tr_extractor = trace_extractor or self.trace_extractor or extract_trace_id
-        ev_task_fn = eval_task_fn or self.eval_task_fn or run_online_evaluation_task
+        tr_extractor = self.trace_extractor
+        ev_task_fn = self.eval_task_fn
 
         chat_response = wf_def.to_chat_response(final_state, trace_id=trace_id)
         resolved_tid = tr_extractor(handler) or trace_id or chat_response.trace_id
@@ -260,15 +256,40 @@ class WorkflowRunner:
                 or []
             )
 
+            async def _safe_eval_wrapper() -> None:
+                try:
+                    res = ev_task_fn(
+                        trace_id=resolved_tid,
+                        question=request.question,
+                        answer=chat_response.answer,
+                        source_used=source_used,
+                        retrieved_contexts=retrieved_contexts,
+                    )
+                    if asyncio.iscoroutine(res) or hasattr(res, "__await__"):
+                        await res
+                except Exception as exc:
+                    logger.warning(
+                        "online_evaluation_failed_shielded",
+                        trace_id=resolved_tid,
+                        error=str(exc),
+                    )
+
             if background_tasks is not None:
-                background_tasks.add_task(
-                    ev_task_fn,
-                    trace_id=resolved_tid,
-                    question=request.question,
-                    answer=chat_response.answer,
-                    source_used=source_used,
-                    retrieved_contexts=retrieved_contexts,
-                )
+                try:
+                    background_tasks.add_task(
+                        ev_task_fn,
+                        trace_id=resolved_tid,
+                        question=request.question,
+                        answer=chat_response.answer,
+                        source_used=source_used,
+                        retrieved_contexts=retrieved_contexts,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "online_evaluation_scheduling_failed",
+                        trace_id=resolved_tid,
+                        error=str(exc),
+                    )
             else:
                 try:
                     loop = asyncio.get_running_loop()
@@ -276,19 +297,18 @@ class WorkflowRunner:
                     loop = None
 
                 if loop is not None and loop.is_running():
-                    task = loop.create_task(
-                        ev_task_fn(
+                    try:
+                        task = loop.create_task(_safe_eval_wrapper())
+                        _background_tasks.add(task)
+                        task.add_done_callback(_background_tasks.discard)
+                        self._background_tasks.add(task)
+                        task.add_done_callback(self._background_tasks.discard)
+                    except Exception as exc:
+                        logger.warning(
+                            "online_evaluation_scheduling_failed",
                             trace_id=resolved_tid,
-                            question=request.question,
-                            answer=chat_response.answer,
-                            source_used=source_used,
-                            retrieved_contexts=retrieved_contexts,
+                            error=str(exc),
                         )
-                    )
-                    _background_tasks.add(task)
-                    task.add_done_callback(_background_tasks.discard)
-                    self._background_tasks.add(task)
-                    task.add_done_callback(self._background_tasks.discard)
                 else:
                     logger.debug("No active event loop for background evaluation scheduling")
 
@@ -300,7 +320,7 @@ class WorkflowRunner:
 
         return chat_response
 
-    def execute_with_state(
+    def _execute_with_state(
         self,
         request: ChatRequest,
         background_tasks: BackgroundTasks | None = None,
@@ -308,22 +328,15 @@ class WorkflowRunner:
         callback: Any = None,
         metadata: dict[str, Any] | None = None,
         config: dict[str, Any] | None = None,
-        callback_factory: Callable[..., Any] | None = None,
-        trace_extractor: Callable[[Any], str | None] | None = None,
-        telemetry_flusher: Callable[[], None] | None = None,
-        eval_task_fn: Callable[..., Any] | None = None,
         **kwargs: Any,
     ) -> tuple[ChatResponse, dict[str, Any]]:
         """Synchronously execute workflow and return (ChatResponse, final_state) without model mutation."""
-        tel_flusher = telemetry_flusher or self.telemetry_flusher or flush_telemetry
         try:
             wf_def, trace_id, handler, initial_state, run_config = self._prepare_execution(
                 request,
                 callback=callback,
                 metadata=metadata,
                 config=config,
-                callback_factory=callback_factory,
-                trace_extractor=trace_extractor,
                 **kwargs,
             )
             graph = wf_def.get_compiled_graph()
@@ -343,8 +356,6 @@ class WorkflowRunner:
                 trace_id=trace_id,
                 handler=handler,
                 background_tasks=background_tasks,
-                trace_extractor=trace_extractor,
-                eval_task_fn=eval_task_fn,
             )
             return response, final_state
         except HTTPException:
@@ -354,7 +365,7 @@ class WorkflowRunner:
             raise HTTPException(status_code=500, detail=f"Inference error: {exc}") from exc
         finally:
             try:
-                tel_flusher()
+                self.telemetry_flusher()
             except Exception:
                 pass
 
@@ -362,32 +373,17 @@ class WorkflowRunner:
         self,
         request: ChatRequest,
         background_tasks: BackgroundTasks | None = None,
-        *,
-        callback: Any = None,
-        metadata: dict[str, Any] | None = None,
-        config: dict[str, Any] | None = None,
-        callback_factory: Callable[..., Any] | None = None,
-        trace_extractor: Callable[[Any], str | None] | None = None,
-        telemetry_flusher: Callable[[], None] | None = None,
-        eval_task_fn: Callable[..., Any] | None = None,
         **kwargs: Any,
     ) -> ChatResponse:
         """Synchronously execute a registered workflow and return ChatResponse."""
-        response, _ = self.execute_with_state(
+        response, _ = self._execute_with_state(
             request,
             background_tasks=background_tasks,
-            callback=callback,
-            metadata=metadata,
-            config=config,
-            callback_factory=callback_factory,
-            trace_extractor=trace_extractor,
-            telemetry_flusher=telemetry_flusher,
-            eval_task_fn=eval_task_fn,
             **kwargs,
         )
         return response
 
-    async def aexecute_with_state(
+    async def _aexecute_with_state(
         self,
         request: ChatRequest,
         background_tasks: BackgroundTasks | None = None,
@@ -395,22 +391,15 @@ class WorkflowRunner:
         callback: Any = None,
         metadata: dict[str, Any] | None = None,
         config: dict[str, Any] | None = None,
-        callback_factory: Callable[..., Any] | None = None,
-        trace_extractor: Callable[[Any], str | None] | None = None,
-        telemetry_flusher: Callable[[], None] | None = None,
-        eval_task_fn: Callable[..., Any] | None = None,
         **kwargs: Any,
     ) -> tuple[ChatResponse, dict[str, Any]]:
         """Asynchronously execute workflow and return (ChatResponse, final_state) without model mutation."""
-        tel_flusher = telemetry_flusher or self.telemetry_flusher or flush_telemetry
         try:
             wf_def, trace_id, handler, initial_state, run_config = self._prepare_execution(
                 request,
                 callback=callback,
                 metadata=metadata,
                 config=config,
-                callback_factory=callback_factory,
-                trace_extractor=trace_extractor,
                 **kwargs,
             )
             graph = wf_def.get_compiled_graph()
@@ -434,8 +423,6 @@ class WorkflowRunner:
                 trace_id=trace_id,
                 handler=handler,
                 background_tasks=background_tasks,
-                trace_extractor=trace_extractor,
-                eval_task_fn=eval_task_fn,
             )
             return response, final_state
         except HTTPException:
@@ -445,7 +432,7 @@ class WorkflowRunner:
             raise HTTPException(status_code=500, detail=f"Inference error: {exc}") from exc
         finally:
             try:
-                tel_flusher()
+                self.telemetry_flusher()
             except Exception:
                 pass
 
@@ -453,27 +440,12 @@ class WorkflowRunner:
         self,
         request: ChatRequest,
         background_tasks: BackgroundTasks | None = None,
-        *,
-        callback: Any = None,
-        metadata: dict[str, Any] | None = None,
-        config: dict[str, Any] | None = None,
-        callback_factory: Callable[..., Any] | None = None,
-        trace_extractor: Callable[[Any], str | None] | None = None,
-        telemetry_flusher: Callable[[], None] | None = None,
-        eval_task_fn: Callable[..., Any] | None = None,
         **kwargs: Any,
     ) -> ChatResponse:
         """Asynchronously execute a registered workflow and return ChatResponse."""
-        response, _ = await self.aexecute_with_state(
+        response, _ = await self._aexecute_with_state(
             request,
             background_tasks=background_tasks,
-            callback=callback,
-            metadata=metadata,
-            config=config,
-            callback_factory=callback_factory,
-            trace_extractor=trace_extractor,
-            telemetry_flusher=telemetry_flusher,
-            eval_task_fn=eval_task_fn,
             **kwargs,
         )
         return response
@@ -481,30 +453,14 @@ class WorkflowRunner:
     def stream(
         self,
         request: ChatRequest,
-        *,
-        callback_factory: Callable[..., Any] | None = None,
-        trace_extractor: Callable[[Any], str | None] | None = None,
-        telemetry_flusher: Callable[[], None] | None = None,
-        eval_task_fn: Callable[..., Any] | None = None,
     ) -> AsyncGenerator[str, None]:
         """Validate workflow and return an asynchronous generator yielding pre-formatted SSE frames."""
         self._resolve_workflow(request.workflow)
-        return self._stream_generator(
-            request,
-            callback_factory=callback_factory,
-            trace_extractor=trace_extractor,
-            telemetry_flusher=telemetry_flusher,
-            eval_task_fn=eval_task_fn,
-        )
+        return self._stream_generator(request)
 
     async def _stream_generator(
         self,
         request: ChatRequest,
-        *,
-        callback_factory: Callable[..., Any] | None = None,
-        trace_extractor: Callable[[Any], str | None] | None = None,
-        telemetry_flusher: Callable[[], None] | None = None,
-        eval_task_fn: Callable[..., Any] | None = None,
     ) -> AsyncGenerator[str, None]:
         """Consume LangGraph astream_events v2 and yield pre-formatted SSE event strings."""
         from app.api.schemas import (
@@ -514,10 +470,10 @@ class WorkflowRunner:
             StreamTokenEvent,
         )
 
-        cb_factory = callback_factory or self.callback_factory or get_langfuse_callback
-        tr_extractor = trace_extractor or self.trace_extractor or extract_trace_id
-        tel_flusher = telemetry_flusher or self.telemetry_flusher or flush_telemetry
-        ev_task_fn = eval_task_fn or self.eval_task_fn or run_online_evaluation_task
+        cb_factory = self.callback_factory
+        tr_extractor = self.trace_extractor
+        tel_flusher = self.telemetry_flusher
+        ev_task_fn = self.eval_task_fn
 
         wf_def: WorkflowDefinition | None = None
         handler: Any = None
@@ -534,8 +490,6 @@ class WorkflowRunner:
             wf_def, trace_id, handler, initial_state, config = self._prepare_execution(
                 request,
                 streaming=True,
-                callback_factory=cb_factory,
-                trace_extractor=tr_extractor,
             )
             graph = wf_def.get_compiled_graph()
             step_labels = (wf_def.info.step_labels if wf_def and wf_def.info else None) or DEFAULT_STEP_LABELS
@@ -656,19 +610,36 @@ class WorkflowRunner:
 
             # Safeguard background evaluation task
             if resolved_tid:
-                eval_task = asyncio.create_task(
-                    ev_task_fn(
+                async def _safe_stream_eval_wrapper() -> None:
+                    try:
+                        res = ev_task_fn(
+                            trace_id=resolved_tid,
+                            question=request.question,
+                            answer=final_answer,
+                            source_used=final_source_used,
+                            retrieved_contexts=final_retrieved_contexts,
+                        )
+                        if asyncio.iscoroutine(res) or hasattr(res, "__await__"):
+                            await res
+                    except Exception as exc:
+                        logger.warning(
+                            "online_evaluation_failed_shielded",
+                            trace_id=resolved_tid,
+                            error=str(exc),
+                        )
+
+                try:
+                    eval_task = asyncio.create_task(_safe_stream_eval_wrapper())
+                    _background_tasks.add(eval_task)
+                    eval_task.add_done_callback(_background_tasks.discard)
+                    self._background_tasks.add(eval_task)
+                    eval_task.add_done_callback(self._background_tasks.discard)
+                except Exception as exc:
+                    logger.warning(
+                        "online_evaluation_scheduling_failed",
                         trace_id=resolved_tid,
-                        question=request.question,
-                        answer=final_answer,
-                        source_used=final_source_used,
-                        retrieved_contexts=final_retrieved_contexts,
+                        error=str(exc),
                     )
-                )
-                _background_tasks.add(eval_task)
-                eval_task.add_done_callback(_background_tasks.discard)
-                self._background_tasks.add(eval_task)
-                eval_task.add_done_callback(self._background_tasks.discard)
 
             logger.info(
                 "chat_query_completed",
@@ -777,6 +748,12 @@ def get_workflow_runner(
     return _default_runner
 
 
+def reset_workflow_runner() -> None:
+    """Reset the global default WorkflowRunner singleton (for test isolation)."""
+    global _default_runner
+    _default_runner = None
+
+
 __all__ = [
     "DEFAULT_GENERATION_NODES",
     "DEFAULT_STEP_LABELS",
@@ -785,4 +762,5 @@ __all__ = [
     "format_sse",
     "get_workflow_runner",
     "is_tool_call_chunk",
+    "reset_workflow_runner",
 ]

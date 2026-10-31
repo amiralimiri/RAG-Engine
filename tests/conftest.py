@@ -10,7 +10,11 @@ import pytest
 from app.api.schemas import ChatRequest, ChatResponse
 from app.rag.workflows.base import EvalContext, WorkflowDefinition, WorkflowInfo
 from app.rag.workflows.registry import WorkflowRegistry, get_workflow_registry
-from app.rag.workflows.runner import DEFAULT_GENERATION_NODES, DEFAULT_STEP_LABELS
+from app.rag.workflows.runner import (
+    DEFAULT_GENERATION_NODES,
+    DEFAULT_STEP_LABELS,
+    reset_workflow_runner,
+)
 from app.rag.workflows import register_default_workflows
 
 
@@ -147,6 +151,16 @@ def clean_registry() -> Generator[WorkflowRegistry, None, None]:
         register_default_workflows(registry)
 
 
+@pytest.fixture(autouse=True)
+def clean_runner() -> Generator[None, None, None]:
+    """Autouse fixture resetting global WorkflowRunner singleton before and after each test."""
+    reset_workflow_runner()
+    try:
+        yield
+    finally:
+        reset_workflow_runner()
+
+
 @pytest.fixture
 def register_mock_workflow(clean_registry: WorkflowRegistry) -> Callable[..., MockWorkflowDefinition]:
     """Helper fixture to create and register a MockWorkflowDefinition into clean_registry."""
@@ -160,5 +174,6 @@ def register_mock_workflow(clean_registry: WorkflowRegistry) -> Callable[..., Mo
 __all__ = [
     "MockWorkflowDefinition",
     "clean_registry",
+    "clean_runner",
     "register_mock_workflow",
 ]
