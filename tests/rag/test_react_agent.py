@@ -199,6 +199,26 @@ def test_react_agent_query_fallback_from_human_message():
 
 
 @pytest.mark.parametrize(
+    "explicit_source,expected_resp_source,expected_eval_source",
+    [
+        ("error", "error", "direct"),
+        ("error_fallback", "error", "direct"),
+    ],
+)
+def test_react_agent_error_source_normalization(explicit_source, expected_resp_source, expected_eval_source):
+    """Verify that error sources map to 'error' on response but normalize to 'direct' in EvalContext."""
+    wf = ReActAgentWorkflow(llm=MockChatModel(), tools=[mock_dummy_tool])
+    final_state = {
+        "messages": [HumanMessage(content="Hello"), AIMessage(content="Error occurred")],
+        "source_used": explicit_source,
+    }
+    resp = wf.to_chat_response(final_state)
+    eval_ctx = wf.extract_eval_context(final_state)
+    assert resp.source_used == expected_resp_source
+    assert eval_ctx.source_used == expected_eval_source
+
+
+@pytest.mark.parametrize(
     "tools_in_messages,expected_source,expected_eval_source",
     [
         (["knowledge_base_search"], "vectorstore", "vectorstore"),

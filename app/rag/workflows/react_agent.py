@@ -39,6 +39,22 @@ DEFAULT_REACT_PROMPT: str = (
 )
 
 
+def _extract_tools_called(messages: list[Any]) -> list[str]:
+    """Extracts unique tool names invoked across tool calls and tool output messages."""
+    tools_called: list[str] = []
+    for m in messages:
+        tool_name = getattr(m, "name", None)
+        if hasattr(m, "tool_calls") and m.tool_calls:
+            for tc in m.tool_calls:
+                tc_name = tc.get("name") if isinstance(tc, dict) else getattr(tc, "name", "")
+                if tc_name and tc_name not in tools_called:
+                    tools_called.append(tc_name)
+        if isinstance(m, ToolMessage) or getattr(m, "type", "") == "tool":
+            if tool_name and tool_name not in tools_called:
+                tools_called.append(tool_name)
+    return tools_called
+
+
 def _resolve_source_used(
     messages: list[Any],
     tools_called: list[str] | None = None,
@@ -47,29 +63,14 @@ def _resolve_source_used(
     """Consistently resolves evidence source used across chat responses and evaluation contexts."""
     if explicit_source in ("error", "error_fallback"):
         return "error"
-    if explicit_source and explicit_source not in ("direct", "react_agent"):
-        return explicit_source
-
-    if tools_called is None:
-        tools_called = []
-        for m in messages:
-            tool_name = getattr(m, "name", None)
-            if hasattr(m, "tool_calls") and m.tool_calls:
-                for tc in m.tool_calls:
-                    tc_name = tc.get("name") if isinstance(tc, dict) else getattr(tc, "name", "")
-                    if tc_name and tc_name not in tools_called:
-                        tools_called.append(tc_name)
-            if isinstance(m, ToolMessage) or getattr(m, "type", "") == "tool":
-                if tool_name and tool_name not in tools_called:
-                    tools_called.append(tool_name)
-
-    if "knowledge_base_search" in tools_called and "web_search" in tools_called:
+    resolved_tools = tools_called if tools_called is not None else _extract_tools_called(messages)
+    if "knowledge_base_search" in resolved_tools and "web_search" in resolved_tools:
         return "react_agent"
-    if "knowledge_base_search" in tools_called:
+    if "knowledge_base_search" in resolved_tools:
         return "vectorstore"
-    if "web_search" in tools_called:
+    if "web_search" in resolved_tools:
         return "web_search"
-    if tools_called:
+    if resolved_tools:
         return "react_agent"
     return explicit_source or "direct"
 
@@ -191,19 +192,11 @@ class ReActAgentWorkflow:
 
         citations: list[dict[str, Any]] = []
         retrieved_contexts: list[str] = list(final_state.get("retrieved_contexts", []))
-        tools_called: list[str] = []
+        tools_called = _extract_tools_called(messages)
 
         for m in messages:
-            tool_name = getattr(m, "name", None)
-            if hasattr(m, "tool_calls") and m.tool_calls:
-                for tc in m.tool_calls:
-                    tc_name = tc.get("name") if isinstance(tc, dict) else getattr(tc, "name", "")
-                    if tc_name and tc_name not in tools_called:
-                        tools_called.append(tc_name)
-
             if isinstance(m, ToolMessage) or getattr(m, "type", "") == "tool":
-                if tool_name and tool_name not in tools_called:
-                    tools_called.append(tool_name)
+                tool_name = getattr(m, "name", None)
                 content_str = str(m.content)
                 if content_str not in retrieved_contexts:
                     retrieved_contexts.append(content_str)
