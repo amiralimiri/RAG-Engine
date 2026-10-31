@@ -9,9 +9,9 @@ Verify complete end-to-end conformance across streaming token delta filtering, s
 
 **Blocked by:** 02: Canonical `create_agent` Compiler Migration
 
-**Status:** proposed
+**Status:** completed
 
-- [ ] `tests/test_chat_stream.py` passes 100% green
-- [ ] `tests/test_e2e_observability.py` passes 100% green
-- [ ] `tests/api/test_routes_multi_workflow.py` passes 100% green
-- [ ] `uv run pytest` runs across all 489+ tests with 100% green pass and zero regressions
+- [x] `tests/test_chat_stream.py` passes 100% green
+- [x] `tests/test_e2e_observability.py` passes 100% green
+- [x] `tests/api/test_routes_multi_workflow.py` passes 100% green
+- [x] `uv run pytest` runs across all 489+ tests with 100% green pass and zero regressions

@@ -38,7 +38,7 @@
 |---|---|---|---|---|
 | **Ticket 01** | Node Constants, Source Resolution Harmonization & Unit Tests | `app/rag/workflows/react_agent.py`, `tests/rag/test_react_agent.py` | None | `completed` |
 | **Ticket 02** | Canonical `create_agent` Compiler Migration | `app/rag/workflows/react_agent.py`, `tests/rag/test_react_agent.py` | Ticket 01 | `completed` |
-| **Ticket 03** | End-to-End Streaming, Telemetry & Full Conformance Gate | `tests/test_chat_stream.py`, `tests/test_e2e_observability.py`, Full pytest suite | Ticket 02 | `proposed` |
+| **Ticket 03** | End-to-End Streaming, Telemetry & Full Conformance Gate | `tests/test_chat_stream.py`, `tests/test_e2e_observability.py`, Full pytest suite | Ticket 02 | `completed` |
 
 ---
 

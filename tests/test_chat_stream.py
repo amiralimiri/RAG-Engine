@@ -911,6 +911,124 @@ class TestMultiWorkflowStreamingE2E:
         assert meta["workflow"] == "react_agent"
         assert meta["citations"][0]["title"] == "password_policy.pdf"
 
+    async def test_react_agent_model_node_conversational_tokens_and_step_events(self, monkeypatch):
+        """Streaming tokens for modern create_agent ('model' node) verified to contain conversational text and step events."""
+        registry = get_workflow_registry()
+        workflow = registry.get("react_agent")
+
+        mock_handler = get_mock_handler("trace-react-stream-model-003")
+        monkeypatch.setattr("app.rag.workflows.runner.get_langfuse_callback", lambda **kwargs: mock_handler)
+        monkeypatch.setattr("app.rag.workflows.runner.extract_trace_id", lambda handler: "trace-react-stream-model-003")
+
+        async def mock_events(*args, **kwargs):
+            # Step 1: Model node starts
+            yield {"event": "on_chain_start", "metadata": {"langgraph_node": "model"}, "data": {}}
+
+            # Model emits tool call chunks (must be filtered out)
+            tool_chunk = AIMessageChunk(
+                content="",
+                tool_call_chunks=[
+                    ToolCallChunk(name="knowledge_base_search", args='{"query": "vpn password"}', id="call_model_1", index=0)
+                ],
+            )
+            yield {
+                "event": "on_chat_model_stream",
+                "metadata": {"langgraph_node": "model"},
+                "data": {"chunk": tool_chunk},
+            }
+
+            yield {
+                "event": "on_chain_end",
+                "metadata": {"langgraph_node": "model"},
+                "data": {
+                    "output": {
+                        "messages": [
+                            AIMessage(
+                                content="",
+                                tool_calls=[{"name": "knowledge_base_search", "args": {"query": "vpn password"}, "id": "call_model_1"}],
+                            )
+                        ]
+                    }
+                },
+            }
+
+            # Step 2: Tools node starts
+            yield {"event": "on_chain_start", "metadata": {"langgraph_node": "tools"}, "data": {}}
+            yield {
+                "event": "on_chain_end",
+                "metadata": {"langgraph_node": "tools"},
+                "data": {
+                    "output": {
+                        "messages": [
+                            ToolMessage(
+                                content="[Source: password_policy.pdf] Passwords expire every 90 days.",
+                                name="knowledge_base_search",
+                                tool_call_id="call_model_1",
+                            )
+                        ]
+                    }
+                },
+            }
+
+            # Step 3: Model node resumes and emits natural language tokens
+            yield {"event": "on_chain_start", "metadata": {"langgraph_node": "model"}, "data": {}}
+            yield {
+                "event": "on_chat_model_stream",
+                "metadata": {"langgraph_node": "model"},
+                "data": {"chunk": AIMessageChunk(content="Your corporate password ")},
+            }
+            yield {
+                "event": "on_chat_model_stream",
+                "metadata": {"langgraph_node": "model"},
+                "data": {"chunk": AIMessageChunk(content="expires every 90 days.")},
+            }
+            yield {
+                "event": "on_chain_end",
+                "metadata": {"langgraph_node": "model"},
+                "data": {
+                    "output": {
+                        "messages": [
+                            AIMessage(content="Your corporate password expires every 90 days."),
+                        ]
+                    }
+                },
+            }
+
+        mock_graph = MagicMock()
+        mock_graph.astream_events = mock_events
+        monkeypatch.setattr(workflow, "get_compiled_graph", lambda: mock_graph)
+
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as ac:
+            async with ac.stream(
+                "POST",
+                "/api/chat/stream",
+                json={"question": "When does password expire?", "workflow": "react_agent"},
+            ) as resp:
+                lines = [line async for line in resp.aiter_lines()]
+
+        events = parse_sse_lines(lines)
+
+        # 1. Step events must include model and tools
+        step_events = [e for e in events if e["event"] == "step"]
+        steps = [s["data"]["step"] for s in step_events]
+        assert "model" in steps
+        assert "tools" in steps
+
+        # Check label for model node
+        model_step = next(s for s in step_events if s["data"]["step"] == "model")
+        assert model_step["data"]["label"] == "Reasoning & planning response..."
+
+        # 2. Token events must contain ONLY conversational text
+        token_events = [e for e in events if e["event"] == "token"]
+        assert len(token_events) == 2
+        full_text = "".join(t["data"]["delta"] for t in token_events)
+        assert full_text == "Your corporate password expires every 90 days."
+
+        # 3. Terminal metadata
+        meta = [e for e in events if e["event"] == "metadata"][0]["data"]
+        assert meta["workflow"] == "react_agent"
+        assert meta["citations"][0]["title"] == "password_policy.pdf"
+
     async def test_streaming_multi_turn_session_persistence(self, monkeypatch):
         """Multi-turn session persistence verified end-to-end via HTTP streaming requests sharing session_id."""
         registry = get_workflow_registry()
