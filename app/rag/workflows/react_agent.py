@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import re
 import threading
-from typing import TYPE_CHECKING, Any, Sequence
+from collections.abc import Sequence
+from typing import TYPE_CHECKING, Any
 
 from langchain_core.messages import (
     AIMessage,
@@ -17,7 +18,7 @@ from langchain_core.tools import BaseTool
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.prebuilt import create_react_agent
 
-from app.rag.workflows.base import EvalContext, WorkflowDefinition, WorkflowInfo
+from app.rag.workflows.base import EvalContext, WorkflowInfo
 
 if TYPE_CHECKING:
     from app.api.schemas import ChatRequest, ChatResponse

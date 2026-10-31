@@ -2,20 +2,59 @@
 
 from __future__ import annotations
 
-from collections.abc import Generator
-from typing import Any, Callable
+import os
+from collections.abc import Callable, Generator
+from typing import Any
 from unittest.mock import MagicMock
-import pytest
 
+import langfuse._client.resource_manager as rm
+import pytest
+from opentelemetry.sdk.trace.export import SpanExporter, SpanExportResult
+
+import app.core.telemetry as telemetry
 from app.api.schemas import ChatRequest, ChatResponse
-from app.rag.workflows.base import EvalContext, WorkflowDefinition, WorkflowInfo
+from app.rag.workflows import register_default_workflows
+from app.rag.workflows.base import EvalContext, WorkflowInfo
 from app.rag.workflows.registry import WorkflowRegistry, get_workflow_registry
 from app.rag.workflows.runner import (
     DEFAULT_GENERATION_NODES,
     DEFAULT_STEP_LABELS,
     reset_workflow_runner,
 )
-from app.rag.workflows import register_default_workflows
+
+# Explicitly disable remote telemetry, background worker pools, and external evaluation calls during testing
+os.environ["DEEPEVAL_TELEMETRY_OPT_OUT"] = "YES"
+os.environ["OTEL_SDK_DISABLED"] = "true"
+
+
+class _NoOpSpanExporter(SpanExporter):
+    """No-op OpenTelemetry span exporter preventing remote network calls during testing."""
+
+    def export(self, spans: Any) -> SpanExportResult:
+        return SpanExportResult.SUCCESS
+
+    def shutdown(self) -> None:
+        pass
+
+    def force_flush(self, timeout_millis: int = 30000) -> bool:
+        return True
+
+
+# Globally disable live background telemetry consumer threads and remote OTLP export during test execution
+rm.OTLPSpanExporter = lambda *args, **kwargs: _NoOpSpanExporter()
+
+
+def _safe_init_consumer_threads(self: Any) -> None:
+    self._media_upload_consumers = []
+    self._score_consumers = []
+    self._score_queue = rm.Queue(100_000)
+
+
+rm.LangfuseResourceManager._init_consumer_threads = _safe_init_consumer_threads
+rm.LangfuseResourceManager.flush = lambda self: None
+rm.LangfuseResourceManager.shutdown = lambda self: None
+rm.MediaUploadConsumer.start = lambda self: None
+rm.ScoreConsumer.start = lambda self: None
 
 
 class MockWorkflowDefinition:
@@ -139,7 +178,7 @@ class MockWorkflowDefinition:
 
 
 @pytest.fixture(autouse=True)
-def clean_registry() -> Generator[WorkflowRegistry, None, None]:
+def clean_registry() -> Generator[WorkflowRegistry]:
     """Autouse fixture resetting WorkflowRegistry to canonical defaults before and after each test."""
     registry = get_workflow_registry()
     registry.clear()
@@ -152,13 +191,21 @@ def clean_registry() -> Generator[WorkflowRegistry, None, None]:
 
 
 @pytest.fixture(autouse=True)
-def clean_runner() -> Generator[None, None, None]:
+def clean_runner() -> Generator[None]:
     """Autouse fixture resetting global WorkflowRunner singleton before and after each test."""
     reset_workflow_runner()
     try:
         yield
     finally:
         reset_workflow_runner()
+
+
+@pytest.fixture(autouse=True)
+def clean_telemetry() -> Generator[None]:
+    """Autouse fixture ensuring global telemetry client is reset between tests."""
+    telemetry._langfuse_client = None
+    yield
+    telemetry._langfuse_client = None
 
 
 @pytest.fixture
@@ -175,5 +222,6 @@ __all__ = [
     "MockWorkflowDefinition",
     "clean_registry",
     "clean_runner",
+    "clean_telemetry",
     "register_mock_workflow",
 ]

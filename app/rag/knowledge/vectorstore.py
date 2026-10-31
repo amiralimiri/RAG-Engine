@@ -1,26 +1,26 @@
 """Vector store adapters, cloud Pinecone integration, and offline doubles."""
 
+import hashlib
+import inspect
 import math
 import os
 import re
 import sys
-import hashlib
-import inspect
 import threading
 import uuid
 from typing import Any
-from pydantic import Field
+
+from langchain_core.callbacks import AsyncCallbackManagerForRetrieverRun, CallbackManagerForRetrieverRun
 from langchain_core.documents import Document
 from langchain_core.embeddings import Embeddings
-from langchain_core.callbacks import CallbackManagerForRetrieverRun, AsyncCallbackManagerForRetrieverRun
 from langchain_core.retrievers import BaseRetriever
 from langchain_openai import OpenAIEmbeddings
 from langchain_pinecone import PineconeVectorStore
 from pinecone import Pinecone, ServerlessSpec
+from pydantic import Field
 
 from app.core.config import Settings, get_settings
 from app.rag.knowledge.base import ConfigurationError, VectorStoreAdapter
-
 
 EMBEDDING_DIMENSIONS: dict[str, int] = {
     "text-embedding-3-small": 1536,

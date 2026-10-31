@@ -1,11 +1,12 @@
 import contextvars
 import hmac
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
+import structlog
 from fastapi import APIRouter, BackgroundTasks, File, Header, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
-import structlog
 
 from app.api.schemas import ChatRequest, ChatResponse, FeedbackRequest, WorkflowListResponse
 from app.core.config import get_settings

@@ -1,12 +1,12 @@
 import logging
 from typing import Any, Literal
 
+import structlog
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import BaseTool
 from langchain_openai import ChatOpenAI
 from langgraph.graph import END, START, StateGraph
-import structlog
 
 from app.core.concurrency import wrap_safe_invoke
 from app.core.config import get_settings

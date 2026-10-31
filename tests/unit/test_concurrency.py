@@ -1,7 +1,8 @@
-import asyncio
 from unittest.mock import MagicMock
+
 import pytest
-from app.core.concurrency import run_async_safely, wrap_safe_invoke, shutdown_background_loop
+
+from app.core.concurrency import run_async_safely, shutdown_background_loop, wrap_safe_invoke
 
 
 def test_run_async_safely_without_running_loop():
@@ -23,7 +24,6 @@ async def test_run_async_safely_inside_running_loop():
 
 def test_run_async_safely_propagates_contextvars():
     """Contextvars bound on the caller thread must propagate into run_async_safely."""
-    import contextvars
     import structlog
 
     structlog.contextvars.bind_contextvars(request_id="req-test-safe", step="test_step")

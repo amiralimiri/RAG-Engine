@@ -1,4 +1,5 @@
 import json
+
 import pytest
 from pydantic import ValidationError
 
@@ -6,10 +7,10 @@ from app.api.schemas import (
     ChatRequest,
     ChatResponse,
     FeedbackRequest,
+    StreamErrorEvent,
+    StreamMetadataEvent,
     StreamStepEvent,
     StreamTokenEvent,
-    StreamMetadataEvent,
-    StreamErrorEvent,
 )
 
 

@@ -1,7 +1,8 @@
 """API request, response, and SSE streaming event schemas."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
+
 from pydantic import BaseModel, Field
 
 from app.rag.workflows.base import WorkflowInfo
@@ -79,7 +80,7 @@ class StreamStepEvent(BaseModel):
     step: str = Field(..., description="Internal LangGraph step/node identifier")
     label: str = Field(..., description="Human-readable status label")
     timestamp: float = Field(
-        default_factory=lambda: datetime.now(timezone.utc).timestamp(),
+        default_factory=lambda: datetime.now(UTC).timestamp(),
         description="Event creation timestamp in UTC epoch seconds",
     )
 

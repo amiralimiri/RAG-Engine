@@ -1,7 +1,7 @@
 """Unit tests for the modular Tool Abstraction Layer."""
 
-import asyncio
-from unittest.mock import MagicMock, AsyncMock
+from unittest.mock import AsyncMock, MagicMock
+
 import pytest
 from langchain_core.documents import Document
 from langchain_core.tools import BaseTool

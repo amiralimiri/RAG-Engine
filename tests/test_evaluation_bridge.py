@@ -1,10 +1,9 @@
 from unittest.mock import MagicMock
-import pytest
 
 from app.services.evaluation import (
-    score_trace_metric,
-    score_trace_faithfulness,
     score_trace_answer_relevancy,
+    score_trace_faithfulness,
+    score_trace_metric,
 )
 
 

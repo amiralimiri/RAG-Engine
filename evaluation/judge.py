@@ -1,5 +1,7 @@
 import os
+
 from deepeval.models import LocalModel, TypeSafeModel
+
 from app.core.config import get_settings
 
 settings = get_settings()
@@ -10,7 +12,7 @@ class JudgeModels:
     def __new__(cls):
         # Singleton
         if cls._instance is None:
-            cls._instance = super(JudgeModels, cls).__new__(cls)
+            cls._instance = super().__new__(cls)
             cls._instance._initialize_models()
         return cls._instance
 

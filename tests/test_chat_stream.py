@@ -23,7 +23,7 @@ import pytest
 from fastapi.testclient import TestClient
 from langchain_core.documents import Document
 from langchain_core.language_models.fake_chat_models import FakeListChatModel
-from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, ToolMessage
+from langchain_core.messages import AIMessage, AIMessageChunk, ToolMessage
 from langchain_core.messages.tool import ToolCallChunk
 from langchain_core.tools import BaseTool
 
@@ -31,7 +31,6 @@ from app.main import app
 from app.rag.classifiers import FakeClassifierAdapter
 from app.rag.workflows import get_workflow_registry
 from app.rag.workflows.self_corrective import SelfCorrectiveRagWorkflow
-
 
 # ── helpers & transports ──────────────────────────────────────────────────
 

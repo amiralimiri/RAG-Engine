@@ -7,6 +7,7 @@ Verifies end-to-end integration across:
 """
 
 from unittest.mock import MagicMock
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -217,6 +218,10 @@ def test_api_chat_contract_success(client, monkeypatch, register_mock_workflow):
     monkeypatch.setattr(
         "app.rag.workflows.runner.extract_trace_id",
         lambda handler: getattr(handler, "last_trace_id", None),
+    )
+    monkeypatch.setattr(
+        "app.rag.workflows.runner.run_online_evaluation_task",
+        MagicMock(),
     )
 
     register_mock_workflow(

@@ -1,9 +1,10 @@
 import subprocess
+
 import pytest
-from pathlib import Path
 from fastapi.testclient import TestClient
-from app.main import app
+
 from app.core.config import BASE_DIR
+from app.main import app
 
 
 @pytest.fixture

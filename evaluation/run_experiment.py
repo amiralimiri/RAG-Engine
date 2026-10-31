@@ -6,9 +6,9 @@ Usage:
 import argparse
 import json
 import logging
-from pathlib import Path
 import sys
 import time
+from pathlib import Path
 from typing import Any
 
 # Ensure project root is in sys.path when executed directly as a script
@@ -39,7 +39,7 @@ def load_gold_benchmarks(benchmark_file: Path | str | None = None) -> list[dict[
     path = Path(benchmark_file) if benchmark_file else DEFAULT_BENCHMARK_PATH
     if not path.exists():
         raise FileNotFoundError(f"Missing benchmark file: {path}")
-    with open(path, "r", encoding="utf-8") as f:
+    with open(path, encoding="utf-8") as f:
         return json.load(f)
 
 

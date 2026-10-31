@@ -1,16 +1,17 @@
 from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from app.api.routes import router
+
 from app.api.middleware import CorrelationLoggingMiddleware
-from app.core.config import get_settings, BASE_DIR
+from app.api.routes import router
+from app.core.concurrency import shutdown_background_loop
+from app.core.config import BASE_DIR, get_settings
 from app.core.logger import configure_logging
 from app.core.telemetry import flush_telemetry
-from app.core.concurrency import shutdown_background_loop
 from app.services.prompts import seed_all_prompts
-
 
 settings = get_settings()
 

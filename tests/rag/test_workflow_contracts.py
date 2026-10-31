@@ -1,6 +1,7 @@
 """Reusable conformance test suite for WorkflowDefinition implementations."""
 
 from typing import Any
+
 import pytest
 from langgraph.graph import END, START, StateGraph
 

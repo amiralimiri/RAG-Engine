@@ -1,20 +1,20 @@
 import re
 import uuid
+
 import pytest
 import structlog
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-
-from app.api.middleware import CorrelationLoggingMiddleware
-from app.core.config import Settings
-import app.core.telemetry as telemetry
-from app.core.telemetry import (
-    get_langfuse_callback,
-    extract_trace_id,
-    LangfuseCallbackHandler,
-)
 from langfuse.langchain import CallbackHandler
 
+import app.core.telemetry as telemetry
+from app.api.middleware import CorrelationLoggingMiddleware
+from app.core.config import Settings
+from app.core.telemetry import (
+    LangfuseCallbackHandler,
+    extract_trace_id,
+    get_langfuse_callback,
+)
 
 HEX_32_PATTERN = re.compile(r"^[0-9a-f]{32}$")
 

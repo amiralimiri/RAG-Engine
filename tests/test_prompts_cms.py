@@ -1,8 +1,8 @@
-import pytest
 from unittest.mock import MagicMock, patch
 
 from langfuse.model import TextPromptClient
-from app.services.prompts import FallbackPrompt, LOCAL_PROMPTS, get_workflow_prompt
+
+from app.services.prompts import LOCAL_PROMPTS, FallbackPrompt, get_workflow_prompt
 
 
 class TestFallbackPrompt:

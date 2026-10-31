@@ -1,6 +1,7 @@
 """Unit tests for base workflow protocols and additive API schemas."""
 
 from typing import Any
+
 import pytest
 from pydantic import ValidationError
 

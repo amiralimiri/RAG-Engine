@@ -1,6 +1,7 @@
 """Document chunking strategy protocols and text splitters."""
 
 from typing import Any, Protocol, runtime_checkable
+
 from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 

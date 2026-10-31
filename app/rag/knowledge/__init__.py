@@ -14,11 +14,11 @@ from app.rag.knowledge.indexer import (
     get_document_indexer,
 )
 from app.rag.knowledge.parsers import (
-    CompositeDocumentParser,
-    DocxParser,
-    DocumentParser,
-    PDFParser,
     SUPPORTED_EXTENSIONS,
+    CompositeDocumentParser,
+    DocumentParser,
+    DocxParser,
+    PDFParser,
     TextParser,
 )
 from app.rag.knowledge.vectorstore import (

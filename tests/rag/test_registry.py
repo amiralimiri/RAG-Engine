@@ -2,6 +2,7 @@
 
 from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import MagicMock
+
 import pytest
 
 from app.rag.workflows.base import WorkflowDefinition, WorkflowInfo

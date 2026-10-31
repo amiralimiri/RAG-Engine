@@ -1,6 +1,7 @@
 import asyncio
 import time
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
+
 import httpx
 import pytest
 from starlette.testclient import TestClient

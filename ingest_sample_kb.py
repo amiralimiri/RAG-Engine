@@ -1,4 +1,5 @@
 from pathlib import Path
+
 from app.core.config import get_settings
 from app.rag.knowledge import get_document_indexer
 

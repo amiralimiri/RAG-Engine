@@ -6,7 +6,8 @@ import asyncio
 import concurrent.futures
 import contextvars
 import threading
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 _bg_loop: asyncio.AbstractEventLoop | None = None
 _bg_thread: threading.Thread | None = None

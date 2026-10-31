@@ -1,12 +1,11 @@
 """Tests for the deep DocumentIndexer write pipeline with deterministic upserts."""
 
-import hashlib
 from pathlib import Path
+
 import pytest
 from docx import Document as DocxDocument
 from pypdf import PdfWriter
 
-from app.core.config import Settings
 from app.rag.knowledge.base import IndexingResult
 from app.rag.knowledge.chunkers import RecursiveCharacterChunker
 from app.rag.knowledge.indexer import DocumentIndexer, get_document_indexer

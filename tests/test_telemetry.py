@@ -1,4 +1,3 @@
-import pytest
 from app.core.config import Settings
 
 
@@ -56,6 +55,7 @@ def test_callback_created_with_tags_and_metadata(monkeypatch):
     )
     monkeypatch.setattr("app.core.telemetry.get_settings", lambda: dummy_settings)
     from langfuse.langchain import CallbackHandler
+
     import app.core.telemetry as telemetry
     telemetry._langfuse_client = None
 
@@ -132,8 +132,8 @@ def test_extract_trace_id_variants():
 
 def test_flush_telemetry_safe_when_unconfigured(monkeypatch):
     """Call flush_telemetry() when client is None and ensure no exceptions."""
-    from app.core.telemetry import flush_telemetry
     import app.core.telemetry as telemetry
+    from app.core.telemetry import flush_telemetry
 
     telemetry._langfuse_client = None
     flush_telemetry()  # Should not raise

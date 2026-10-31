@@ -1,5 +1,5 @@
 from unittest.mock import MagicMock, patch
-import pytest
+
 from langchain_core.documents import Document
 
 from app.rag.classifiers import (
@@ -7,7 +7,6 @@ from app.rag.classifiers import (
     JevClassifierAdapter,
     OpenAIClassifierAdapter,
     WorkflowClassifier,
-    _build_prompt_config,
     _estimate_jev_tokens,
 )
 from app.rag.state import EvidenceGrade, RouteDecision

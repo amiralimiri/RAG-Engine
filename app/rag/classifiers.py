@@ -1,11 +1,11 @@
 import logging
 from typing import Any, Protocol, cast, runtime_checkable
 
+import structlog
 from langchain_core.documents import Document
 from langchain_core.runnables import RunnableConfig
 from langchain_openai import ChatOpenAI
 from langchain_typesafe import Choice, TypeSafeClassifier
-import structlog
 
 from app.core.config import get_settings
 from app.core.telemetry import extract_trace_id, get_langfuse_client

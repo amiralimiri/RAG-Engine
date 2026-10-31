@@ -1,4 +1,5 @@
 from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
 from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.documents import Document

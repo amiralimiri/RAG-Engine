@@ -1,8 +1,9 @@
 # test_example.py
-from deepeval.metrics.jev_eval import Noul, Score, Choice
-from deepeval.test_case import LLMTestCase, SingleTurnParams
-from deepeval.metrics import JevEval
 from deepeval import assert_test
+from deepeval.metrics import JevEval
+from deepeval.metrics.jev_eval import Choice, Noul, Score
+from deepeval.test_case import LLMTestCase, SingleTurnParams
+
 from evaluation.judge import judge
 
 

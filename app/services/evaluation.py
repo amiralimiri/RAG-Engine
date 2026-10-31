@@ -1,7 +1,6 @@
 import asyncio
 import logging
 import random
-from typing import Optional
 
 from deepeval.metrics import AnswerRelevancyMetric, FaithfulnessMetric
 from deepeval.test_case import LLMTestCase
@@ -22,7 +21,7 @@ def score_trace_metric(
     trace_id: str,
     metric_name: str,
     score: float,
-    comment: Optional[str] = None,
+    comment: str | None = None,
 ) -> bool:
     """Submit a normalized score and optional comment for a given trace to Langfuse."""
     try:
@@ -66,7 +65,7 @@ def score_trace_faithfulness(
     question: str,
     answer: str,
     retrieved_contexts: list[str],
-) -> Optional[float]:
+) -> float | None:
     """Runs faithfulness evaluation via judge and scores the Langfuse trace."""
     client = get_langfuse_client()
     if not client or not question or not answer or not retrieved_contexts:
@@ -112,7 +111,7 @@ def score_trace_answer_relevancy(
     trace_id: str,
     question: str,
     answer: str,
-) -> Optional[float]:
+) -> float | None:
     """Runs answer relevancy evaluation via judge and scores the Langfuse trace."""
     client = get_langfuse_client()
     if not client or not question or not answer:
@@ -154,11 +153,11 @@ def score_trace_answer_relevancy(
 
 
 async def run_online_evaluation_task(
-    trace_id: Optional[str],
+    trace_id: str | None,
     question: str,
     answer: str,
     source_used: str,
-    retrieved_contexts: Optional[list[str]] = None,
+    retrieved_contexts: list[str] | None = None,
 ) -> None:
     """Asynchronously evaluate live chat completions and push scores to Langfuse."""
     if not trace_id:
@@ -234,7 +233,7 @@ async def run_online_evaluation_task(
             await asyncio.wait_for(_evaluate(), timeout=timeout)
         else:
             await _evaluate()
-    except asyncio.TimeoutError:
+    except TimeoutError:
         logger.warning(
             "Online evaluation timed out after %.1fs for trace %s",
             settings.eval_timeout_seconds,

@@ -10,7 +10,7 @@ from langchain_core.tools import BaseTool
 
 from app.rag.classifiers import WorkflowClassifier
 from app.rag.engine import create_agentic_rag_graph
-from app.rag.workflows.base import EvalContext, WorkflowDefinition, WorkflowInfo
+from app.rag.workflows.base import EvalContext, WorkflowInfo
 
 if TYPE_CHECKING:
     from app.api.schemas import ChatRequest, ChatResponse

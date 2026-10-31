@@ -3,25 +3,21 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncGenerator
-from datetime import datetime, timezone
 import json
-from typing import TYPE_CHECKING, Any, Callable
 import uuid
+from collections.abc import AsyncGenerator, Callable
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING, Any
 
+import structlog
 from fastapi import BackgroundTasks, HTTPException
 from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
-import structlog
 
 if TYPE_CHECKING:
     from app.api.schemas import (
         ChatRequest,
         ChatResponse,
-        StreamErrorEvent,
-        StreamMetadataEvent,
-        StreamStepEvent,
-        StreamTokenEvent,
     )
 from app.core.telemetry import (
     extract_trace_id,
@@ -467,7 +463,7 @@ class WorkflowRunner:
     def stream(
         self,
         request: ChatRequest,
-    ) -> AsyncGenerator[str, None]:
+    ) -> AsyncGenerator[str]:
         """Validate workflow and return an asynchronous generator yielding pre-formatted SSE frames."""
         self._resolve_workflow(request.workflow)
         return self._stream_generator(request)
@@ -475,7 +471,7 @@ class WorkflowRunner:
     async def _stream_generator(
         self,
         request: ChatRequest,
-    ) -> AsyncGenerator[str, None]:
+    ) -> AsyncGenerator[str]:
         """Consume LangGraph astream_events v2 and yield pre-formatted SSE event strings."""
         from app.api.schemas import (
             StreamErrorEvent,
@@ -521,7 +517,7 @@ class WorkflowRunner:
                         StreamStepEvent(
                             step=node_name,
                             label=step_labels[node_name],
-                            timestamp=datetime.now(timezone.utc).timestamp(),
+                            timestamp=datetime.now(UTC).timestamp(),
                         ),
                     )
 

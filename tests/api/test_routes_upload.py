@@ -5,14 +5,13 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
-from langchain_core.documents import Document
 
 from app.core.config import get_settings
 from app.main import app
 from app.rag.knowledge import (
-    InMemoryVectorStoreAdapter,
-    IndexingResult,
     SUPPORTED_EXTENSIONS,
+    IndexingResult,
+    InMemoryVectorStoreAdapter,
     get_knowledge_store,
     reset_knowledge_store,
 )

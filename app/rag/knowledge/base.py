@@ -1,6 +1,7 @@
 """Base protocols and data models for the knowledge store subsystem."""
 
 from typing import Any, Protocol, runtime_checkable
+
 from langchain_core.documents import Document
 from pydantic import BaseModel, Field
 

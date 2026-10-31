@@ -1,12 +1,13 @@
 import functools
 import inspect
 from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
+import structlog
 from langchain_core.documents import Document
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage
 from langchain_core.tools import BaseTool
-import structlog
 
 from app.rag.classifiers import FakeClassifierAdapter
 from app.rag.engine import (
@@ -361,8 +362,9 @@ async def test_graph_async_streaming_events_retrieve_and_search(mock_llm):
 
 
 def test_unpack_tool_output_handles_empty_dict_artifact():
-    from app.rag.engine import _unpack_tool_output
     from langchain_core.messages import ToolMessage
+
+    from app.rag.engine import _unpack_tool_output
 
     msg = ToolMessage(content="Found nothing", artifact={}, tool_call_id="call_123")
     content, artifact = _unpack_tool_output(msg)

@@ -1,13 +1,15 @@
-from collections.abc import Mapping
 import logging
 import logging.handlers
 import re
 import sys
 import warnings
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
+
 import structlog
 from structlog.types import EventDict, WrappedLogger
+
 from app.core.config import get_settings
 
 SAFE_KEY_EXEMPTIONS = {

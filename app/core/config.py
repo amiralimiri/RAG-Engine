@@ -1,9 +1,9 @@
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Literal
+
 from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
-
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 

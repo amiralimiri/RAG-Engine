@@ -6,18 +6,14 @@ import asyncio
 import json
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
-import uuid
 
-from fastapi import BackgroundTasks, HTTPException
 import pytest
 import structlog
+from fastapi import BackgroundTasks, HTTPException
 
 from app.api.schemas import (
-    ChatMessage,
     ChatRequest,
     ChatResponse,
-    StreamErrorEvent,
-    StreamMetadataEvent,
     StreamStepEvent,
     StreamTokenEvent,
 )
@@ -26,11 +22,9 @@ from app.core.telemetry import (
     flush_telemetry,
     get_langfuse_callback,
 )
-from app.rag.workflows.base import EvalContext, WorkflowDefinition, WorkflowInfo
+from app.rag.workflows.base import EvalContext, WorkflowInfo
 from app.rag.workflows.registry import WorkflowRegistry, get_workflow_registry
 from app.rag.workflows.runner import (
-    DEFAULT_GENERATION_NODES,
-    DEFAULT_STEP_LABELS,
     WorkflowRunner,
     _background_tasks,
     format_sse,

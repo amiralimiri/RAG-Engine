@@ -1,6 +1,7 @@
 """Tests for pluggable document parsers and chunker strategies."""
 
 from pathlib import Path
+
 import pytest
 from docx import Document as DocxDocument
 from langchain_core.documents import Document
@@ -12,11 +13,11 @@ from app.rag.knowledge.chunkers import (
     RecursiveCharacterChunker,
 )
 from app.rag.knowledge.parsers import (
-    CompositeDocumentParser,
-    DocxParser,
-    DocumentParser,
-    PDFParser,
     SUPPORTED_EXTENSIONS,
+    CompositeDocumentParser,
+    DocumentParser,
+    DocxParser,
+    PDFParser,
     TextParser,
 )
 

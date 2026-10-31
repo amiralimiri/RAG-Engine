@@ -1,6 +1,7 @@
 """Unit tests verifying test isolation fixtures and MockWorkflowDefinition in tests/conftest.py."""
 
 from unittest.mock import MagicMock
+
 import pytest
 
 from app.api.schemas import ChatRequest

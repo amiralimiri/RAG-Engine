@@ -2,10 +2,11 @@
 
 import inspect
 from typing import Any
+
+import structlog
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field
-import structlog
 
 from app.core.config import get_settings
 from app.rag.tools.base import _UNSET, DualOutputStructuredTool, get_invoke_config

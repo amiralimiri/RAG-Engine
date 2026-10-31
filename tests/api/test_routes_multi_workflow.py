@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock
 
 import httpx
 import pytest
@@ -14,16 +13,11 @@ from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, Too
 from langchain_core.messages.tool import ToolCallChunk
 
 from app.api.schemas import (
-    ChatMessage,
-    ChatRequest,
     ChatResponse,
     WorkflowListResponse,
 )
 from app.main import app
 from app.rag.workflows import (
-    EvalContext,
-    WorkflowDefinition,
-    WorkflowInfo,
     get_workflow_registry,
 )
 
@@ -196,6 +190,7 @@ class TestPostChatMultiWorkflow:
         }
 
         monkeypatch.setattr(workflow, "get_compiled_graph", lambda: mock_graph)
+        monkeypatch.setattr("app.rag.workflows.runner.run_online_evaluation_task", MagicMock())
 
         resp = client.post(
             "/api/chat",

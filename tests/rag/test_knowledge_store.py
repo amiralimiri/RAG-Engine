@@ -312,7 +312,7 @@ async def test_pinecone_adapter_delegation_methods() -> None:
 
 def test_get_knowledge_store_factory() -> None:
     """Verify get_knowledge_store resolves memory and pinecone adapters and provides singleton caching."""
-    from unittest.mock import patch, MagicMock
+    from unittest.mock import patch
 
     reset_knowledge_store()
 
@@ -340,8 +340,9 @@ def test_get_knowledge_store_factory() -> None:
 
 def test_get_knowledge_store_default_fallback_without_keys() -> None:
     """Verify get_knowledge_store defaults to memory store when pinecone is unconfigured or in tests."""
-    from app.core.config import Settings
     from pydantic import SecretStr
+
+    from app.core.config import Settings
 
     reset_knowledge_store()
 
@@ -368,8 +369,9 @@ def test_knowledge_store_module_exports() -> None:
 
 def test_pinecone_adapter_missing_api_keys_raise_configuration_error() -> None:
     """Verify PineconeVectorStoreAdapter validates required API keys and raises ConfigurationError."""
-    from app.core.config import Settings
     from pydantic import SecretStr
+
+    from app.core.config import Settings
 
     # Missing Pinecone API key
     no_pinecone_settings = Settings(

@@ -3,9 +3,11 @@ import io
 import json
 import logging
 from unittest.mock import patch
+
 import pytest
-from fastapi.testclient import TestClient
 import structlog
+from fastapi.testclient import TestClient
+
 from app.api.routes import capture_context
 from app.core.config import Settings
 from app.core.logger import (

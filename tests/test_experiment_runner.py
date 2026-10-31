@@ -1,9 +1,8 @@
 import json
 from pathlib import Path
 from unittest.mock import MagicMock, patch
-import pytest
 
-from app.core.config import get_settings
+import pytest
 
 
 def test_gold_benchmarks_file_exists_and_schema():
@@ -11,7 +10,7 @@ def test_gold_benchmarks_file_exists_and_schema():
     benchmark_file = Path("data/gold_benchmarks.json")
     assert benchmark_file.exists(), "data/gold_benchmarks.json does not exist"
 
-    with open(benchmark_file, "r", encoding="utf-8") as f:
+    with open(benchmark_file, encoding="utf-8") as f:
         data = json.load(f)
 
     assert isinstance(data, list), "gold_benchmarks.json must contain a JSON list"
@@ -88,7 +87,7 @@ def test_ensure_dataset_when_dataset_exists():
 
 
 def test_ensure_dataset_and_seed_when_dataset_not_found():
-    from evaluation.run_experiment import ensure_dataset, seed_golden_dataset
+    from evaluation.run_experiment import ensure_dataset
 
     mock_client = MagicMock()
     mock_created_dataset = MagicMock()
@@ -132,9 +131,9 @@ def test_seed_golden_dataset_degrades_gracefully_when_offline():
 
 
 def test_run_benchmark_workflow_execution_and_metrics():
-    from evaluation.run_experiment import run_workflow_benchmark
     from app.api.schemas import ChatResponse
     from app.rag.workflows.base import EvalContext
+    from evaluation.run_experiment import run_workflow_benchmark
 
     mock_client = MagicMock()
     mock_dataset = MagicMock()
@@ -195,9 +194,9 @@ def test_run_benchmark_workflow_execution_and_metrics():
 
 
 def test_run_benchmark_skips_faithfulness_for_direct_source():
-    from evaluation.run_experiment import run_workflow_benchmark
     from app.api.schemas import ChatResponse
     from app.rag.workflows.base import EvalContext
+    from evaluation.run_experiment import run_workflow_benchmark
 
     mock_client = MagicMock()
     mock_dataset = MagicMock()
@@ -261,9 +260,9 @@ def test_run_benchmark_workflow_not_registered_raises_value_error():
 
 
 def test_run_benchmark_workflow_execution_via_runner():
-    from evaluation.run_experiment import run_workflow_benchmark
     from app.api.schemas import ChatResponse
     from app.rag.workflows.base import EvalContext
+    from evaluation.run_experiment import run_workflow_benchmark
 
     mock_client = MagicMock()
     mock_dataset = MagicMock()

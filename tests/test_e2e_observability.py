@@ -1,13 +1,14 @@
 import asyncio
 from unittest.mock import AsyncMock, MagicMock
+
 import httpx
 import pytest
 from fastapi.testclient import TestClient
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
-from app.main import app
 from app.core.config import get_settings
+from app.main import app
 from app.rag.workflows import get_workflow_registry
-from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, ToolMessage
 from tests.test_chat_stream import parse_sse_lines
 
 
@@ -434,6 +435,7 @@ def test_e2e_multi_turn_session_persistence_http(client, monkeypatch):
     """Multi-turn session persistence verified end-to-end via HTTP requests sharing session_id."""
     from langchain_core.language_models.chat_models import SimpleChatModel
     from langgraph.checkpoint.memory import MemorySaver
+
     from app.rag.workflows.react_agent import ReActAgentWorkflow
 
     mock_client = MagicMock()

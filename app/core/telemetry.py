@@ -1,8 +1,8 @@
 import logging
-from typing import Any, Optional
 import uuid
-import structlog
+from typing import Any
 
+import structlog
 from langfuse import Langfuse
 from langfuse.langchain import CallbackHandler
 
@@ -10,7 +10,7 @@ from app.core.config import get_settings
 
 logger = logging.getLogger(__name__)
 
-_langfuse_client: Optional[Langfuse] = None
+_langfuse_client: Langfuse | None = None
 
 
 def extract_llm_token_counts(response: Any) -> dict[str, int]:
@@ -79,13 +79,13 @@ class LangfuseCallbackHandler(CallbackHandler):
     def __init__(
         self,
         *,
-        public_key: Optional[str] = None,
-        trace_context: Optional[dict] = None,
-        trace_name: Optional[str] = None,
-        session_id: Optional[str] = None,
-        user_id: Optional[str] = None,
-        tags: Optional[list[str]] = None,
-        metadata: Optional[dict[str, Any]] = None,
+        public_key: str | None = None,
+        trace_context: dict | None = None,
+        trace_name: str | None = None,
+        session_id: str | None = None,
+        user_id: str | None = None,
+        tags: list[str] | None = None,
+        metadata: dict[str, Any] | None = None,
     ):
         super().__init__(public_key=public_key, trace_context=trace_context)
         self.trace_name = trace_name
@@ -96,13 +96,13 @@ class LangfuseCallbackHandler(CallbackHandler):
 
     def on_chain_start(
         self,
-        serialized: Optional[dict[str, Any]],
+        serialized: dict[str, Any] | None,
         inputs: Any,
         *,
         run_id: Any,
-        parent_run_id: Optional[Any] = None,
-        tags: Optional[list[str]] = None,
-        metadata: Optional[dict[str, Any]] = None,
+        parent_run_id: Any | None = None,
+        tags: list[str] | None = None,
+        metadata: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> Any:
         if parent_run_id is None:
@@ -133,7 +133,7 @@ class LangfuseCallbackHandler(CallbackHandler):
         response: Any,
         *,
         run_id: Any,
-        parent_run_id: Optional[Any] = None,
+        parent_run_id: Any | None = None,
         **kwargs: Any,
     ) -> Any:
         """Inject deterministic LLM unit token costs into Langfuse generation observation before completion."""
@@ -158,7 +158,7 @@ class LangfuseCallbackHandler(CallbackHandler):
         )
 
 
-def get_langfuse_client() -> Optional[Langfuse]:
+def get_langfuse_client() -> Langfuse | None:
     global _langfuse_client
     settings = get_settings()
     if not settings.langfuse_enabled:
@@ -181,12 +181,12 @@ def get_langfuse_client() -> Optional[Langfuse]:
 def get_langfuse_callback(
     workflow_name: str,
     *,
-    session_id: Optional[str] = None,
-    user_id: Optional[str] = None,
-    tags: Optional[list[str]] = None,
-    metadata: Optional[dict[str, Any]] = None,
-    trace_id: Optional[str] = None,
-) -> Optional[CallbackHandler]:
+    session_id: str | None = None,
+    user_id: str | None = None,
+    tags: list[str] | None = None,
+    metadata: dict[str, Any] | None = None,
+    trace_id: str | None = None,
+) -> CallbackHandler | None:
     settings = get_settings()
     if not settings.langfuse_enabled:
         return None
@@ -227,7 +227,7 @@ def get_langfuse_callback(
         return None
 
 
-def extract_trace_id(handler: Optional[Any]) -> Optional[str]:
+def extract_trace_id(handler: Any | None) -> str | None:
     """Safely extract the trace ID from a callback handler across Langfuse versions."""
     if handler is None:
         return None
