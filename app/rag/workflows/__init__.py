@@ -8,7 +8,11 @@ from app.rag.workflows.registry import (
     get_workflow_registry,
     register_workflow,
 )
-from app.rag.workflows.runner import WorkflowRunner, get_workflow_runner
+from app.rag.workflows.runner import (
+    ExecutionResult,
+    WorkflowRunner,
+    get_workflow_runner,
+)
 from app.rag.workflows.self_corrective import SelfCorrectiveRagWorkflow
 
 
@@ -47,6 +51,7 @@ register_default_workflows()
 __all__ = [
     "WorkflowInfo",
     "EvalContext",
+    "ExecutionResult",
     "WorkflowDefinition",
     "WorkflowRegistry",
     "get_workflow_registry",

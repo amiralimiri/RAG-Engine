@@ -5,10 +5,10 @@ Public domain execution context on `WorkflowRunner` allowing callers to retrieve
 
 **Blocked by:** 01: Core Evaluator Seam and Lazy Judge Lifecycle
 
-**Status:** ready-for-agent
+**Status:** closed
 
-- [ ] `ExecutionResult` model (`response: ChatResponse`, `eval_context: EvalContext`) defined in `app/rag/workflows/runner.py`
-- [ ] `WorkflowRunner.execute_with_context(request: ChatRequest, ...) -> ExecutionResult` public method implemented
-- [ ] `WorkflowRunner.__init__` accepts `evaluator: Evaluator | None = None`, defaulting to `get_evaluator()`
-- [ ] `_finalize_execution` and streaming pipelines delegate evaluation to `self.evaluator.aevaluate(...)` (or `evaluate(...)`)
-- [ ] Comprehensive unit tests in `tests/rag/test_workflow_runner.py` verifying context extraction and evaluator injection with `FakeEvaluator`
+- [x] `ExecutionResult` model (`response: ChatResponse`, `eval_context: EvalContext`) defined in `app/rag/workflows/runner.py`
+- [x] `WorkflowRunner.execute_with_context(request: ChatRequest, ...) -> ExecutionResult` public method implemented
+- [x] `WorkflowRunner.__init__` accepts `evaluator: Evaluator | None = None`, defaulting to `get_evaluator()`
+- [x] `_finalize_execution` and streaming pipelines delegate evaluation to `self.evaluator.aevaluate(...)` (or `evaluate(...)`)
+- [x] Comprehensive unit tests in `tests/rag/test_workflow_runner.py` verifying context extraction and evaluator injection with `FakeEvaluator`

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -15,7 +14,7 @@ from app.rag.evaluation.evaluator import (
     get_evaluator,
     reset_evaluator,
 )
-from app.rag.evaluation.judge import JudgeModels, get_judge_models
+from app.rag.evaluation.judge import JudgeModels
 
 
 def test_evaluation_result_schema_defaults() -> None:

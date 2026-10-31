@@ -22,9 +22,11 @@ from app.core.telemetry import (
     flush_telemetry,
     get_langfuse_callback,
 )
+from app.rag.evaluation import FakeEvaluator, get_evaluator
 from app.rag.workflows.base import EvalContext, WorkflowInfo
 from app.rag.workflows.registry import WorkflowRegistry, get_workflow_registry
 from app.rag.workflows.runner import (
+    ExecutionResult,
     WorkflowRunner,
     _background_tasks,
     format_sse,
@@ -32,7 +34,6 @@ from app.rag.workflows.runner import (
     is_tool_call_chunk,
     reset_workflow_runner,
 )
-from app.services.evaluation import run_online_evaluation_task
 
 
 class MockWorkflow:
@@ -909,14 +910,14 @@ def test_default_workflow_runner_auto_wires_canonical_production_hooks():
     assert runner.callback_factory is get_langfuse_callback
     assert runner.trace_extractor is extract_trace_id
     assert runner.telemetry_flusher is flush_telemetry
-    assert runner.eval_task_fn is run_online_evaluation_task
+    assert runner.evaluator is get_evaluator()
     assert runner.registry is get_workflow_registry()
 
     default_runner = get_workflow_runner()
     assert default_runner.callback_factory is get_langfuse_callback
     assert default_runner.trace_extractor is extract_trace_id
     assert default_runner.telemetry_flusher is flush_telemetry
-    assert default_runner.eval_task_fn is run_online_evaluation_task
+    assert default_runner.evaluator is get_evaluator()
 
 
 def test_reset_workflow_runner_cleanly_resets_singleton():
@@ -1238,4 +1239,225 @@ def test_stream_rejects_extraneous_hook_kwargs_with_type_error():
     with pytest.raises(TypeError) as exc_info3:
         runner.stream(request, trace_extractor=MagicMock())  # type: ignore[call-arg]
     assert "unexpected keyword argument" in str(exc_info3.value)
+
+
+# ==============================================================================
+# 13. Execution Context & Evaluator Injection (Ticket 02)
+# ==============================================================================
+
+
+def test_execution_result_model():
+    """Verify ExecutionResult schema bundles ChatResponse and EvalContext."""
+    resp = ChatResponse(
+        workflow="mock_workflow",
+        answer="Normalized test answer",
+        source_used="vectorstore",
+        trace=["step_1"],
+        citations=[],
+    )
+    ctx = EvalContext(source_used="vectorstore", retrieved_contexts=["chunk 1", "chunk 2"])
+    result = ExecutionResult(response=resp, eval_context=ctx)
+    assert result.response is resp
+    assert result.eval_context is ctx
+    assert result.eval_context.source_used == "vectorstore"
+    assert len(result.eval_context.retrieved_contexts) == 2
+
+
+def test_execute_with_context_returns_execution_result():
+    """Verify execute_with_context returns ExecutionResult with response and eval_context."""
+    custom_registry = WorkflowRegistry()
+    mock_wf = MockWorkflow("context_wf")
+    custom_registry.register(mock_wf)
+
+    runner = WorkflowRunner(registry=custom_registry)
+    request = ChatRequest(question="Test context extraction?", workflow="context_wf", trace_id="trace-ctx-1")
+
+    result = runner.execute_with_context(request)
+    assert isinstance(result, ExecutionResult)
+    assert isinstance(result.response, ChatResponse)
+    assert isinstance(result.eval_context, EvalContext)
+    assert result.response.answer == "Mock Answer"
+    assert result.eval_context.source_used == "vectorstore"
+    assert result.eval_context.retrieved_contexts == ["chunk context 1"]
+
+
+@pytest.mark.asyncio
+async def test_aexecute_with_context_returns_execution_result():
+    """Verify aexecute_with_context returns ExecutionResult with response and eval_context."""
+    custom_registry = WorkflowRegistry()
+    mock_wf = MockWorkflow("async_context_wf")
+    mock_wf.mock_graph.ainvoke = AsyncMock(return_value={
+        "answer": "Async Context Answer",
+        "source_used": "web_search",
+        "retrieved_contexts": ["web context doc"],
+        "trace": ["step_1"],
+        "citations": [],
+    })
+    custom_registry.register(mock_wf)
+
+    runner = WorkflowRunner(registry=custom_registry)
+    request = ChatRequest(question="Async test context extraction?", workflow="async_context_wf", trace_id="trace-actx-1")
+
+    result = await runner.aexecute_with_context(request)
+    assert isinstance(result, ExecutionResult)
+    assert isinstance(result.response, ChatResponse)
+    assert isinstance(result.eval_context, EvalContext)
+    assert result.response.answer == "Async Context Answer"
+    assert result.eval_context.source_used == "web_search"
+    assert result.eval_context.retrieved_contexts == ["web context doc"]
+
+
+def test_workflow_runner_evaluator_injection_and_default():
+    """Verify WorkflowRunner defaults evaluator to get_evaluator() and accepts injected Evaluator."""
+    default_runner = WorkflowRunner()
+    assert default_runner.evaluator is get_evaluator()
+
+    fake_eval = FakeEvaluator()
+    custom_runner = WorkflowRunner(evaluator=fake_eval)
+    assert custom_runner.evaluator is fake_eval
+
+    custom_factory_runner = get_workflow_runner(evaluator=fake_eval)
+    assert custom_factory_runner.evaluator is fake_eval
+
+
+@pytest.mark.asyncio
+async def test_finalize_execution_delegates_to_evaluator_aevaluate_in_execute():
+    """Verify execute() delegates online background evaluation to injected evaluator.aevaluate()."""
+    custom_registry = WorkflowRegistry()
+    mock_wf = MockWorkflow("eval_inject_wf")
+    custom_registry.register(mock_wf)
+
+    fake_eval = FakeEvaluator()
+    runner = WorkflowRunner(registry=custom_registry, evaluator=fake_eval)
+    request = ChatRequest(question="Evaluator injection test?", workflow="eval_inject_wf", trace_id="trace-eval-inject")
+
+    response = runner.execute(request)
+    assert response.answer == "Mock Answer"
+
+    # Await background evaluation tasks spawned in loop
+    await asyncio.gather(*list(runner._background_tasks), return_exceptions=True)
+
+    assert len(fake_eval.evaluate_calls) == 1
+    call = fake_eval.evaluate_calls[0]
+    assert call["question"] == "Evaluator injection test?"
+    assert call["answer"] == "Mock Answer"
+    assert call["source_used"] == "vectorstore"
+    assert call["retrieved_contexts"] == ["chunk context 1"]
+    assert call["trace_id"] == "traceevalinject"
+
+
+@pytest.mark.asyncio
+async def test_finalize_execution_delegates_to_evaluator_in_background_tasks():
+    """Verify execute() with BackgroundTasks delegates evaluator.aevaluate to background tasks."""
+    custom_registry = WorkflowRegistry()
+    mock_wf = MockWorkflow("bg_eval_wf")
+    custom_registry.register(mock_wf)
+
+    fake_eval = FakeEvaluator()
+    runner = WorkflowRunner(registry=custom_registry, evaluator=fake_eval)
+    request = ChatRequest(question="Bg eval test?", workflow="bg_eval_wf", trace_id="trace-bg-eval")
+    bg_tasks = BackgroundTasks()
+
+    response = runner.execute(request, background_tasks=bg_tasks)
+    assert response.answer == "Mock Answer"
+
+    assert len(bg_tasks.tasks) == 1
+    task = bg_tasks.tasks[0]
+    # Execute the queued background task
+    res = task()
+    if asyncio.iscoroutine(res) or hasattr(res, "__await__"):
+        await res
+
+    assert len(fake_eval.evaluate_calls) == 1
+    call = fake_eval.evaluate_calls[0]
+    assert call["question"] == "Bg eval test?"
+    assert call["answer"] == "Mock Answer"
+    assert call["source_used"] == "vectorstore"
+    assert call["retrieved_contexts"] == ["chunk context 1"]
+    assert call["trace_id"] == "tracebgeval"
+
+
+@pytest.mark.asyncio
+async def test_streaming_delegates_to_evaluator_aevaluate():
+    """Verify stream() delegates evaluation to injected evaluator.aevaluate()."""
+    custom_registry = WorkflowRegistry()
+    mock_wf = MockWorkflow("stream_eval_inject_wf")
+
+    async def mock_events(*args, **kwargs):
+        yield {
+            "event": "on_chain_end",
+            "metadata": {"langgraph_node": "step_1"},
+            "data": {"output": {"answer": "Streaming evaluated answer", "source_used": "vectorstore"}},
+        }
+
+    mock_wf.mock_graph.astream_events = mock_events
+    custom_registry.register(mock_wf)
+
+    fake_eval = FakeEvaluator()
+    runner = WorkflowRunner(registry=custom_registry, evaluator=fake_eval)
+    request = ChatRequest(
+        question="Stream eval inject?",
+        workflow="stream_eval_inject_wf",
+        trace_id="stream-inject-trace",
+    )
+
+    frames = [frame async for frame in runner.stream(request)]
+    assert len(frames) >= 1
+
+    # Await background evaluation tasks spawned during stream
+    await asyncio.gather(*list(runner._background_tasks), return_exceptions=True)
+
+    assert len(fake_eval.evaluate_calls) == 1
+    call = fake_eval.evaluate_calls[0]
+    assert call["question"] == "Stream eval inject?"
+    assert call["answer"] == "Streaming evaluated answer"
+    assert call["source_used"] == "vectorstore"
+    assert call["trace_id"] == "streaminjecttrace"
+
+
+@pytest.mark.asyncio
+async def test_evaluator_exception_shielded_in_finalize_and_stream():
+    """Verify exceptions inside injected evaluator.aevaluate are caught, logged, and never crash execution."""
+    custom_registry = WorkflowRegistry()
+    mock_wf = MockWorkflow("shielded_eval_wf")
+    mock_wf.mock_graph.ainvoke = AsyncMock(return_value={
+        "answer": "Async shielded answer",
+        "source_used": "vectorstore",
+        "trace": [],
+        "citations": [],
+    })
+
+    async def mock_events(*args, **kwargs):
+        yield {
+            "event": "on_chain_end",
+            "metadata": {"langgraph_node": "step_1"},
+            "data": {"output": {"answer": "Stream shielded answer", "source_used": "vectorstore"}},
+        }
+
+    mock_wf.mock_graph.astream_events = mock_events
+    custom_registry.register(mock_wf)
+
+    failing_eval = FakeEvaluator()
+    failing_eval.aevaluate = AsyncMock(side_effect=RuntimeError("Evaluator microservice unreachable"))  # type: ignore[method-assign]
+
+    runner = WorkflowRunner(registry=custom_registry, evaluator=failing_eval)
+
+    # 1. Test in aexecute
+    with patch("app.rag.workflows.runner.logger.warning") as mock_warn:
+        resp = await runner.aexecute(ChatRequest(question="Shield test?", workflow="shielded_eval_wf", trace_id="trace-s1"))
+        assert resp.answer == "Async shielded answer"
+        await asyncio.gather(*list(runner._background_tasks), return_exceptions=True)
+        assert failing_eval.aevaluate.called
+        assert mock_warn.called
+
+    failing_eval.aevaluate.reset_mock()
+
+    # 2. Test in stream
+    with patch("app.rag.workflows.runner.logger.warning") as mock_warn:
+        frames = [frame async for frame in runner.stream(ChatRequest(question="Shield stream?", workflow="shielded_eval_wf", trace_id="trace-s2"))]
+        assert len(frames) >= 1
+        await asyncio.gather(*list(runner._background_tasks), return_exceptions=True)
+        assert failing_eval.aevaluate.called
+        assert mock_warn.called
+
 

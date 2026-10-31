@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import random
 import threading
@@ -14,7 +13,7 @@ from starlette.concurrency import run_in_threadpool
 from app.core.config import Settings, get_settings
 from app.core.telemetry import get_langfuse_client
 from app.rag.evaluation.base import EvaluationResult, Evaluator
-from app.rag.evaluation.judge import JudgeModels, get_judge_models
+from app.rag.evaluation.judge import get_judge_models
 
 logger = logging.getLogger(__name__)
 
