@@ -17,10 +17,10 @@ Modernize `ReActAgentWorkflow.get_compiled_graph()` to use `from langchain.agent
 
 **Blocked by:** 01: Node Constants, Source Resolution Harmonization & Query Fallback
 
-**Status:** proposed
+**Status:** completed
 
-- [ ] Import modernized to `from langchain.agents import create_agent`
-- [ ] Compiler invocation updated to `system_prompt=self.system_prompt`
-- [ ] Graph node topology verified to have `model` and `tools`
-- [ ] Zero `LangGraphDeprecatedSinceV10` deprecation warnings on compilation or execution
-- [ ] `tests/rag/test_react_agent.py` passes 100% green without deprecation warnings
+- [x] Import modernized to `from langchain.agents import create_agent`
+- [x] Compiler invocation updated to `system_prompt=self.system_prompt`
+- [x] Graph node topology verified to have `model` and `tools`
+- [x] Zero `LangGraphDeprecatedSinceV10` deprecation warnings on compilation or execution
+- [x] `tests/rag/test_react_agent.py` passes 100% green without deprecation warnings

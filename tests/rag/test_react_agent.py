@@ -249,3 +249,40 @@ def test_react_agent_harmonized_source_resolution(tools_in_messages, expected_so
     assert resp.source_used == expected_source
     assert eval_ctx.source_used == expected_eval_source
 
+
+def test_react_agent_create_agent_topology_and_no_deprecation_warnings():
+    """Verify graph node topology contains model and tools and produces zero LangGraphDeprecatedSinceV10 warnings."""
+    import warnings
+
+    wf = ReActAgentWorkflow(
+        id="topology_test_agent",
+        llm=MockChatModel(),
+        tools=[mock_dummy_tool],
+        checkpointer=MemorySaver(),
+    )
+
+    with warnings.catch_warnings(record=True) as recorded_warnings:
+        warnings.simplefilter("always")
+        graph = wf.get_compiled_graph()
+        node_names = set(graph.get_graph().nodes.keys())
+
+        # Assert topology matches create_agent structure
+        assert "model" in node_names
+        assert "tools" in node_names
+        assert "__start__" in node_names
+        assert "__end__" in node_names
+
+        # Execute single turn to verify zero warnings on invocation
+        res = graph.invoke(
+            {"messages": [HumanMessage(content="Hello")]},
+            config={"configurable": {"thread_id": "topo_test_thread"}},
+        )
+        assert len(res["messages"]) >= 2
+
+        # Assert zero LangGraphDeprecatedSinceV10 warnings
+        deprecated = [
+            w for w in recorded_warnings
+            if "LangGraphDeprecatedSinceV10" in type(w.message).__name__
+            or "create_react_agent has been moved" in str(w.message)
+        ]
+        assert len(deprecated) == 0, f"Expected zero LangGraphDeprecatedSinceV10 warnings, got: {deprecated}"

@@ -7,6 +7,7 @@ import threading
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
+from langchain.agents import create_agent
 from langchain_core.messages import (
     AIMessage,
     BaseMessage,
@@ -16,7 +17,6 @@ from langchain_core.messages import (
 )
 from langchain_core.tools import BaseTool
 from langgraph.checkpoint.memory import MemorySaver
-from langgraph.prebuilt import create_react_agent
 
 from app.rag.workflows.base import EvalContext, WorkflowInfo
 
@@ -133,11 +133,11 @@ class ReActAgentWorkflow:
                 active_checkpointer = (
                     self.checkpointer if self.checkpointer is not None else MemorySaver()
                 )
-                self._compiled_graph = create_react_agent(
+                self._compiled_graph = create_agent(
                     model=active_llm,
                     tools=active_tools,
                     checkpointer=active_checkpointer,
-                    prompt=self.system_prompt,
+                    system_prompt=self.system_prompt,
                 )
             return self._compiled_graph
 
