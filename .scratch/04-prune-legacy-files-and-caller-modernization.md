@@ -5,10 +5,10 @@ Complete codebase unification by pruning obsolete legacy evaluation files (`app/
 
 **Blocked by:** 03: Experiment Runner Migration & Metric Consolidation
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] `app/api/routes.py` (`POST /api/feedback`) invokes `get_evaluator().score_metric(...)`
-- [ ] Delete `app/services/evaluation.py` permanently
-- [ ] Delete `evaluation/judge.py` permanently
-- [ ] Modernize all tests importing from `app.services.evaluation` or `evaluation.judge` to import from `app.rag.evaluation`
-- [ ] Verify full regression test suite (`uv run pytest`) passes with 100% green tests
+- [x] `app/api/routes.py` (`POST /api/feedback`) invokes `get_evaluator().score_metric(...)`
+- [x] Delete `app/services/evaluation.py` permanently
+- [x] Delete `evaluation/judge.py` permanently
+- [x] Modernize all tests importing from `app.services.evaluation` or `evaluation.judge` to import from `app.rag.evaluation`
+- [x] Verify full regression test suite (`uv run pytest`) passes with 100% green tests

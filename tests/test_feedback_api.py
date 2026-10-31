@@ -1,17 +1,19 @@
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
 from fastapi.testclient import TestClient
 
 from app.api.routes import _submit_feedback_task
 from app.main import app
+from app.rag.evaluation import FakeEvaluator, get_evaluator, reset_evaluator
 from tests.conftest import MockWorkflowDefinition
 
 
 @pytest.fixture(autouse=True)
-def mock_online_evaluation(monkeypatch):
-    monkeypatch.setattr("app.rag.workflows.runner.run_online_evaluation_task", AsyncMock())
-    monkeypatch.setattr("app.services.evaluation.run_online_evaluation_task", AsyncMock())
+def mock_online_evaluation():
+    fake = FakeEvaluator()
+    get_evaluator(evaluator=fake)
+    return fake
 
 
 @pytest.fixture
@@ -154,12 +156,12 @@ def test_feedback_endpoint_validates_score_bounds(client):
     assert res_one.status_code == 200
 
 
-def test_feedback_task_executes_langfuse_score(monkeypatch):
+def test_feedback_task_executes_langfuse_score():
     """Invoke _submit_feedback_task directly with mock client, verify client.create_score called with exact arguments."""
     mock_client = MagicMock()
     mock_client.create_score = MagicMock()
-
-    monkeypatch.setattr("app.services.evaluation.get_langfuse_client", lambda: mock_client)
+    reset_evaluator()
+    get_evaluator(client=mock_client)
 
     _submit_feedback_task(
         trace_id="tr-456",
@@ -176,10 +178,11 @@ def test_feedback_task_executes_langfuse_score(monkeypatch):
     )
 
 
-def test_feedback_task_falls_back_to_score_method(monkeypatch):
+def test_feedback_task_falls_back_to_score_method():
     """Invoke _submit_feedback_task when client only defines score()."""
     mock_client = MagicMock(spec=["score"])
-    monkeypatch.setattr("app.services.evaluation.get_langfuse_client", lambda: mock_client)
+    reset_evaluator()
+    get_evaluator(client=mock_client)
 
     _submit_feedback_task(
         trace_id="tr-fallback",
@@ -196,12 +199,12 @@ def test_feedback_task_falls_back_to_score_method(monkeypatch):
     )
 
 
-def test_feedback_task_handles_client_exception_gracefully(monkeypatch):
+def test_feedback_task_handles_client_exception_gracefully():
     """If Langfuse client fails in the background task, the error is logged without crashing."""
     mock_client = MagicMock()
     mock_client.create_score.side_effect = RuntimeError("Langfuse API unavailable")
-
-    monkeypatch.setattr("app.services.evaluation.get_langfuse_client", lambda: mock_client)
+    reset_evaluator()
+    get_evaluator(client=mock_client)
 
     # Should not raise exception
     _submit_feedback_task(

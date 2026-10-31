@@ -30,6 +30,7 @@ from langchain_core.tools import BaseTool
 from app.main import app
 from app.rag.classifiers import FakeClassifierAdapter
 from app.rag.workflows import get_workflow_registry
+from app.rag.workflows.runner import get_workflow_runner
 from app.rag.workflows.self_corrective import SelfCorrectiveRagWorkflow
 
 # ── helpers & transports ──────────────────────────────────────────────────
@@ -184,7 +185,7 @@ def mock_telemetry_defaults(monkeypatch):
     monkeypatch.setattr("app.rag.workflows.runner.get_langfuse_callback", lambda **kwargs: mock_handler)
     monkeypatch.setattr("app.rag.workflows.runner.extract_trace_id", lambda handler: getattr(handler, "last_trace_id", "trace-default"))
     monkeypatch.setattr("app.rag.workflows.runner.flush_telemetry", lambda: None)
-    monkeypatch.setattr("app.rag.workflows.runner.run_online_evaluation_task", AsyncMock())
+    get_workflow_runner().eval_task_fn = AsyncMock()
     monkeypatch.setattr("app.services.prompts.get_langfuse_client", lambda: None)
 
 
@@ -383,7 +384,7 @@ class TestWireEventSequence:
             captured_kwargs = kwargs
             eval_task_called.set()
 
-        monkeypatch.setattr("app.rag.workflows.runner.run_online_evaluation_task", fake_eval_task)
+        get_workflow_runner().eval_task_fn = fake_eval_task
 
         async def mock_events(*args, **kwargs):
             yield {"event": "on_chain_start", "metadata": {"langgraph_node": "retrieve_kb"}, "data": {}}
@@ -998,7 +999,7 @@ class TestUnifiedBaseToolStreamingRegression:
             captured_eval = kwargs
             eval_task_called.set()
 
-        monkeypatch.setattr("app.rag.workflows.runner.run_online_evaluation_task", fake_eval)
+        get_workflow_runner().eval_task_fn = fake_eval
 
         kb_doc = Document(page_content="Official company VPN setup guide.", metadata={"source": "docs/network/vpn_setup.md"})
         kb_tool = MagicMock(spec=BaseTool)
@@ -1075,7 +1076,7 @@ class TestUnifiedBaseToolStreamingRegression:
             captured_eval = kwargs
             eval_task_called.set()
 
-        monkeypatch.setattr("app.rag.workflows.runner.run_online_evaluation_task", fake_eval)
+        get_workflow_runner().eval_task_fn = fake_eval
 
         kb_tool = MagicMock(spec=BaseTool)
         kb_tool.ainvoke = AsyncMock(return_value=("No internal KB docs found", {"documents": [], "citations": []}))

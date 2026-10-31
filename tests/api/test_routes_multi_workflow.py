@@ -20,6 +20,7 @@ from app.main import app
 from app.rag.workflows import (
     get_workflow_registry,
 )
+from app.rag.workflows.runner import get_workflow_runner
 
 
 def parse_sse_lines(lines: list[str]) -> list[dict[str, Any]]:
@@ -141,7 +142,7 @@ class TestPostChatMultiWorkflow:
         def mock_eval_task(**kwargs):
             captured_eval.update(kwargs)
 
-        monkeypatch.setattr("app.rag.workflows.runner.run_online_evaluation_task", mock_eval_task)
+        get_workflow_runner().eval_task_fn = mock_eval_task
 
         resp = client.post(
             "/api/chat",
@@ -190,7 +191,7 @@ class TestPostChatMultiWorkflow:
         }
 
         monkeypatch.setattr(workflow, "get_compiled_graph", lambda: mock_graph)
-        monkeypatch.setattr("app.rag.workflows.runner.run_online_evaluation_task", MagicMock())
+        get_workflow_runner().eval_task_fn = MagicMock()
 
         resp = client.post(
             "/api/chat",

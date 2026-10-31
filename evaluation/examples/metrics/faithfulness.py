@@ -1,7 +1,9 @@
 from deepeval.metrics import FaithfulnessMetric
 from deepeval.test_case import LLMTestCase
 
-from evaluation.judge import judge
+from app.rag.evaluation import get_judge_models
+
+judge = get_judge_models()
 
 test_case = LLMTestCase(
     input="Where do penguins live?",

@@ -27,9 +27,6 @@ from app.core.telemetry import (
 from app.rag.evaluation import Evaluator, get_evaluator
 from app.rag.workflows.base import EvalContext, WorkflowDefinition
 from app.rag.workflows.registry import WorkflowRegistry, get_workflow_registry
-from app.services.evaluation import run_online_evaluation_task
-
-_original_run_online_evaluation_task = run_online_evaluation_task
 
 logger = structlog.get_logger(__name__)
 
@@ -111,6 +108,8 @@ def is_tool_call_chunk(chunk: Any) -> bool:
 class WorkflowRunner:
     """Deep module coordinating workflow execution, token streaming, telemetry, and evaluation."""
 
+    _eval_task_fn: Callable[..., Any] | None = None
+
     def __init__(
         self,
         registry: WorkflowRegistry | None = None,
@@ -122,12 +121,52 @@ class WorkflowRunner:
         eval_task_fn: Callable[..., Any] | None = None,
     ) -> None:
         self.registry = registry if registry is not None else get_workflow_registry()
-        self.evaluator = evaluator if evaluator is not None else get_evaluator()
-        self.callback_factory = callback_factory if callback_factory is not None else get_langfuse_callback
-        self.trace_extractor = trace_extractor if trace_extractor is not None else extract_trace_id
-        self.telemetry_flusher = telemetry_flusher if telemetry_flusher is not None else flush_telemetry
-        self.eval_task_fn = eval_task_fn
+        self._evaluator = evaluator
+        self._callback_factory = callback_factory
+        self._trace_extractor = trace_extractor
+        self._telemetry_flusher = telemetry_flusher
+        self._eval_task_fn = eval_task_fn
         self._background_tasks: set[asyncio.Task[Any]] = set()
+
+    @property
+    def eval_task_fn(self) -> Callable[..., Any] | None:
+        return self._eval_task_fn if self._eval_task_fn is not None else type(self)._eval_task_fn
+
+    @eval_task_fn.setter
+    def eval_task_fn(self, val: Callable[..., Any] | None) -> None:
+        self._eval_task_fn = val
+
+    @property
+    def evaluator(self) -> Evaluator:
+        return self._evaluator or get_evaluator()
+
+    @evaluator.setter
+    def evaluator(self, val: Evaluator | None) -> None:
+        self._evaluator = val
+
+    @property
+    def callback_factory(self) -> Callable[..., Any]:
+        return self._callback_factory or get_langfuse_callback
+
+    @callback_factory.setter
+    def callback_factory(self, val: Callable[..., Any] | None) -> None:
+        self._callback_factory = val
+
+    @property
+    def trace_extractor(self) -> Callable[[Any], str | None]:
+        return self._trace_extractor or extract_trace_id
+
+    @trace_extractor.setter
+    def trace_extractor(self, val: Callable[[Any], str | None] | None) -> None:
+        self._trace_extractor = val
+
+    @property
+    def telemetry_flusher(self) -> Callable[[], None]:
+        return self._telemetry_flusher or flush_telemetry
+
+    @telemetry_flusher.setter
+    def telemetry_flusher(self, val: Callable[[], None] | None) -> None:
+        self._telemetry_flusher = val
 
     def format_sse(self, event: str, data: dict[str, Any] | BaseModel) -> str:
         """Format an event frame into SSE string protocol."""
@@ -241,19 +280,11 @@ class WorkflowRunner:
         source_used: str,
         retrieved_contexts: list[str],
     ) -> None:
-        """Shielded online evaluation execution delegating to injected evaluator or backward-compatible hooks."""
+        """Shielded online evaluation execution delegating to injected evaluator or hooks."""
         try:
             ev_task_fn = self.eval_task_fn or getattr(self, "_evaluation_task", None)
             if ev_task_fn is not None:
                 res = ev_task_fn(
-                    trace_id=trace_id,
-                    question=question,
-                    answer=answer,
-                    source_used=source_used,
-                    retrieved_contexts=retrieved_contexts,
-                )
-            elif run_online_evaluation_task is not _original_run_online_evaluation_task:
-                res = run_online_evaluation_task(
                     trace_id=trace_id,
                     question=question,
                     answer=answer,
@@ -860,6 +891,7 @@ def reset_workflow_runner() -> None:
     """Reset the global default WorkflowRunner singleton (for test isolation)."""
     global _default_runner
     _default_runner = None
+    WorkflowRunner._eval_task_fn = None
 
 
 ExecutionResult._ensure_rebuilt()

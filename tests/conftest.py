@@ -13,7 +13,7 @@ from opentelemetry.sdk.trace.export import SpanExporter, SpanExportResult
 
 import app.core.telemetry as telemetry
 from app.api.schemas import ChatRequest, ChatResponse
-from app.rag.evaluation import reset_evaluator
+from app.rag.evaluation import FakeEvaluator, get_evaluator, reset_evaluator
 from app.rag.workflows import register_default_workflows
 from app.rag.workflows.base import EvalContext, WorkflowInfo
 from app.rag.workflows.registry import WorkflowRegistry, get_workflow_registry

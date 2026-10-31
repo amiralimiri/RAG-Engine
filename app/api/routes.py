@@ -10,10 +10,10 @@ from fastapi.responses import StreamingResponse
 
 from app.api.schemas import ChatRequest, ChatResponse, FeedbackRequest, WorkflowListResponse
 from app.core.config import get_settings
+from app.rag.evaluation import get_evaluator
 from app.rag.knowledge import SUPPORTED_EXTENSIONS, get_document_indexer
 from app.rag.workflows import get_workflow_registry
 from app.rag.workflows.runner import get_workflow_runner
-from app.services.evaluation import score_trace_metric
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/api")
@@ -29,7 +29,12 @@ def capture_context(func: Callable[..., Any]) -> Callable[..., Any]:
 def _submit_feedback_task(
     trace_id: str, score: float, name: str = "user_feedback", comment: str | None = None
 ) -> None:
-    score_trace_metric(trace_id=trace_id, metric_name=name, score=score, comment=comment)
+    get_evaluator().score_metric(
+        trace_id=trace_id,
+        metric_name=name,
+        score=score,
+        comment=comment,
+    )
 
 @router.get("/health")
 def health():

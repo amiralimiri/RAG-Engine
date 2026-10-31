@@ -12,6 +12,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
+from app.rag.workflows.runner import get_workflow_runner
 
 
 @pytest.fixture
@@ -219,10 +220,7 @@ def test_api_chat_contract_success(client, monkeypatch, register_mock_workflow):
         "app.rag.workflows.runner.extract_trace_id",
         lambda handler: getattr(handler, "last_trace_id", None),
     )
-    monkeypatch.setattr(
-        "app.rag.workflows.runner.run_online_evaluation_task",
-        MagicMock(),
-    )
+    get_workflow_runner().eval_task_fn = MagicMock()
 
     register_mock_workflow(
         "fix_single_jev",

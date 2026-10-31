@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
 import logging
 import random
 import threading
@@ -12,6 +14,7 @@ from starlette.concurrency import run_in_threadpool
 
 from app.core.config import Settings, get_settings
 from app.core.telemetry import get_langfuse_client
+import app.core.telemetry as telemetry
 from app.rag.evaluation.base import EvaluationResult, Evaluator
 from app.rag.evaluation.judge import get_judge_models
 
@@ -35,7 +38,7 @@ class EvaluationEngine:
     def client(self) -> Any:
         if self._client is not None:
             return self._client
-        return get_langfuse_client()
+        return telemetry.get_langfuse_client()
 
     def score_metric(
         self,
@@ -111,35 +114,36 @@ class EvaluationEngine:
         details: dict[str, Any] = {}
         contexts = retrieved_contexts or []
 
-        # 1. Faithfulness Metric (only if retrieved contexts exist and source is not direct)
-        faith_val: float | None = None
-        if "faithfulness" in self.settings.eval_metrics:
-            if source_used != "direct" and contexts:
+        should_run_faith = (
+            "faithfulness" in self.settings.eval_metrics
+            and source_used != "direct"
+            and bool(contexts)
+        )
+        should_run_rel = "answer_relevancy" in self.settings.eval_metrics
+
+        def _calc_faith() -> tuple[float | None, str | None]:
+            try:
+                tc = LLMTestCase(input=question, actual_output=answer, retrieval_context=contexts)
+                fm = FaithfulnessMetric(threshold=0.5, model=judge_llm, async_mode=False)
                 try:
-                    tc = LLMTestCase(input=question, actual_output=answer, retrieval_context=contexts)
-                    fm = FaithfulnessMetric(threshold=0.5, model=judge_llm, async_mode=False)
-                    try:
-                        fm.measure(tc, _show_indicator=False)
-                    except TypeError:
-                        fm.measure(tc)
-                    faith_val = max(0.0, min(1.0, float(fm.score)))
-                    scores["faithfulness"] = faith_val
-                    reason = getattr(fm, "reason", None) or "Evaluated via DeepEval LocalModel judge"
-                    details["faithfulness_reason"] = reason
+                    fm.measure(tc, _show_indicator=False)
+                except TypeError:
+                    fm.measure(tc)
+                val = max(0.0, min(1.0, float(fm.score)))
+                reason = getattr(fm, "reason", None) or "Evaluated via DeepEval LocalModel judge"
+                if trace_id:
+                    self.score_metric(
+                        trace_id=trace_id,
+                        metric_name="faithfulness",
+                        score=val,
+                        comment=reason,
+                    )
+                return val, reason
+            except Exception as exc:
+                logger.warning("Faithfulness calculation failed for trace %s: %s", trace_id, exc)
+                return None, None
 
-                    if trace_id:
-                        self.score_metric(
-                            trace_id=trace_id,
-                            metric_name="faithfulness",
-                            score=faith_val,
-                            comment=reason,
-                        )
-                except Exception as exc:
-                    logger.warning("Faithfulness calculation failed for trace %s: %s", trace_id, exc)
-
-        # 2. Answer Relevancy Metric
-        rel_val: float | None = None
-        if "answer_relevancy" in self.settings.eval_metrics:
+        def _calc_rel() -> tuple[float | None, str | None]:
             try:
                 tc = LLMTestCase(input=question, actual_output=answer)
                 arm = AnswerRelevancyMetric(threshold=0.5, model=judge_llm, async_mode=False)
@@ -147,20 +151,48 @@ class EvaluationEngine:
                     arm.measure(tc, _show_indicator=False)
                 except TypeError:
                     arm.measure(tc)
-                rel_val = max(0.0, min(1.0, float(arm.score)))
-                scores["answer_relevancy"] = rel_val
+                val = max(0.0, min(1.0, float(arm.score)))
                 reason = getattr(arm, "reason", None) or "Evaluated via DeepEval LocalModel judge"
-                details["answer_relevancy_reason"] = reason
-
                 if trace_id:
                     self.score_metric(
                         trace_id=trace_id,
                         metric_name="answer_relevancy",
-                        score=rel_val,
+                        score=val,
                         comment=reason,
                     )
+                return val, reason
             except Exception as exc:
                 logger.warning("Answer relevancy calculation failed for trace %s: %s", trace_id, exc)
+                return None, None
+
+        faith_val: float | None = None
+        rel_val: float | None = None
+
+        if should_run_faith and should_run_rel:
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                f_future = executor.submit(_calc_faith)
+                r_future = executor.submit(_calc_rel)
+                faith_val, faith_reason = f_future.result()
+                rel_val, rel_reason = r_future.result()
+        elif should_run_faith:
+            faith_val, faith_reason = _calc_faith()
+            rel_reason = None
+        elif should_run_rel:
+            rel_val, rel_reason = _calc_rel()
+            faith_reason = None
+        else:
+            faith_reason = None
+            rel_reason = None
+
+        if faith_val is not None:
+            scores["faithfulness"] = faith_val
+        if faith_reason:
+            details["faithfulness_reason"] = faith_reason
+
+        if rel_val is not None:
+            scores["answer_relevancy"] = rel_val
+        if rel_reason:
+            details["answer_relevancy_reason"] = rel_reason
 
         return EvaluationResult(
             faithfulness=faith_val,
@@ -194,8 +226,10 @@ class EvaluationEngine:
         retrieved_contexts: list[str],
         trace_id: str | None = None,
     ) -> EvaluationResult:
-        """Asynchronously execute metric calculation using threadpool offloading."""
-        return await run_in_threadpool(
+        """Asynchronously execute metric calculation using threadpool offloading and timeout shielding."""
+        timeout = getattr(self.settings, "eval_timeout_seconds", 0.0)
+        timeout_val = float(timeout) if timeout and float(timeout) > 0 else None
+        coro = run_in_threadpool(
             self._compute_metrics,
             question=question,
             answer=answer,
@@ -203,6 +237,24 @@ class EvaluationEngine:
             retrieved_contexts=retrieved_contexts,
             trace_id=trace_id,
         )
+        try:
+            if timeout_val:
+                return await asyncio.wait_for(coro, timeout=timeout_val)
+            return await coro
+        except TimeoutError:
+            logger.warning(
+                "Online evaluation timed out after %.1fs for trace %s",
+                timeout_val,
+                trace_id,
+            )
+            return EvaluationResult()
+        except Exception as exc:
+            logger.warning(
+                "Unexpected error during online evaluation for trace %s: %s",
+                trace_id,
+                exc,
+            )
+            return EvaluationResult()
 
 
 class FakeEvaluator:

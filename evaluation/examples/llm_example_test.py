@@ -3,7 +3,9 @@ from deepeval import assert_test
 from deepeval.metrics import GEval
 from deepeval.test_case import LLMTestCase, SingleTurnParams
 
-from evaluation.judge import judge
+from app.rag.evaluation import get_judge_models
+
+judge = get_judge_models()
 
 
 def test_correctness():

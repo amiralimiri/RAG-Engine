@@ -23,14 +23,15 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
+from app.rag.workflows.runner import get_workflow_runner
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 
 @pytest.fixture(autouse=True)
-def mock_online_evaluation_defaults(monkeypatch):
+def mock_online_evaluation_defaults():
     """Prevent unawaited background evaluation tasks during frontend streaming tests."""
-    monkeypatch.setattr("app.rag.workflows.runner.run_online_evaluation_task", AsyncMock())
+    get_workflow_runner().eval_task_fn = AsyncMock()
 
 
 @pytest.fixture
