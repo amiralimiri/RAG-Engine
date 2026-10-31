@@ -39,6 +39,11 @@ DEFAULT_REACT_PROMPT: str = (
 )
 
 
+def _is_tool_message(m: Any) -> bool:
+    """Returns True if message is a ToolMessage instance or duck-typed tool message."""
+    return isinstance(m, ToolMessage) or getattr(m, "type", "") == "tool"
+
+
 def _extract_tools_called(messages: list[Any]) -> list[str]:
     """Extracts unique tool names invoked across tool calls and tool output messages."""
     tools_called: list[str] = []
@@ -49,28 +54,26 @@ def _extract_tools_called(messages: list[Any]) -> list[str]:
                 tc_name = tc.get("name") if isinstance(tc, dict) else getattr(tc, "name", "")
                 if tc_name and tc_name not in tools_called:
                     tools_called.append(tc_name)
-        if isinstance(m, ToolMessage) or getattr(m, "type", "") == "tool":
+        if _is_tool_message(m):
             if tool_name and tool_name not in tools_called:
                 tools_called.append(tool_name)
     return tools_called
 
 
 def _resolve_source_used(
-    messages: list[Any],
-    tools_called: list[str] | None = None,
+    tools_called: Sequence[str],
     explicit_source: str | None = None,
 ) -> str:
-    """Consistently resolves evidence source used across chat responses and evaluation contexts."""
+    """Consistently resolves evidence source used from executed tools and explicit source."""
     if explicit_source in ("error", "error_fallback"):
         return "error"
-    resolved_tools = tools_called if tools_called is not None else _extract_tools_called(messages)
-    if "knowledge_base_search" in resolved_tools and "web_search" in resolved_tools:
+    if "knowledge_base_search" in tools_called and "web_search" in tools_called:
         return "react_agent"
-    if "knowledge_base_search" in resolved_tools:
+    if "knowledge_base_search" in tools_called:
         return "vectorstore"
-    if "web_search" in resolved_tools:
+    if "web_search" in tools_called:
         return "web_search"
-    if resolved_tools:
+    if tools_called:
         return "react_agent"
     return explicit_source or "direct"
 
@@ -195,7 +198,7 @@ class ReActAgentWorkflow:
         tools_called = _extract_tools_called(messages)
 
         for m in messages:
-            if isinstance(m, ToolMessage) or getattr(m, "type", "") == "tool":
+            if _is_tool_message(m):
                 tool_name = getattr(m, "name", None)
                 content_str = str(m.content)
                 if content_str not in retrieved_contexts:
@@ -224,7 +227,6 @@ class ReActAgentWorkflow:
                             citations.append({"title": title or url, "url": url, "type": "web"})
 
         source_used = _resolve_source_used(
-            messages,
             tools_called=tools_called,
             explicit_source=final_state.get("source_used"),
         )
@@ -259,9 +261,10 @@ class ReActAgentWorkflow:
         retrieved: list[str] = list(final_state.get("retrieved_contexts", []))
         if not retrieved:
             for m in messages:
-                if isinstance(m, ToolMessage) or getattr(m, "type", "") == "tool":
+                if _is_tool_message(m):
                     retrieved.append(str(m.content))
-        source = _resolve_source_used(messages, explicit_source=final_state.get("source_used"))
+        tools_called = _extract_tools_called(messages)
+        source = _resolve_source_used(tools_called=tools_called, explicit_source=final_state.get("source_used"))
         if source == "error":
             source = "direct"
         return EvalContext(source_used=source, retrieved_contexts=retrieved)
