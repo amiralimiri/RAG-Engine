@@ -132,7 +132,9 @@ def test_seed_golden_dataset_degrades_gracefully_when_offline():
 
 def test_run_benchmark_workflow_execution_and_metrics():
     from app.api.schemas import ChatResponse
+    from app.rag.evaluation import FakeEvaluator
     from app.rag.workflows.base import EvalContext
+    from app.rag.workflows.runner import ExecutionResult
     from evaluation.run_experiment import run_workflow_benchmark
 
     mock_client = MagicMock()
@@ -152,50 +154,49 @@ def test_run_benchmark_workflow_execution_and_metrics():
         source_used="vectorstore",
         trace_id="tr-test-123",
     )
-    final_state = {
-        "answer": "Install Pulse Secure from Self Service portal.",
-        "source_used": "vectorstore",
-        "retrieved_contexts": ["Pulse Secure installation guide."],
-    }
-    mock_runner._execute_with_state.return_value = (mock_chat_response, final_state)
-    mock_wf_def.extract_eval_context.return_value = EvalContext(
+    mock_eval_ctx = EvalContext(
         source_used="vectorstore",
         retrieved_contexts=["Pulse Secure installation guide."],
     )
+    mock_runner.execute_with_context.return_value = ExecutionResult(
+        response=mock_chat_response,
+        eval_context=mock_eval_ctx,
+    )
 
-    with patch("evaluation.run_experiment.FaithfulnessMetric") as mock_fm_cls, \
-         patch("evaluation.run_experiment.AnswerRelevancyMetric") as mock_arm_cls:
-        
-        mock_fm = MagicMock()
-        mock_fm.score = 0.95
-        mock_fm_cls.return_value = mock_fm
+    fake_evaluator = FakeEvaluator(faithfulness=0.95, answer_relevancy=0.88)
 
-        mock_arm = MagicMock()
-        mock_arm.score = 0.88
-        mock_arm_cls.return_value = mock_arm
+    summary = run_workflow_benchmark(
+        workflow_name="fix_single_llm",
+        dataset=mock_dataset,
+        client=mock_client,
+        runner=mock_runner,
+        evaluator=fake_evaluator,
+    )
 
-        summary = run_workflow_benchmark(
-            workflow_name="fix_single_llm",
-            dataset=mock_dataset,
-            client=mock_client,
-            runner=mock_runner,
-        )
+    assert summary["Workflow"] == "fix_single_llm"
+    assert summary["Items Evaluated"] == 1
+    assert summary["Avg Faithfulness"] == 0.95
+    assert summary["Avg Relevancy"] == 0.88
+    assert summary["Avg Latency (s)"] >= 0.0
 
-        assert summary["Workflow"] == "fix_single_llm"
-        assert summary["Items Evaluated"] == 1
-        assert summary["Avg Faithfulness"] == 0.95
-        assert summary["Avg Relevancy"] == 0.88
-        assert summary["Avg Latency (s)"] >= 0.0
+    mock_runner.execute_with_context.assert_called_once()
+    assert len(fake_evaluator.evaluate_calls) == 1
+    eval_call = fake_evaluator.evaluate_calls[0]
+    assert eval_call["question"] == "How do I configure Pulse Secure VPN on my corporate MacBook?"
+    assert eval_call["answer"] == "Install Pulse Secure from Self Service portal."
+    assert eval_call["source_used"] == "vectorstore"
+    assert eval_call["retrieved_contexts"] == ["Pulse Secure installation guide."]
+    assert eval_call["trace_id"] == "tr-test-123"
 
-        mock_fm.measure.assert_called_once()
-        mock_arm.measure.assert_called_once()
-        assert mock_client.create_score.call_count == 2
-        mock_item.link.assert_called_once()
+    assert mock_client.create_score.call_count == 2
+    mock_item.link.assert_called_once()
 
 
 def test_run_benchmark_skips_faithfulness_for_direct_source():
     from app.api.schemas import ChatResponse
+    from app.rag.evaluation import FakeEvaluator
     from app.rag.workflows.base import EvalContext
+    from app.rag.workflows.runner import ExecutionResult
     from evaluation.run_experiment import run_workflow_benchmark
 
     mock_client = MagicMock()
@@ -215,34 +216,30 @@ def test_run_benchmark_skips_faithfulness_for_direct_source():
         source_used="direct",
         trace_id="tr-direct-001",
     )
-    final_state = {
-        "answer": "Hello, how can I assist you?",
-        "source_used": "direct",
-    }
-    mock_runner._execute_with_state.return_value = (mock_chat_response, final_state)
-    mock_wf_def.extract_eval_context.return_value = EvalContext(
+    mock_eval_ctx = EvalContext(
         source_used="direct",
         retrieved_contexts=[],
     )
+    mock_runner.execute_with_context.return_value = ExecutionResult(
+        response=mock_chat_response,
+        eval_context=mock_eval_ctx,
+    )
 
-    with patch("evaluation.run_experiment.FaithfulnessMetric") as mock_fm_cls, \
-         patch("evaluation.run_experiment.AnswerRelevancyMetric") as mock_arm_cls:
+    fake_evaluator = FakeEvaluator(faithfulness=None, answer_relevancy=0.92)
 
-        mock_arm = MagicMock()
-        mock_arm.score = 0.92
-        mock_arm_cls.return_value = mock_arm
+    summary = run_workflow_benchmark(
+        workflow_name="fix_single_llm",
+        dataset=mock_dataset,
+        client=mock_client,
+        runner=mock_runner,
+        evaluator=fake_evaluator,
+    )
 
-        summary = run_workflow_benchmark(
-            workflow_name="fix_single_llm",
-            dataset=mock_dataset,
-            client=mock_client,
-            runner=mock_runner,
-        )
-
-        mock_fm_cls.assert_not_called()
-        mock_arm.measure.assert_called_once()
-        assert summary["Avg Faithfulness"] == 0.0
-        assert summary["Avg Relevancy"] == 0.92
+    assert summary["Avg Faithfulness"] == 0.0
+    assert summary["Avg Relevancy"] == 0.92
+    assert len(fake_evaluator.evaluate_calls) == 1
+    assert fake_evaluator.evaluate_calls[0]["source_used"] == "direct"
+    assert fake_evaluator.evaluate_calls[0]["retrieved_contexts"] == []
 
 
 def test_run_benchmark_workflow_not_registered_raises_value_error():
@@ -261,7 +258,9 @@ def test_run_benchmark_workflow_not_registered_raises_value_error():
 
 def test_run_benchmark_workflow_execution_via_runner():
     from app.api.schemas import ChatResponse
+    from app.rag.evaluation import FakeEvaluator
     from app.rag.workflows.base import EvalContext
+    from app.rag.workflows.runner import ExecutionResult
     from evaluation.run_experiment import run_workflow_benchmark
 
     mock_client = MagicMock()
@@ -281,40 +280,34 @@ def test_run_benchmark_workflow_execution_via_runner():
         source_used="vectorstore",
         trace_id="tr-runner-123",
     )
-    final_state = {"answer": "Install VPN client.", "source_used": "vectorstore"}
-    mock_runner._execute_with_state.return_value = (mock_chat_response, final_state)
-    mock_wf_def.extract_eval_context.return_value = EvalContext(
+    mock_eval_ctx = EvalContext(
         source_used="vectorstore",
         retrieved_contexts=["VPN setup guide"],
     )
+    mock_runner.execute_with_context.return_value = ExecutionResult(
+        response=mock_chat_response,
+        eval_context=mock_eval_ctx,
+    )
 
-    with patch("evaluation.run_experiment.FaithfulnessMetric") as mock_fm_cls, \
-         patch("evaluation.run_experiment.AnswerRelevancyMetric") as mock_arm_cls:
+    fake_evaluator = FakeEvaluator(faithfulness=0.98, answer_relevancy=0.94)
+    mock_runner.evaluator = fake_evaluator
 
-        mock_fm = MagicMock()
-        mock_fm.score = 0.98
-        mock_fm_cls.return_value = mock_fm
+    summary = run_workflow_benchmark(
+        workflow_name="fix_single_llm",
+        dataset=mock_dataset,
+        client=mock_client,
+        runner=mock_runner,
+    )
 
-        mock_arm = MagicMock()
-        mock_arm.score = 0.94
-        mock_arm_cls.return_value = mock_arm
+    assert summary["Workflow"] == "fix_single_llm"
+    assert summary["Items Evaluated"] == 1
+    assert summary["Avg Faithfulness"] == 0.98
+    assert summary["Avg Relevancy"] == 0.94
+    assert summary["Avg Latency (s)"] >= 0.0
 
-        summary = run_workflow_benchmark(
-            workflow_name="fix_single_llm",
-            dataset=mock_dataset,
-            client=mock_client,
-            runner=mock_runner,
-        )
-
-        assert summary["Workflow"] == "fix_single_llm"
-        assert summary["Items Evaluated"] == 1
-        assert summary["Avg Faithfulness"] == 0.98
-        assert summary["Avg Relevancy"] == 0.94
-        assert summary["Avg Latency (s)"] >= 0.0
-
-        mock_runner.registry.get.assert_called_once_with("fix_single_llm")
-        mock_runner._execute_with_state.assert_called_once()
-        mock_wf_def.extract_eval_context.assert_called_once_with(final_state)
+    mock_runner.registry.get.assert_called_once_with("fix_single_llm")
+    mock_runner.execute_with_context.assert_called_once()
+    assert len(fake_evaluator.evaluate_calls) == 1
 
 
 def test_format_summary_table():
@@ -357,6 +350,7 @@ def test_arg_parser_configuration():
 
 
 def test_main_cli_execution_with_fallback(capsys, register_mock_workflow):
+    from app.rag.evaluation import FakeEvaluator, get_evaluator
     from evaluation.run_experiment import main
 
     register_mock_workflow(
@@ -366,20 +360,13 @@ def test_main_cli_execution_with_fallback(capsys, register_mock_workflow):
         retrieved_contexts=["Test context"],
     )
 
+    fake_evaluator = FakeEvaluator(faithfulness=0.95, answer_relevancy=0.90)
+    get_evaluator(evaluator=fake_evaluator)
+
     with patch("evaluation.run_experiment.get_langfuse_client", return_value=None), \
          patch("evaluation.run_experiment.load_gold_benchmarks", return_value=[
              {"id": "tc-01-greeting", "input": "Hello", "expected_output": "Hi", "expected_route": "direct", "expected_source": "direct", "category": "direct_conversation"}
-         ]), \
-         patch("evaluation.run_experiment.FaithfulnessMetric") as mock_fm_cls, \
-         patch("evaluation.run_experiment.AnswerRelevancyMetric") as mock_arm_cls:
-
-        mock_fm = MagicMock()
-        mock_fm.score = 0.95
-        mock_fm_cls.return_value = mock_fm
-
-        mock_arm = MagicMock()
-        mock_arm.score = 0.90
-        mock_arm_cls.return_value = mock_arm
+         ]):
 
         results = main(["--workflows", "fix_single_llm"])
         assert len(results) == 1

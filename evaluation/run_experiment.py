@@ -16,15 +16,12 @@ project_root = Path(__file__).resolve().parent.parent
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
-from deepeval.metrics import AnswerRelevancyMetric, FaithfulnessMetric
-from deepeval.test_case import LLMTestCase
-
 from app.api.schemas import ChatRequest
 from app.core.config import get_settings
 from app.core.telemetry import get_langfuse_client
+from app.rag.evaluation import Evaluator, get_evaluator
 from app.rag.workflows.registry import get_workflow_registry
 from app.rag.workflows.runner import WorkflowRunner, get_workflow_runner
-from evaluation.judge import judge
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("experiment_runner")
@@ -101,6 +98,7 @@ def run_workflow_benchmark(
     client: Any = None,
     run_timestamp: int | None = None,
     runner: WorkflowRunner | None = None,
+    evaluator: Evaluator | None = None,
 ) -> dict[str, Any]:
     """Runs a single workflow against all benchmark items in the dataset."""
     ts = run_timestamp or int(time.time())
@@ -108,6 +106,11 @@ def run_workflow_benchmark(
     logger.info("=== Running Experiment for Workflow: %s (%s) ===", workflow_name, run_name)
 
     active_runner = runner or get_workflow_runner()
+    active_evaluator = (
+        evaluator
+        or getattr(active_runner, "evaluator", None)
+        or get_evaluator(client=client)
+    )
     try:
         wf_def = active_runner.registry.get(workflow_name)
     except KeyError:
@@ -131,9 +134,10 @@ def run_workflow_benchmark(
 
         start_t = time.perf_counter()
         req = ChatRequest(question=question, workflow=workflow_name)
-        chat_resp, final_state = active_runner._execute_with_state(req)
+        exec_result = active_runner.execute_with_context(req)
         latency = time.perf_counter() - start_t
-        eval_ctx = wf_def.extract_eval_context(final_state) if wf_def is not None else None
+        chat_resp = exec_result.response
+        eval_ctx = exec_result.eval_context
         answer = chat_resp.answer or ""
         source_used = (eval_ctx.source_used if eval_ctx else None) or chat_resp.source_used or ""
         contexts = (eval_ctx.retrieved_contexts if eval_ctx else None) or []
@@ -141,35 +145,21 @@ def run_workflow_benchmark(
 
         total_latencies.append(latency)
 
-        # Faithfulness metric (only if retrieved contexts exist and source is not direct)
-        faith_val = None
-        if source_used != "direct" and contexts and answer:
-            try:
-                tc = LLMTestCase(input=question, actual_output=answer, retrieval_context=contexts)
-                fm = FaithfulnessMetric(threshold=0.5, model=judge.llm, async_mode=False)
-                try:
-                    fm.measure(tc, _show_indicator=False)
-                except TypeError:
-                    fm.measure(tc)
-                faith_val = float(fm.score)
-                faithfulness_scores.append(faith_val)
-            except Exception as exc:
-                logger.warning("Faithfulness calculation error for question '%s': %s", question[:30], exc)
+        eval_res = active_evaluator.evaluate(
+            question=question,
+            answer=answer,
+            source_used=source_used,
+            retrieved_contexts=contexts,
+            trace_id=trace_id,
+        )
 
-        # Answer relevancy metric
-        rel_val = None
-        if answer:
-            try:
-                tc = LLMTestCase(input=question, actual_output=answer)
-                arm = AnswerRelevancyMetric(threshold=0.5, model=judge.llm, async_mode=False)
-                try:
-                    arm.measure(tc, _show_indicator=False)
-                except TypeError:
-                    arm.measure(tc)
-                rel_val = float(arm.score)
-                relevancy_scores.append(rel_val)
-            except Exception as exc:
-                logger.warning("Answer relevancy calculation error for question '%s': %s", question[:30], exc)
+        faith_val = eval_res.faithfulness
+        if faith_val is not None:
+            faithfulness_scores.append(faith_val)
+
+        rel_val = eval_res.answer_relevancy
+        if rel_val is not None:
+            relevancy_scores.append(rel_val)
 
         # Submit evaluation scores to Langfuse trace if available
         if client and trace_id:
@@ -242,7 +232,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: list[str] | None = None) -> list[dict[str, Any]]:
+def main(
+    argv: list[str] | None = None,
+    runner: WorkflowRunner | None = None,
+    evaluator: Evaluator | None = None,
+) -> list[dict[str, Any]]:
     """CLI entry point for running Langfuse benchmark experiments."""
     parser = build_arg_parser()
     args = parser.parse_args(argv)
@@ -260,7 +254,8 @@ def main(argv: list[str] | None = None) -> list[dict[str, Any]]:
         )
         dataset = load_gold_benchmarks(args.benchmark_file)
 
-    available_ids = set(get_workflow_registry().list_ids())
+    active_runner = runner or get_workflow_runner()
+    available_ids = set(active_runner.registry.list_ids())
     target_workflows = [w.strip() for w in args.workflows.split(",") if w.strip() in available_ids]
     if not target_workflows:
         logger.error("No valid workflows selected. Available: %s", sorted(available_ids))
@@ -275,6 +270,8 @@ def main(argv: list[str] | None = None) -> list[dict[str, Any]]:
             dataset=dataset,
             client=client,
             run_timestamp=run_timestamp,
+            runner=active_runner,
+            evaluator=evaluator,
         )
         results_table.append(summary)
 
