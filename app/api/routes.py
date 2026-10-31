@@ -9,11 +9,10 @@ import structlog
 
 from app.api.schemas import ChatRequest, ChatResponse, FeedbackRequest, WorkflowListResponse
 from app.core.config import get_settings
-from app.core.telemetry import extract_trace_id, flush_telemetry, get_langfuse_callback, get_langfuse_client
 from app.rag.knowledge import SUPPORTED_EXTENSIONS, get_document_indexer
 from app.rag.workflows import get_workflow_registry
-from app.rag.workflows.runner import _background_tasks, get_workflow_runner
-from app.services.evaluation import run_online_evaluation_task, score_trace_metric
+from app.rag.workflows.runner import get_workflow_runner
+from app.services.evaluation import score_trace_metric
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/api")
@@ -24,11 +23,6 @@ def capture_context(func: Callable[..., Any]) -> Callable[..., Any]:
     """Capture current contextvars snapshot and return a callable that runs inside it."""
     ctx = contextvars.copy_context()
     return lambda *args, **kwargs: ctx.run(func, *args, **kwargs)
-
-
-def run_with_context(func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
-    """Execute a callable inside a snapshot of current contextvars."""
-    return contextvars.copy_context().run(func, *args, **kwargs)
 
 
 def _submit_feedback_task(

@@ -130,11 +130,11 @@ class WorkflowRunner:
         self,
         request: ChatRequest,
         streaming: bool = False,
-        callback: Any = None,
+        callback: Any | None = None,
         metadata: dict[str, Any] | None = None,
         config: dict[str, Any] | None = None,
         **kwargs: Any,
-    ) -> tuple[WorkflowDefinition, str, Any, dict[str, Any], dict[str, Any]]:
+    ) -> tuple[WorkflowDefinition, str | None, Any, dict[str, Any], dict[str, Any]]:
         """Resolve workflow definition, initialize telemetry contextvars, and prepare initial state."""
         wf_def = self._resolve_workflow(request.workflow)
 
@@ -215,7 +215,7 @@ class WorkflowRunner:
         wf_def: WorkflowDefinition,
         request: ChatRequest,
         final_state: dict[str, Any],
-        trace_id: str,
+        trace_id: str | None,
         handler: Any,
         background_tasks: BackgroundTasks | None = None,
     ) -> ChatResponse:
@@ -325,7 +325,7 @@ class WorkflowRunner:
         request: ChatRequest,
         background_tasks: BackgroundTasks | None = None,
         *,
-        callback: Any = None,
+        callback: Any | None = None,
         metadata: dict[str, Any] | None = None,
         config: dict[str, Any] | None = None,
         **kwargs: Any,
@@ -373,12 +373,19 @@ class WorkflowRunner:
         self,
         request: ChatRequest,
         background_tasks: BackgroundTasks | None = None,
+        *,
+        callback: Any | None = None,
+        metadata: dict[str, Any] | None = None,
+        config: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> ChatResponse:
         """Synchronously execute a registered workflow and return ChatResponse."""
         response, _ = self._execute_with_state(
             request,
             background_tasks=background_tasks,
+            callback=callback,
+            metadata=metadata,
+            config=config,
             **kwargs,
         )
         return response
@@ -388,7 +395,7 @@ class WorkflowRunner:
         request: ChatRequest,
         background_tasks: BackgroundTasks | None = None,
         *,
-        callback: Any = None,
+        callback: Any | None = None,
         metadata: dict[str, Any] | None = None,
         config: dict[str, Any] | None = None,
         **kwargs: Any,
@@ -440,12 +447,19 @@ class WorkflowRunner:
         self,
         request: ChatRequest,
         background_tasks: BackgroundTasks | None = None,
+        *,
+        callback: Any | None = None,
+        metadata: dict[str, Any] | None = None,
+        config: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> ChatResponse:
         """Asynchronously execute a registered workflow and return ChatResponse."""
         response, _ = await self._aexecute_with_state(
             request,
             background_tasks=background_tasks,
+            callback=callback,
+            metadata=metadata,
+            config=config,
             **kwargs,
         )
         return response

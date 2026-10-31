@@ -8,18 +8,20 @@ Guidelines and lessons learned from ADR-0010 (Workflow Runner Execution Pipeline
 
 1. **Direction of Dependencies (No Reverse Coupling)**:
    - Domain modules (`app/rag/**`) must **never** import from, inspect, or couple to the transport/API layer (`app/api/**`).
-   - If tests or transport handlers need custom telemetry, callback hooks, or background evaluation tasks, inject them via constructor parameters or method arguments on `WorkflowRunner` (e.g. `callback_factory`, `trace_extractor`, `telemetry_flusher`, `eval_task_fn`), falling back to core domain singletons.
+   - If tests or transport handlers need custom telemetry, callback hooks, or background evaluation tasks, inject them via constructor parameters on `WorkflowRunner` or factory overrides in `get_workflow_runner(...)` (e.g. `callback_factory`, `trace_extractor`, `telemetry_flusher`, `eval_task_fn`), defaulting to canonical domain adapters.
 
 2. **PEP 484 Standards Compliance**:
    - Always type-hint optional parameters with explicit union syntax: `config: RunnableConfig | None = None`.
    - Never write `config: RunnableConfig = None` (prohibited under PEP 484).
 
-3. **No Dynamic Pydantic Model Mutation**:
+3. **No Dynamic Pydantic Model Mutation & State Internalization**:
    - Never dynamically attach private attributes to Pydantic models (e.g. `chat_response._raw_state = final_state`).
-   - If callers require internal execution state (such as legacy shims or evaluation bridges), provide explicit typed dual-return methods:
+   - The public execution seam (`execute`, `aexecute`, `stream`) returns standardized domain models (`ChatResponse` or SSE string stream).
+   - If offline evaluation harnesses or diagnostic test suites require intermediate graph state, use the internalized private dual-return methods:
      ```python
-     response, final_state = runner.execute_with_state(request)
+     response, final_state = runner._execute_with_state(request)
      ```
+   - Public callers and transport routes must strictly consume `execute()` or `stream()`.
 
 4. **Preserve Child Tool Callbacks**:
    - Never strip callbacks (`child_config["callbacks"] = []`) inside tool wrappers to suppress duplicate firing.

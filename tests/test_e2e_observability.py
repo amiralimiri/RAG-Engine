@@ -44,7 +44,6 @@ def test_e2e_flow_with_langfuse_mocked(client, monkeypatch, register_mock_workfl
     mock_eval = AsyncMock()
 
     monkeypatch.setattr("app.core.telemetry.get_langfuse_client", lambda: mock_client)
-    monkeypatch.setattr("app.api.routes.get_langfuse_client", lambda: mock_client)
     monkeypatch.setattr("app.rag.workflows.runner.get_langfuse_callback", lambda **kwargs: mock_handler)
     monkeypatch.setattr("app.rag.workflows.runner.extract_trace_id", lambda handler: getattr(handler, "last_trace_id", None))
     monkeypatch.setattr("app.rag.workflows.runner.run_online_evaluation_task", mock_eval)
@@ -159,7 +158,6 @@ def test_e2e_flow_with_fix_single_jev_mocked(client, monkeypatch, register_mock_
     mock_eval = AsyncMock()
 
     monkeypatch.setattr("app.core.telemetry.get_langfuse_client", lambda: mock_client)
-    monkeypatch.setattr("app.api.routes.get_langfuse_client", lambda: mock_client)
     monkeypatch.setattr("app.rag.workflows.runner.get_langfuse_callback", lambda **kwargs: mock_handler)
     monkeypatch.setattr("app.rag.workflows.runner.extract_trace_id", lambda handler: getattr(handler, "last_trace_id", None))
     monkeypatch.setattr("app.rag.workflows.runner.run_online_evaluation_task", mock_eval)
@@ -251,7 +249,6 @@ async def test_e2e_streaming_flow_with_observability_and_evaluation(monkeypatch,
     mock_handler.last_trace_id = "trace-e2e-stream-888"
 
     monkeypatch.setattr("app.core.telemetry.get_langfuse_client", lambda: mock_client)
-    monkeypatch.setattr("app.api.routes.get_langfuse_client", lambda: mock_client)
     monkeypatch.setattr("app.rag.workflows.runner.get_langfuse_callback", lambda **kwargs: mock_handler)
     monkeypatch.setattr("app.rag.workflows.runner.extract_trace_id", lambda handler: "trace-e2e-stream-888")
 
@@ -365,7 +362,6 @@ def test_e2e_switching_all_workflows_sync_and_stream(client, monkeypatch):
     mock_eval = AsyncMock()
 
     monkeypatch.setattr("app.core.telemetry.get_langfuse_client", lambda: mock_client)
-    monkeypatch.setattr("app.api.routes.get_langfuse_client", lambda: mock_client)
     monkeypatch.setattr("app.rag.workflows.runner.get_langfuse_callback", lambda **kwargs: mock_handler)
     monkeypatch.setattr("app.rag.workflows.runner.extract_trace_id", lambda handler: getattr(handler, "last_trace_id", None))
     monkeypatch.setattr("app.rag.workflows.runner.run_online_evaluation_task", mock_eval)
@@ -446,7 +442,6 @@ def test_e2e_multi_turn_session_persistence_http(client, monkeypatch):
     mock_eval = AsyncMock()
 
     monkeypatch.setattr("app.core.telemetry.get_langfuse_client", lambda: mock_client)
-    monkeypatch.setattr("app.api.routes.get_langfuse_client", lambda: mock_client)
     monkeypatch.setattr("app.rag.workflows.runner.get_langfuse_callback", lambda **kwargs: mock_handler)
     monkeypatch.setattr("app.rag.workflows.runner.extract_trace_id", lambda handler: getattr(handler, "last_trace_id", None))
     monkeypatch.setattr("app.rag.workflows.runner.run_online_evaluation_task", mock_eval)
@@ -520,7 +515,6 @@ def test_e2e_langfuse_trace_spans_for_fixed_dag_and_react(client, monkeypatch):
 
     mock_client = MagicMock()
     monkeypatch.setattr("app.core.telemetry.get_langfuse_client", lambda: mock_client)
-    monkeypatch.setattr("app.api.routes.get_langfuse_client", lambda: mock_client)
     monkeypatch.setattr("app.rag.workflows.runner.get_langfuse_callback", mock_get_langfuse_callback)
     monkeypatch.setattr("app.rag.workflows.runner.run_online_evaluation_task", AsyncMock())
 
@@ -590,7 +584,6 @@ async def test_e2e_online_evaluation_scores_recorded_for_all_workflows_without_s
     mock_handler.last_trace_id = "trace-eval-multi-wf-999"
 
     monkeypatch.setattr("app.core.telemetry.get_langfuse_client", lambda: mock_client)
-    monkeypatch.setattr("app.api.routes.get_langfuse_client", lambda: mock_client)
     monkeypatch.setattr("app.rag.workflows.runner.get_langfuse_callback", lambda **kwargs: mock_handler)
     monkeypatch.setattr("app.rag.workflows.runner.extract_trace_id", lambda handler: "trace-eval-multi-wf-999")
 
