@@ -25,6 +25,8 @@ from app.core.telemetry import (
 from app.rag.evaluation import FakeEvaluator, get_evaluator
 from app.rag.workflows.base import (
     EvalContext,
+    ExecutionProfile,
+    PluggableWorkflow,
     WorkflowInfo,
     WorkflowInput,
     WorkflowOutput,
@@ -1629,3 +1631,445 @@ async def test_runner_bridges_workflow_output_in_stream(clean_registry):
     assert meta_data["source_used"] == "vectorstore"
     assert meta_data["citations"] == [{"title": "guide.pdf"}]
     assert meta_data["trace_id"] == "trace_stream_1"
+
+
+# ==============================================================================
+# 14. ExecutionProfile 3-Tier Resolution & Multi-Dimensional Telemetry (Ticket 04)
+# ==============================================================================
+
+
+def test_execution_profile_model():
+    """Verify ExecutionProfile instantiates correctly with required and optional fields."""
+    profile = ExecutionProfile(
+        variant_id="fast-mini",
+        model_name="gpt-4o-mini",
+        prompt_version="v2.1",
+        temperature=0.3,
+        parameters={"chunk_size": 256, "top_k": 3},
+        tags=["fast", "mini"],
+        metadata={"author": "benchmark-team"},
+    )
+    assert profile.variant_id == "fast-mini"
+    assert profile.model_name == "gpt-4o-mini"
+    assert profile.prompt_version == "v2.1"
+    assert profile.temperature == 0.3
+    assert profile.parameters == {"chunk_size": 256, "top_k": 3}
+    assert profile.tags == ["fast", "mini"]
+    assert profile.metadata == {"author": "benchmark-team"}
+
+    # Defaults
+    minimal = ExecutionProfile(variant_id="default")
+    assert minimal.variant_id == "default"
+    assert minimal.model_name is None
+    assert minimal.prompt_version is None
+    assert minimal.temperature is None
+    assert minimal.parameters == {}
+    assert minimal.tags == []
+    assert minimal.metadata == {}
+
+
+def test_workflow_registry_profile_management():
+    """Verify WorkflowRegistry profile registration, retrieval, listing, and lifecycle."""
+    registry = WorkflowRegistry()
+    profile1 = ExecutionProfile(variant_id="v1", model_name="gpt-4o", temperature=0.7)
+    profile2 = ExecutionProfile(variant_id="v2", model_name="gpt-4o-mini", temperature=0.2)
+
+    # Validation
+    with pytest.raises(ValueError, match="workflow_id must be non-empty"):
+        registry.register_profile("", profile1)
+
+    with pytest.raises(ValueError, match="profile must be an ExecutionProfile"):
+        registry.register_profile("wf1", {"variant_id": "v1"})  # type: ignore[arg-type]
+
+    # Registration & Retrieval
+    registry.register_profile("wf1", profile1)
+    registry.register_profile("wf1", profile2)
+
+    assert registry.get_profile("wf1", "v1") is profile1
+    assert registry.get_profile("wf1", "v2") is profile2
+    assert registry.get_profile("wf1", "unknown") is None
+    assert registry.get_profile("unknown_wf", "v1") is None
+
+    # Listing
+    profiles = registry.list_profiles("wf1")
+    assert len(profiles) == 2
+    assert [p.variant_id for p in profiles] == ["v1", "v2"]
+    assert registry.list_profiles("non_existent") == []
+
+    # Unregister removes associated profiles
+    mock_wf = MockWorkflow("wf1")
+    registry.register(mock_wf)
+    assert registry.unregister("wf1") is True
+    assert registry.get_profile("wf1", "v1") is None
+
+    # Clear
+    registry.register_profile("wf2", profile1)
+    assert registry.get_profile("wf2", "v1") is not None
+    registry.clear()
+    assert registry.get_profile("wf2", "v1") is None
+
+
+def test_chat_request_and_workflow_input_accept_variant_and_parameters():
+    """Verify ChatRequest and WorkflowInput accept variant_id and parameters, and runner bridges them."""
+    req = ChatRequest(
+        question="How does variant resolution work?",
+        workflow="mock_workflow",
+        variant_id="exp_variant",
+        parameters={"temperature": 0.5, "chunk_size": 512},
+    )
+    assert req.variant_id == "exp_variant"
+    assert req.parameters == {"temperature": 0.5, "chunk_size": 512}
+
+    runner = WorkflowRunner()
+    wf_input = runner._to_workflow_input(req)
+    assert isinstance(wf_input, WorkflowInput)
+    assert wf_input.question == "How does variant resolution work?"
+    assert wf_input.variant_id == "exp_variant"
+    assert wf_input.parameters == {"temperature": 0.5, "chunk_size": 512}
+
+    # WorkflowInput directly preserves variant_id and parameters
+    wf_input2 = WorkflowInput(
+        question="Direct test",
+        variant_id="direct_variant",
+        parameters={"top_k": 10},
+    )
+    bridged = runner._to_workflow_input(wf_input2)
+    assert bridged.variant_id == "direct_variant"
+    assert bridged.parameters == {"top_k": 10}
+
+
+def test_three_tier_resolution_precedence():
+    """Verify 3-tier precedence hierarchy: Explicit Overrides > Registered Profile > Workflow Baseline."""
+    registry = WorkflowRegistry()
+    # Baseline (Tier 3)
+    baseline_metadata = {
+        "parameters": {"top_k": 3, "shared_param": "from_baseline"},
+        "model_name": "baseline-model",
+        "temperature": 0.0,
+        "prompt_version": "v1.0",
+        "tags": ["baseline-tag"],
+    }
+    mock_wf = MockWorkflow("three_tier_wf")
+    mock_wf.info.metadata = baseline_metadata
+    registry.register(mock_wf)
+
+    # Registered Profile (Tier 2)
+    profile = ExecutionProfile(
+        variant_id="profile_var",
+        model_name="profile-model",
+        prompt_version="v2.0",
+        temperature=0.4,
+        parameters={"top_k": 7, "profile_param": "from_profile", "shared_param": "from_profile"},
+        tags=["profile-tag"],
+        metadata={"profile_meta": "profile_val"},
+    )
+    registry.register_profile("three_tier_wf", profile)
+
+    runner = WorkflowRunner(registry=registry)
+
+    # Case A: Baseline only (no variant, no explicit parameters)
+    req_baseline = ChatRequest(question="Baseline inquiry?", workflow="three_tier_wf")
+    _, _, _, _, config_base = runner._prepare_execution(req_baseline)
+    cfg_b = config_base["configurable"]
+    assert cfg_b["top_k"] == 3
+    assert cfg_b["shared_param"] == "from_baseline"
+    assert cfg_b["model_name"] == "baseline-model"
+    assert cfg_b["temperature"] == 0.0
+    assert cfg_b["prompt_version"] == "v1.0"
+    assert "profile_param" not in cfg_b
+
+    # Case B: Registered Profile overrides Baseline (Tier 2 > Tier 3)
+    req_profile = ChatRequest(
+        question="Profile inquiry?",
+        workflow="three_tier_wf",
+        variant_id="profile_var",
+    )
+    _, _, _, _, config_prof = runner._prepare_execution(req_profile)
+    cfg_p = config_prof["configurable"]
+    assert cfg_p["variant_id"] == "profile_var"
+    assert cfg_p["top_k"] == 7  # Profile overwrote baseline (7 vs 3)
+    assert cfg_p["shared_param"] == "from_profile"  # Profile overwrote baseline
+    assert cfg_p["profile_param"] == "from_profile"  # Added by profile
+    assert cfg_p["model_name"] == "profile-model"  # Profile overwrote baseline
+    assert cfg_p["temperature"] == 0.4  # Profile overwrote baseline
+    assert cfg_p["prompt_version"] == "v2.0"  # Profile overwrote baseline
+
+    # Case C: Explicit Overrides override Registered Profile and Baseline (Tier 1 > Tier 2 > Tier 3)
+    req_explicit = ChatRequest(
+        question="Explicit override inquiry?",
+        workflow="three_tier_wf",
+        variant_id="profile_var",
+        parameters={
+            "temperature": 0.9,
+            "top_k": 15,
+            "explicit_param": "from_explicit",
+            "model_name": "explicit-model",
+        },
+    )
+    _, _, _, _, config_exp = runner._prepare_execution(req_explicit)
+    cfg_e = config_exp["configurable"]
+    assert cfg_e["variant_id"] == "profile_var"
+    assert cfg_e["temperature"] == 0.9  # Explicit (0.9) > Profile (0.4) > Baseline (0.0)
+    assert cfg_e["top_k"] == 15  # Explicit (15) > Profile (7) > Baseline (3)
+    assert cfg_e["model_name"] == "explicit-model"  # Explicit > Profile > Baseline
+    assert cfg_e["prompt_version"] == "v2.0"  # Retained from Profile
+    assert cfg_e["shared_param"] == "from_profile"  # Retained from Profile
+    assert cfg_e["explicit_param"] == "from_explicit"  # Injected from Explicit
+
+
+def test_configurable_injection_and_invoke_call():
+    """Verify resolved parameters are injected into RunnableConfig['configurable'] during execution."""
+    registry = WorkflowRegistry()
+    mock_wf = MockWorkflow("inject_cfg_wf")
+    registry.register(mock_wf)
+
+    profile = ExecutionProfile(
+        variant_id="test_variant",
+        model_name="claude-3-5-sonnet",
+        temperature=0.2,
+        parameters={"search_depth": "deep", "max_results": 10},
+    )
+    registry.register_profile("inject_cfg_wf", profile)
+
+    runner = WorkflowRunner(registry=registry)
+    req = ChatRequest(
+        question="Configurable injection test",
+        workflow="inject_cfg_wf",
+        variant_id="test_variant",
+        parameters={"max_results": 20},
+    )
+
+    response = runner.execute(req)
+    assert response.workflow == "inject_cfg_wf"
+    assert response.variant_id == "test_variant"
+
+    assert mock_wf.mock_graph.invoke.called
+    call_args = mock_wf.mock_graph.invoke.call_args
+    config = call_args[1].get("config") if "config" in call_args[1] else call_args[0][1]
+
+    assert "configurable" in config
+    cfg = config["configurable"]
+    assert cfg["variant_id"] == "test_variant"
+    assert cfg["model_name"] == "claude-3-5-sonnet"
+    assert cfg["temperature"] == 0.2
+    assert cfg["search_depth"] == "deep"
+    assert cfg["max_results"] == 20  # Explicit 20 overwrote profile 10
+
+
+def test_multi_dimensional_telemetry_tags_propagation():
+    """Verify multi-dimensional tags (workflow, variant, model, prompt, env) are propagated to telemetry."""
+    registry = WorkflowRegistry()
+    mock_wf = MockWorkflow("telemetry_wf")
+    registry.register(mock_wf)
+
+    profile = ExecutionProfile(
+        variant_id="gpt4o-v3",
+        model_name="gpt-4o",
+        prompt_version="prompt-v3",
+        tags=["experiment-alpha", "latency-critical"],
+    )
+    registry.register_profile("telemetry_wf", profile)
+
+    mock_cb_factory = MagicMock(return_value=MagicMock())
+    runner = WorkflowRunner(registry=registry, callback_factory=mock_cb_factory)
+
+    req = ChatRequest(
+        question="Telemetry tagging test",
+        workflow="telemetry_wf",
+        variant_id="gpt4o-v3",
+    )
+
+    runner.execute(req, tags=["user-tag"])
+
+    assert mock_cb_factory.called
+    cb_kwargs = mock_cb_factory.call_args[1]
+    tags = cb_kwargs.get("tags", [])
+
+    # Check canonical multi-dimensional tags
+    assert "workflow:telemetry_wf" in tags
+    assert "variant:gpt4o-v3" in tags
+    assert "model:gpt-4o" in tags
+    assert "prompt:prompt-v3" in tags
+    assert any(t.startswith("env:") for t in tags)
+    assert "experiment-alpha" in tags
+    assert "latency-critical" in tags
+    assert "user-tag" in tags
+
+    # Verify run_config tags contains user-provided tags
+    call_args = mock_wf.mock_graph.invoke.call_args
+    config = call_args[1].get("config") if "config" in call_args[1] else call_args[0][1]
+    assert config["tags"] == ["user-tag"]
+
+
+def test_pluggable_workflow_variant_cached_graph_compilation():
+    """Verify PluggableWorkflow caches compiled graphs per variant_id."""
+    graph_factory_calls: list[str | None] = []
+
+    def mock_factory(variant_id: str | None = None):
+        graph_factory_calls.append(variant_id)
+        mock_graph = MagicMock()
+        mock_graph.variant = variant_id
+        return mock_graph
+
+    info = WorkflowInfo(
+        id="variant_cached_wf",
+        name="Variant Cached Workflow",
+        description="Workflow testing variant graph caching",
+        generation_nodes={"gen"},
+    )
+    pw = PluggableWorkflow(info=info, graph=mock_factory)
+
+    # First call with variant "alpha" -> triggers factory call
+    graph_a1 = pw.get_compiled_graph("alpha")
+    assert len(graph_factory_calls) == 1
+    assert graph_factory_calls[0] == "alpha"
+    assert graph_a1.variant == "alpha"
+
+    # Second call with variant "alpha" -> returns cached graph without calling factory
+    graph_a2 = pw.get_compiled_graph("alpha")
+    assert len(graph_factory_calls) == 1
+    assert graph_a2 is graph_a1
+
+    # Call with variant "beta" -> triggers factory call
+    graph_b = pw.get_compiled_graph("beta")
+    assert len(graph_factory_calls) == 2
+    assert graph_factory_calls[1] == "beta"
+    assert graph_b.variant == "beta"
+    assert graph_b is not graph_a1
+
+    # Call with None -> triggers default compilation
+    graph_default = pw.get_compiled_graph()
+    assert len(graph_factory_calls) == 3
+    assert graph_factory_calls[2] is None
+
+    # Repeat call with None -> cached
+    graph_default2 = pw.get_compiled_graph(None)
+    assert len(graph_factory_calls) == 3
+    assert graph_default2 is graph_default
+
+
+def test_runner_executes_variant_cached_graph():
+    """Verify WorkflowRunner requests variant-compiled graph from workflow during execute."""
+    called_variants: list[str | None] = []
+
+    class VariantAwareWorkflow:
+        info = WorkflowInfo(
+            id="variant_aware_wf",
+            name="Variant Aware Workflow",
+            description="Workflow recording requested variant_id",
+            generation_nodes={"node"},
+        )
+
+        def get_compiled_graph(self, variant_id: str | None = None):
+            called_variants.append(variant_id)
+            graph = MagicMock()
+            graph.invoke.return_value = {
+                "answer": f"Answer from variant {variant_id}",
+                "source_used": "direct",
+                "variant_id": variant_id,
+            }
+            return graph
+
+        def to_initial_state(self, input: WorkflowInput, trace_id: str | None = None):
+            return {"question": input.question, "variant_id": input.variant_id}
+
+        def to_workflow_output(self, final_state: dict[str, Any], trace_id: str | None = None) -> WorkflowOutput:
+            return WorkflowOutput(
+                workflow=self.info.id,
+                answer=final_state.get("answer", ""),
+                source_used="direct",
+                variant_id=final_state.get("variant_id"),
+            )
+
+        def extract_eval_context(self, final_state):
+            return EvalContext(source_used="direct", retrieved_contexts=[])
+
+        def handle_error(self, exc, current_state):
+            return {"answer": f"Error: {exc}"}
+
+    registry = WorkflowRegistry()
+    registry.register(VariantAwareWorkflow())
+    runner = WorkflowRunner(registry=registry)
+
+    req = ChatRequest(
+        question="Execute variant test",
+        workflow="variant_aware_wf",
+        variant_id="variant-xyz",
+    )
+    resp = runner.execute(req)
+
+    assert resp.variant_id == "variant-xyz"
+    assert resp.answer == "Answer from variant variant-xyz"
+    assert len(called_variants) == 1
+    assert called_variants[0] == "variant-xyz"
+
+
+@pytest.mark.asyncio
+async def test_stream_propagates_variant_id_in_terminal_metadata():
+    """Verify stream delivers variant_id in final metadata SSE event."""
+    class StreamVariantWorkflow:
+        info = WorkflowInfo(
+            id="stream_variant_wf",
+            name="Stream Variant Workflow",
+            description="Testing variant in stream",
+            generation_nodes={"gen"},
+            step_labels={"gen": "Generating..."},
+        )
+
+        def get_compiled_graph(self, variant_id: str | None = None):
+            graph = MagicMock()
+
+            async def _astream_events(*args, **kwargs):
+                yield {
+                    "event": "on_chat_model_stream",
+                    "metadata": {"langgraph_node": "gen"},
+                    "data": {"chunk": MagicMock(content="Stream variant chunk", tool_call_chunks=[])},
+                }
+                yield {
+                    "event": "on_chain_end",
+                    "metadata": {"langgraph_node": "gen"},
+                    "data": {
+                        "output": {
+                            "answer": "Stream variant chunk",
+                            "source_used": "direct",
+                            "variant_id": variant_id,
+                        }
+                    },
+                }
+
+            graph.astream_events = _astream_events
+            return graph
+
+        def to_initial_state(self, input: WorkflowInput, trace_id: str | None = None):
+            return {"question": input.question, "variant_id": input.variant_id}
+
+        def to_workflow_output(self, final_state: dict[str, Any], trace_id: str | None = None) -> WorkflowOutput:
+            return WorkflowOutput(
+                workflow=self.info.id,
+                answer=final_state.get("answer", ""),
+                source_used="direct",
+                variant_id=final_state.get("variant_id"),
+            )
+
+        def extract_eval_context(self, final_state):
+            return EvalContext(source_used="direct", retrieved_contexts=[])
+
+        def handle_error(self, exc, current_state):
+            return {"answer": f"Error: {exc}"}
+
+    registry = WorkflowRegistry()
+    registry.register(StreamVariantWorkflow())
+    runner = WorkflowRunner(registry=registry)
+
+    req = ChatRequest(
+        question="Stream variant inquiry",
+        workflow="stream_variant_wf",
+        variant_id="stream_v1",
+    )
+    events = [event async for event in runner.stream(req)]
+
+    meta_events = [e for e in events if "event: metadata" in e]
+    assert len(meta_events) == 1
+    meta_payload = json.loads(meta_events[0].replace("event: metadata\ndata: ", "").strip())
+    assert meta_payload["workflow"] == "stream_variant_wf"
+    assert meta_payload["variant_id"] == "stream_v1"

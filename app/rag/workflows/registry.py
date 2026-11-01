@@ -13,7 +13,7 @@ from typing import Any, TypeVar
 
 import structlog
 
-from app.rag.workflows.base import PluggableWorkflow, WorkflowDefinition, WorkflowInfo
+from app.rag.workflows.base import ExecutionProfile, PluggableWorkflow, WorkflowDefinition, WorkflowInfo
 
 logger = structlog.get_logger(__name__)
 
@@ -26,6 +26,7 @@ class WorkflowRegistry:
     def __init__(self) -> None:
         self._lock = threading.RLock()
         self._workflows: dict[str, WorkflowDefinition] = {}
+        self._profiles: dict[str, dict[str, ExecutionProfile]] = {}
 
     def register(self, workflow: WorkflowDefinition, *, override: bool = False) -> None:
         """Register a workflow instance. Raises ValueError on duplicate IDs or validation failure."""
@@ -212,7 +213,62 @@ class WorkflowRegistry:
                 f"Entrypoint '{entrypoint}' in '{bundle_dir}' resolved to non-callable, non-runnable object of type {type(callable_obj).__name__}."
             )
 
-        return PluggableWorkflow(info=info, graph=callable_obj)
+        wf = PluggableWorkflow(info=info, graph=callable_obj)
+
+        profiles_data = data.get("profiles")
+        if isinstance(profiles_data, list):
+            for p in profiles_data:
+                try:
+                    profile_obj = ExecutionProfile.model_validate(p)
+                    self.register_profile(info.id, profile_obj)
+                except Exception as exc:
+                    logger.warning("failed_to_load_profile_from_manifest", workflow_id=info.id, error=str(exc))
+        elif isinstance(profiles_data, dict):
+            for variant_id, p in profiles_data.items():
+                try:
+                    if isinstance(p, dict):
+                        p_dict = dict(p)
+                        p_dict.setdefault("variant_id", variant_id)
+                        profile_obj = ExecutionProfile.model_validate(p_dict)
+                    elif isinstance(p, ExecutionProfile):
+                        profile_obj = p
+                    else:
+                        continue
+                    self.register_profile(info.id, profile_obj)
+                except Exception as exc:
+                    logger.warning("failed_to_load_profile_from_manifest", workflow_id=info.id, error=str(exc))
+
+        return wf
+
+    def register_profile(self, workflow_id: str, profile: ExecutionProfile) -> None:
+        """Register an execution profile for a workflow variant."""
+        if not workflow_id or not str(workflow_id).strip():
+            raise ValueError("workflow_id must be non-empty.")
+        if not isinstance(profile, ExecutionProfile):
+            raise ValueError(f"profile must be an ExecutionProfile, got {type(profile).__name__}.")
+        if not profile.variant_id or not str(profile.variant_id).strip():
+            raise ValueError("Profile variant_id must be non-empty.")
+
+        with self._lock:
+            if workflow_id not in self._profiles:
+                self._profiles[workflow_id] = {}
+            self._profiles[workflow_id][profile.variant_id] = profile
+            logger.info(
+                "execution_profile_registered",
+                workflow_id=workflow_id,
+                variant_id=profile.variant_id,
+            )
+
+    def get_profile(self, workflow_id: str, variant_id: str) -> ExecutionProfile | None:
+        """Retrieve a registered execution profile by workflow ID and variant ID."""
+        with self._lock:
+            return self._profiles.get(workflow_id, {}).get(variant_id)
+
+    def list_profiles(self, workflow_id: str) -> list[ExecutionProfile]:
+        """List all execution profiles registered for a workflow."""
+        with self._lock:
+            profiles_map = self._profiles.get(workflow_id, {})
+            return [profiles_map[k] for k in sorted(profiles_map.keys())]
 
     def get(self, workflow_id: str) -> WorkflowDefinition:
         """Retrieve a registered workflow by ID. Raises KeyError if not found."""
@@ -246,13 +302,15 @@ class WorkflowRegistry:
             logger.info("workflow_warmup_complete", workflow_id=wf.info.id)
 
     def clear(self) -> None:
-        """Clear all registered workflows (primarily for testing)."""
+        """Clear all registered workflows and execution profiles (primarily for testing)."""
         with self._lock:
             self._workflows.clear()
+            self._profiles.clear()
 
     def unregister(self, workflow_id: str) -> bool:
         """Remove a workflow by ID from the registry. Returns True if removed, False otherwise."""
         with self._lock:
+            self._profiles.pop(workflow_id, None)
             if workflow_id in self._workflows:
                 del self._workflows[workflow_id]
                 logger.info("workflow_unregistered", workflow_id=workflow_id)

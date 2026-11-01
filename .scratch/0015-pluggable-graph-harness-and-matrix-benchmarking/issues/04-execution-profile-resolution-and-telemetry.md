@@ -17,13 +17,13 @@ Implement parameterized profiles and rich multi-dimensional telemetry tracking:
 
 **Blocked by:** 01: Domain DTOs (`WorkflowInput`, `WorkflowOutput`) & Transport Decoupling
 
-**Status:** open
+**Status:** closed
 
-- [ ] `ExecutionProfile` model defined in `app/rag/workflows/base.py`
-- [ ] Profile management added to `WorkflowRegistry`
-- [ ] `ChatRequest` and `WorkflowInput` accept optional `variant_id` and `parameters`
-- [ ] 3-tier precedence resolution implemented in `WorkflowRunner._prepare_execution`
-- [ ] `RunnableConfig["configurable"]` injected with resolved parameters
-- [ ] Langfuse callback handler tagged with `variant:<id>`, `model:<name>`, `prompt:<ver>`
-- [ ] Cached per-variant compilation hook supported in `PluggableWorkflow`
-- [ ] Unit tests in `tests/rag/test_workflow_runner.py` pass: `uv run pytest tests/rag/test_workflow_runner.py`
+- [x] `ExecutionProfile` model defined in `app/rag/workflows/base.py`
+- [x] Profile management added to `WorkflowRegistry`
+- [x] `ChatRequest` and `WorkflowInput` accept optional `variant_id` and `parameters`
+- [x] 3-tier precedence resolution implemented in `WorkflowRunner._prepare_execution`
+- [x] `RunnableConfig["configurable"]` injected with resolved parameters
+- [x] Langfuse callback handler tagged with `variant:<id>`, `model:<name>`, `prompt:<ver>`
+- [x] Cached per-variant compilation hook supported in `PluggableWorkflow`
+- [x] Unit tests in `tests/rag/test_workflow_runner.py` pass: `uv run pytest tests/rag/test_workflow_runner.py`

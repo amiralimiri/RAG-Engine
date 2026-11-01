@@ -19,6 +19,7 @@ if TYPE_CHECKING:
         ChatRequest,
         ChatResponse,
     )
+from app.core.config import get_settings
 from app.core.telemetry import (
     extract_trace_id,
     flush_telemetry,
@@ -27,6 +28,7 @@ from app.core.telemetry import (
 from app.rag.evaluation import Evaluator, get_evaluator
 from app.rag.workflows.base import (
     EvalContext,
+    ExecutionProfile,
     WorkflowDefinition,
     WorkflowInput,
     WorkflowOutput,
@@ -181,11 +183,29 @@ class WorkflowRunner:
         self,
         request: ChatRequest | WorkflowInput,
         trace_id: str | None = None,
+        variant_id: str | None = None,
+        parameters: dict[str, Any] | None = None,
     ) -> WorkflowInput:
         """Bridge inbound transport ChatRequest or WorkflowInput to domain WorkflowInput."""
+        eff_variant_id = variant_id or getattr(request, "variant_id", None)
+        eff_parameters = (
+            parameters
+            if parameters is not None
+            else (getattr(request, "parameters", None) or {})
+        )
+        eff_trace_id = trace_id or getattr(request, "trace_id", None)
+        eff_workflow = getattr(request, "workflow", "fix_single_jev")
+
         if isinstance(request, WorkflowInput):
-            if trace_id and not request.trace_id:
-                return request.model_copy(update={"trace_id": trace_id})
+            updates: dict[str, Any] = {}
+            if eff_trace_id and request.trace_id != eff_trace_id:
+                updates["trace_id"] = eff_trace_id
+            if eff_variant_id and request.variant_id != eff_variant_id:
+                updates["variant_id"] = eff_variant_id
+            if eff_parameters and request.parameters != eff_parameters:
+                updates["parameters"] = eff_parameters
+            if updates:
+                return request.model_copy(update=updates)
             return request
 
         raw_msgs = getattr(request, "messages", None)
@@ -208,13 +228,14 @@ class WorkflowRunner:
 
         return WorkflowInput(
             question=request.question,
+            workflow=eff_workflow,
             messages=messages,
             attachments=attachments,
             session_id=getattr(request, "session_id", None),
             user_id=getattr(request, "user_id", None),
-            trace_id=trace_id or getattr(request, "trace_id", None),
-            variant_id=getattr(request, "variant_id", None),
-            parameters=getattr(request, "parameters", None) or {},
+            trace_id=eff_trace_id,
+            variant_id=eff_variant_id,
+            parameters=eff_parameters,
         )
 
     def _to_chat_response(
@@ -231,6 +252,7 @@ class WorkflowRunner:
             return output
 
         resolved_tid = trace_id or getattr(output, "trace_id", None)
+        resolved_vid = getattr(output, "variant_id", None)
         return ChatResponse(
             workflow=output.workflow,
             answer=output.answer,
@@ -239,6 +261,7 @@ class WorkflowRunner:
             trace=output.trace,
             rewritten_query=output.rewritten_query,
             trace_id=resolved_tid,
+            variant_id=resolved_vid,
         )
 
     def _adapt_workflow_output(
@@ -248,9 +271,12 @@ class WorkflowRunner:
         trace_id: str | None = None,
     ) -> WorkflowOutput:
         """Extract domain WorkflowOutput from workflow instance adapting either to_workflow_output or to_chat_response."""
+        variant_id = final_state.get("variant_id") if isinstance(final_state, dict) else None
         if hasattr(wf_def, "to_workflow_output"):
             out = wf_def.to_workflow_output(final_state, trace_id=trace_id)
             if isinstance(out, WorkflowOutput):
+                if not out.variant_id and variant_id:
+                    return out.model_copy(update={"variant_id": variant_id})
                 return out
             return WorkflowOutput(
                 workflow=getattr(out, "workflow", wf_def.info.id),
@@ -260,6 +286,7 @@ class WorkflowRunner:
                 trace=getattr(out, "trace", []),
                 rewritten_query=getattr(out, "rewritten_query", None),
                 trace_id=getattr(out, "trace_id", trace_id),
+                variant_id=getattr(out, "variant_id", None) or variant_id,
             )
         if hasattr(wf_def, "to_chat_response"):
             resp = wf_def.to_chat_response(final_state, trace_id=trace_id)
@@ -271,12 +298,13 @@ class WorkflowRunner:
                 trace=getattr(resp, "trace", []),
                 rewritten_query=getattr(resp, "rewritten_query", None),
                 trace_id=getattr(resp, "trace_id", trace_id),
+                variant_id=getattr(resp, "variant_id", None) or variant_id,
             )
         raise AttributeError(f"Workflow '{wf_def}' does not implement to_workflow_output or to_chat_response")
 
     def _prepare_execution(
         self,
-        request: ChatRequest,
+        request: ChatRequest | WorkflowInput,
         streaming: bool = False,
         callback: Any | None = None,
         metadata: dict[str, Any] | None = None,
@@ -284,30 +312,141 @@ class WorkflowRunner:
         **kwargs: Any,
     ) -> tuple[WorkflowDefinition, str | None, Any, dict[str, Any], dict[str, Any]]:
         """Resolve workflow definition, initialize telemetry contextvars, and prepare initial state."""
-        wf_def = self._resolve_workflow(request.workflow)
+        wf_name = getattr(request, "workflow", None) or kwargs.get("workflow", "fix_single_jev")
+        wf_def = self._resolve_workflow(wf_name)
 
         cb_factory = self.callback_factory
         tr_extractor = self.trace_extractor
 
-        sanitized_tid = (
-            request.trace_id.replace("-", "").lower() if request.trace_id else (uuid.uuid4().hex if streaming else None)
-        )
-        telemetry_metadata = dict(wf_def.info.metadata) if getattr(wf_def.info, "metadata", None) else {}
+        # 1. Resolve variant_id (Explicit overrides > None)
+        req_variant_id = getattr(request, "variant_id", None) or kwargs.get("variant_id")
+
+        # 2. Look up ExecutionProfile from registry if variant_id present
+        profile: ExecutionProfile | None = None
+        if req_variant_id:
+            profile = self.registry.get_profile(wf_def.info.id, req_variant_id)
+
+        resolved_variant_id = req_variant_id or (profile.variant_id if profile else None)
+
+        # 3. 3-Tier Precedence Resolution for Parameters:
+        # Precedence: Explicit Overrides (Tier 1) > Registered Profile (Tier 2) > Workflow Baseline (Tier 3)
+        resolved_parameters: dict[str, Any] = {}
+
+        # Tier 3: Workflow Baseline
+        baseline_metadata = dict(wf_def.info.metadata) if getattr(wf_def.info, "metadata", None) else {}
+        if "parameters" in baseline_metadata and isinstance(baseline_metadata["parameters"], dict):
+            resolved_parameters.update(baseline_metadata["parameters"])
+        for k in ("model_name", "model", "prompt_version", "temperature"):
+            if k in baseline_metadata and baseline_metadata[k] is not None:
+                resolved_parameters[k] = baseline_metadata[k]
+
+        # Tier 2: Registered Profile
+        if profile is not None:
+            if profile.parameters:
+                resolved_parameters.update(profile.parameters)
+            if profile.model_name is not None:
+                resolved_parameters["model_name"] = profile.model_name
+            if profile.prompt_version is not None:
+                resolved_parameters["prompt_version"] = profile.prompt_version
+            if profile.temperature is not None:
+                resolved_parameters["temperature"] = profile.temperature
+
+        # Tier 1: Explicit Overrides
+        req_params = getattr(request, "parameters", None)
+        if req_params and isinstance(req_params, dict):
+            resolved_parameters.update(req_params)
+        if "parameters" in kwargs and isinstance(kwargs["parameters"], dict):
+            resolved_parameters.update(kwargs["parameters"])
+        for k in ("model_name", "model", "prompt_version", "temperature"):
+            if k in kwargs and kwargs[k] is not None:
+                resolved_parameters[k] = kwargs[k]
+
+        resolved_model_name = resolved_parameters.get("model_name") or resolved_parameters.get("model")
+        resolved_prompt_version = resolved_parameters.get("prompt_version")
+
+        # 4. Multi-dimensional telemetry tags
+        settings = get_settings()
+        app_env = getattr(settings, "app_env", "development")
+
+        telemetry_tags: list[str] = [
+            f"workflow:{wf_def.info.id}",
+            f"env:{app_env}",
+        ]
+        if resolved_variant_id:
+            telemetry_tags.append(f"variant:{resolved_variant_id}")
+        if resolved_model_name:
+            telemetry_tags.append(f"model:{resolved_model_name}")
+        if resolved_prompt_version:
+            telemetry_tags.append(f"prompt:{resolved_prompt_version}")
+
+        # Additional tags from baseline, profile, explicit kwargs/config
+        if isinstance(baseline_metadata.get("tags"), list):
+            telemetry_tags.extend(baseline_metadata["tags"])
+        if profile and profile.tags:
+            telemetry_tags.extend(profile.tags)
+        if kwargs.get("tags") and isinstance(kwargs["tags"], list):
+            telemetry_tags.extend(kwargs["tags"])
+        if getattr(request, "tags", None) and isinstance(request.tags, list):
+            telemetry_tags.extend(request.tags)
+        if config and "tags" in config and isinstance(config["tags"], list):
+            telemetry_tags.extend(config["tags"])
+
+        # Deduplicate preserving order
+        seen_tags: set[str] = set()
+        deduped_tags: list[str] = []
+        for t in telemetry_tags:
+            if t not in seen_tags:
+                seen_tags.add(t)
+                deduped_tags.append(t)
+        telemetry_tags = deduped_tags
+
+        # 5. Telemetry metadata (3-tier resolution)
+        telemetry_metadata: dict[str, Any] = {}
+        if baseline_metadata:
+            telemetry_metadata.update(baseline_metadata)
+        if profile and profile.metadata:
+            telemetry_metadata.update(profile.metadata)
         if metadata:
             telemetry_metadata.update(metadata)
+        if kwargs.get("metadata") and isinstance(kwargs["metadata"], dict):
+            telemetry_metadata.update(kwargs["metadata"])
+
+        if resolved_variant_id:
+            telemetry_metadata["variant_id"] = resolved_variant_id
+        if resolved_model_name:
+            telemetry_metadata["model_name"] = resolved_model_name
+        if resolved_prompt_version:
+            telemetry_metadata["prompt_version"] = resolved_prompt_version
+        if resolved_parameters:
+            telemetry_metadata["parameters"] = resolved_parameters
         if streaming:
             telemetry_metadata["streaming"] = True
+
+        raw_tid = getattr(request, "trace_id", None)
+        sanitized_tid = (
+            raw_tid.replace("-", "").lower() if raw_tid else (uuid.uuid4().hex if streaming else None)
+        )
 
         if callback is not None:
             handler = callback
         else:
-            handler = cb_factory(
-                workflow_name=request.workflow,
-                session_id=request.session_id,
-                user_id=request.user_id,
-                trace_id=sanitized_tid,
-                metadata=telemetry_metadata,
-            )
+            try:
+                handler = cb_factory(
+                    workflow_name=wf_name,
+                    session_id=getattr(request, "session_id", None),
+                    user_id=getattr(request, "user_id", None),
+                    trace_id=sanitized_tid,
+                    tags=telemetry_tags,
+                    metadata=telemetry_metadata,
+                )
+            except TypeError:
+                handler = cb_factory(
+                    workflow_name=wf_name,
+                    session_id=getattr(request, "session_id", None),
+                    user_id=getattr(request, "user_id", None),
+                    trace_id=sanitized_tid,
+                    metadata=telemetry_metadata,
+                )
 
         trace_id = tr_extractor(handler) or sanitized_tid
         if handler is not None and not trace_id:
@@ -321,41 +460,66 @@ class WorkflowRunner:
                 except Exception:
                     pass
 
-        if not trace_id and (streaming or request.trace_id):
+        if not trace_id and (streaming or raw_tid):
             ctx_tid = structlog.contextvars.get_contextvars().get("trace_id")
             trace_id = ctx_tid.replace("-", "").lower() if ctx_tid else uuid.uuid4().hex
 
-        context_bindings: dict[str, Any] = {"workflow": request.workflow}
+        if trace_id:
+            telemetry_metadata["trace_id"] = trace_id
+
+        context_bindings: dict[str, Any] = {"workflow": wf_name}
         if trace_id:
             context_bindings["trace_id"] = trace_id
-        if request.session_id:
+        if getattr(request, "session_id", None):
             context_bindings["session_id"] = request.session_id
-        if request.user_id:
+        if getattr(request, "user_id", None):
             context_bindings["user_id"] = request.user_id
+        if resolved_variant_id:
+            context_bindings["variant_id"] = resolved_variant_id
         structlog.contextvars.bind_contextvars(**context_bindings)
 
-        wf_input = self._to_workflow_input(request, trace_id=trace_id)
+        wf_input = self._to_workflow_input(
+            request,
+            trace_id=trace_id,
+            variant_id=resolved_variant_id,
+            parameters=resolved_parameters,
+        )
         initial_state = wf_def.to_initial_state(wf_input, trace_id=trace_id)
+        if resolved_variant_id and "variant_id" not in initial_state:
+            initial_state["variant_id"] = resolved_variant_id
 
+        # 6. RunnableConfig preparation
         if config is not None:
             run_config = dict(config)
+            if handler and "callbacks" not in run_config:
+                run_config["callbacks"] = [handler]
         else:
             run_config = {}
             if handler:
                 run_config["callbacks"] = [handler]
-            cfg_meta = {}
-            if trace_id:
-                cfg_meta["trace_id"] = trace_id
-            if streaming:
-                cfg_meta["streaming"] = True
-            if metadata:
-                cfg_meta.update(metadata)
-            if cfg_meta:
-                run_config["metadata"] = cfg_meta
-            if kwargs.get("tags"):
-                run_config["tags"] = kwargs["tags"]
-            thread_id = request.session_id or uuid.uuid4().hex
-            run_config["configurable"] = {"thread_id": thread_id}
+
+        cfg_meta = {}
+        if trace_id:
+            cfg_meta["trace_id"] = trace_id
+        if streaming:
+            cfg_meta["streaming"] = True
+        if metadata:
+            cfg_meta.update(metadata)
+        if cfg_meta:
+            run_config.setdefault("metadata", {}).update(cfg_meta)
+
+        if kwargs.get("tags"):
+            run_config["tags"] = kwargs["tags"]
+        elif config and "tags" in config:
+            run_config["tags"] = config["tags"]
+
+        configurable = dict(run_config.get("configurable", {}))
+        thread_id = getattr(request, "session_id", None) or uuid.uuid4().hex
+        configurable.setdefault("thread_id", thread_id)
+        if resolved_variant_id:
+            configurable.setdefault("variant_id", resolved_variant_id)
+        configurable.update(resolved_parameters)
+        run_config["configurable"] = configurable
 
         return wf_def, trace_id, handler, initial_state, run_config
 
@@ -418,13 +582,19 @@ class WorkflowRunner:
             if isinstance(final_state, dict) and "trace_id" not in final_state and request.trace_id:
                 final_state["trace_id"] = resolved_tid
 
+        if not chat_response.variant_id:
+            chat_response.variant_id = (
+                final_state.get("variant_id") if isinstance(final_state, dict) else None
+            ) or getattr(request, "variant_id", None)
+
         logger.info(
             "chat_query_completed",
-            workflow=request.workflow,
+            workflow=getattr(request, "workflow", "fix_single_jev"),
             question=request.question,
             source_used=chat_response.source_used,
             trace=chat_response.trace,
             trace_id=resolved_tid,
+            variant_id=chat_response.variant_id,
         )
 
         if resolved_tid:
@@ -514,7 +684,11 @@ class WorkflowRunner:
                 config=config,
                 **kwargs,
             )
-            graph = wf_def.get_compiled_graph()
+            variant_id = initial_state.get("variant_id") or run_config.get("configurable", {}).get("variant_id")
+            try:
+                graph = wf_def.get_compiled_graph(variant_id=variant_id)
+            except TypeError:
+                graph = wf_def.get_compiled_graph()
 
             try:
                 final_state = graph.invoke(initial_state, config=run_config if run_config else None)
@@ -607,7 +781,11 @@ class WorkflowRunner:
                 config=config,
                 **kwargs,
             )
-            graph = wf_def.get_compiled_graph()
+            variant_id = initial_state.get("variant_id") or run_config.get("configurable", {}).get("variant_id")
+            try:
+                graph = wf_def.get_compiled_graph(variant_id=variant_id)
+            except TypeError:
+                graph = wf_def.get_compiled_graph()
 
             try:
                 if hasattr(graph, "ainvoke") and callable(graph.ainvoke):
@@ -706,7 +884,11 @@ class WorkflowRunner:
                 request,
                 streaming=True,
             )
-            graph = wf_def.get_compiled_graph()
+            variant_id = initial_state.get("variant_id") or config.get("configurable", {}).get("variant_id")
+            try:
+                graph = wf_def.get_compiled_graph(variant_id=variant_id)
+            except TypeError:
+                graph = wf_def.get_compiled_graph()
             step_labels = (wf_def.info.step_labels if wf_def and wf_def.info else None) or DEFAULT_STEP_LABELS
             generation_nodes = (
                 wf_def.info.generation_nodes if wf_def and wf_def.info else None
@@ -815,11 +997,12 @@ class WorkflowRunner:
 
             metadata_dict = {
                 "trace_id": resolved_tid,
-                "workflow": request.workflow,
+                "workflow": getattr(request, "workflow", "fix_single_jev"),
                 "source_used": final_source_used,
                 "citations": final_citations,
                 "trace": final_trace,
                 "rewritten_query": final_rewritten_query,
+                "variant_id": (chat_resp.variant_id if wf_def is not None else None) or variant_id,
             }
             try:
                 yield self.format_sse("metadata", StreamMetadataEvent(**metadata_dict))
@@ -851,11 +1034,12 @@ class WorkflowRunner:
 
             logger.info(
                 "chat_query_completed",
-                workflow=request.workflow,
+                workflow=getattr(request, "workflow", "fix_single_jev"),
                 question=request.question,
                 source_used=final_source_used,
                 trace=final_trace,
                 trace_id=resolved_tid,
+                variant_id=metadata_dict.get("variant_id"),
             )
 
         except asyncio.CancelledError, GeneratorExit:

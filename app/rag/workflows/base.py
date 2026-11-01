@@ -47,6 +47,7 @@ class WorkflowInput(BaseModel):
     """Normalized domain input contract for all workflow executions."""
 
     question: str = Field(..., description="User query or inquiry text")
+    workflow: str = Field(default="fix_single_jev", description="Target LangGraph workflow name")
     messages: list[dict[str, Any]] | None = Field(
         default=None,
         description="Optional multi-turn conversation messages preceding this query",
@@ -62,6 +63,27 @@ class WorkflowInput(BaseModel):
     parameters: dict[str, Any] = Field(
         default_factory=dict,
         description="Dynamic execution parameters and overrides",
+    )
+
+
+class ExecutionProfile(BaseModel):
+    """Configuration profile declaring execution variant parameters, model settings, and telemetry tags."""
+
+    variant_id: str = Field(..., description="Unique identifier for the execution variant")
+    model_name: str | None = Field(default=None, description="Optional LLM model name or identifier")
+    prompt_version: str | None = Field(default=None, description="Optional prompt version or template identifier")
+    temperature: float | None = Field(default=None, description="Optional model sampling temperature")
+    parameters: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Arbitrary parameters and overrides for graph configuration",
+    )
+    tags: list[str] = Field(
+        default_factory=list,
+        description="Tags to attach to telemetry traces",
+    )
+    metadata: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Structured metadata to attach to telemetry traces",
     )
 
 
@@ -90,7 +112,7 @@ class WorkflowDefinition(Protocol):
 
     info: WorkflowInfo
 
-    def get_compiled_graph(self) -> Any:
+    def get_compiled_graph(self, variant_id: str | None = None) -> Any:
         """Return the compiled, thread-safe LangGraph runnable."""
         ...
 
@@ -445,6 +467,7 @@ __all__ = [
     "EvalContext",
     "WorkflowInput",
     "WorkflowOutput",
+    "ExecutionProfile",
     "WorkflowDefinition",
     "StandardWorkflowState",
     "PluggableWorkflow",

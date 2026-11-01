@@ -40,6 +40,11 @@ class ChatRequest(BaseModel):
         default=None,
         description="Optional file or image attachments",
     )
+    variant_id: str | None = Field(default=None, description="Optional execution variant identifier")
+    parameters: dict[str, Any] | None = Field(
+        default=None,
+        description="Dynamic execution parameters and overrides",
+    )
 
 
 class ChatResponse(BaseModel):
@@ -52,6 +57,7 @@ class ChatResponse(BaseModel):
     citations: list[Any] = Field(default_factory=list, description="Cited reference materials")
     rewritten_query: str | None = Field(default=None, description="Rewritten or original query")
     trace_id: str | None = Field(default=None, description="Langfuse trace ID")
+    variant_id: str | None = Field(default=None, description="Execution variant identifier")
 
 
 class WorkflowListResponse(BaseModel):
@@ -100,6 +106,7 @@ class StreamMetadataEvent(BaseModel):
     trace: list[str] = Field(default_factory=list, description="Execution step trace list")
     citations: list[dict[str, Any]] = Field(default_factory=list, description="Document citations and source references")
     rewritten_query: str | None = Field(default=None, description="Rewritten search query if applicable")
+    variant_id: str | None = Field(default=None, description="Execution variant identifier")
 
 
 class StreamErrorEvent(BaseModel):
