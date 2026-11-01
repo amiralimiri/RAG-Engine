@@ -240,3 +240,35 @@ async def test_generation_nodes_pass_history(mock_llm, mock_kb_tool, mock_web_to
         assert "Previous answer" in call_args
         assert "How are you?" in call_args
 
+
+def test_turn_2_condense_query_empty_response_fallback(mock_kb_tool, mock_web_tool):
+    """Verify that if condense_query produces empty/whitespace, it falls back to current_question."""
+    mock_empty_llm = MagicMock(spec=BaseChatModel)
+    mock_empty_llm.ainvoke = AsyncMock(return_value=AIMessage(content="   \n  "))
+    mock_empty_llm.invoke = MagicMock(return_value=AIMessage(content="Generated response"))
+
+    classifier = FakeClassifierAdapter(route_decision="direct")
+    graph = create_agentic_rag_graph(
+        classifier,
+        model=mock_empty_llm,
+        kb_tool=mock_kb_tool,
+        web_tool=mock_web_tool,
+    )
+
+    initial_state = {
+        "question": "How do I install it on Mac?",
+        "current_query": "How do I install it on Mac?",
+        "messages": [
+            HumanMessage(content="What is the VPN policy?"),
+            AIMessage(content="You should use Cisco AnyConnect."),
+            HumanMessage(content="How do I install it on Mac?"),
+        ],
+        "retry_count": 0,
+    }
+
+    result = graph.invoke(initial_state)
+    trace = result.get("trace", [])
+    assert any("query contextualized → 'how do i install it on mac?'" in t.lower() for t in trace)
+    assert result["current_query"] == "How do I install it on Mac?"
+
+

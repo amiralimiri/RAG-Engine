@@ -155,7 +155,7 @@ def create_agentic_rag_graph(
     kb_tool: BaseTool | None = None,
     web_tool: BaseTool | None = None,
 ) -> Any:
-    """Build and compile the canonical 10-node StateGraph topology.
+    """Build and compile the canonical 11-node StateGraph topology.
 
     Args:
         classifier: The WorkflowClassifier adapter driving routing and evidence grading.
@@ -191,6 +191,8 @@ def create_agentic_rag_graph(
         response = await active_model.ainvoke(prompt, config=run_cfg)
         raw_query = response.content if hasattr(response, "content") else str(response)
         standalone_query = (raw_query if isinstance(raw_query, str) else str(raw_query)).strip()
+        if not standalone_query:
+            standalone_query = current_question
         return {
             "current_query": standalone_query,
             "trace": [f"Query contextualized → '{standalone_query}'"],

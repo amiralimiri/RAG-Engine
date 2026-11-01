@@ -51,6 +51,7 @@ class TestLocalPromptsRegistry:
         "rag:generate_kb",
         "rag:generate_web",
         "rag:direct_answer",
+        "rag:condense_query",
     ]
 
     def test_all_canonical_prompt_keys_exist(self):
@@ -65,6 +66,7 @@ class TestLocalPromptsRegistry:
             "context": "The VPN server is vpn.company.com.",
             "current_query": "vpn address",
             "web_results": "Title: VPN\nContent: Connect to VPN gateway.",
+            "chat_history": "Human: Hi\nAssistant: Hello! How can I help you?",
         }
         for key in self.REQUIRED_KEYS:
             prompt = FallbackPrompt(name=key, template=LOCAL_PROMPTS[key])
