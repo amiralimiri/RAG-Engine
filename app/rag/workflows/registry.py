@@ -2,12 +2,18 @@
 
 from __future__ import annotations
 
+import importlib
+import importlib.util
+import json
+import re
+import sys
 import threading
+from pathlib import Path
 from typing import Any, TypeVar
 
 import structlog
 
-from app.rag.workflows.base import WorkflowDefinition, WorkflowInfo
+from app.rag.workflows.base import PluggableWorkflow, WorkflowDefinition, WorkflowInfo
 
 logger = structlog.get_logger(__name__)
 
@@ -22,11 +28,26 @@ class WorkflowRegistry:
         self._workflows: dict[str, WorkflowDefinition] = {}
 
     def register(self, workflow: WorkflowDefinition, *, override: bool = False) -> None:
-        """Register a workflow instance. Raises ValueError on duplicate IDs unless override=True."""
-        if not hasattr(workflow, "info") or not getattr(workflow.info, "id", None):
+        """Register a workflow instance. Raises ValueError on duplicate IDs or validation failure."""
+        if not hasattr(workflow, "info") or workflow.info is None:
             raise ValueError("Workflow must have an 'info' attribute with a non-empty 'id'.")
 
-        wf_id = workflow.info.id
+        info = workflow.info
+        if not isinstance(info, WorkflowInfo):
+            raise ValueError(
+                f"Workflow 'info' attribute must be an instance of WorkflowInfo, got {type(info).__name__}."
+            )
+
+        if not info.id or not str(info.id).strip():
+            raise ValueError("Workflow must have an 'info' attribute with a non-empty 'id'.")
+
+        if info.supports_streaming and (not info.generation_nodes or len(info.generation_nodes) == 0):
+            raise ValueError(
+                f"Workflow '{info.id}' declares supports_streaming=True but has empty generation_nodes. "
+                f"Workflows supporting streaming must declare at least one generation node in generation_nodes."
+            )
+
+        wf_id = info.id
         with self._lock:
             if wf_id in self._workflows and not override:
                 raise ValueError(
@@ -34,7 +55,164 @@ class WorkflowRegistry:
                     f"Use override=True to replace it."
                 )
             self._workflows[wf_id] = workflow
-            logger.info("workflow_registered", workflow_id=wf_id, name=workflow.info.name)
+            logger.info("workflow_registered", workflow_id=wf_id, name=info.name)
+
+    def load_from_directory(self, path: Path | str, *, override: bool = False) -> int:
+        """Scan subdirectories for manifest.json, dynamically import entrypoints, and register workflows.
+
+        Parameters
+        ----------
+        path : Path | str
+            Directory containing workflow bundle subdirectories (or a bundle directory itself).
+        override : bool, optional
+            Whether to overwrite already registered workflows with matching IDs. Default False.
+
+        Returns
+        -------
+        int
+            Number of workflows successfully loaded and registered.
+        """
+        dir_path = Path(path).resolve()
+        if not dir_path.exists():
+            logger.warning("workflow_directory_not_found", path=str(dir_path))
+            return 0
+        if not dir_path.is_dir():
+            logger.warning("workflow_directory_not_a_directory", path=str(dir_path))
+            return 0
+
+        candidate_dirs: list[Path] = []
+        if (dir_path / "manifest.json").is_file():
+            candidate_dirs.append(dir_path)
+        else:
+            try:
+                entries = sorted(dir_path.iterdir())
+            except OSError as err:
+                logger.error("workflow_directory_scan_failed", path=str(dir_path), error=str(err))
+                return 0
+
+            for entry in entries:
+                if entry.is_dir() and not entry.name.startswith((".", "__")):
+                    if (entry / "manifest.json").is_file():
+                        candidate_dirs.append(entry)
+                    else:
+                        logger.warning(
+                            "workflow_manifest_not_found",
+                            bundle=str(entry),
+                            message=f"Directory '{entry.name}' does not contain manifest.json, skipping.",
+                        )
+
+        loaded_count = 0
+        for bundle_dir in candidate_dirs:
+            try:
+                wf = self._load_bundle(bundle_dir)
+                self.register(wf, override=override)
+                loaded_count += 1
+                logger.info(
+                    "workflow_bundle_loaded",
+                    workflow_id=wf.info.id,
+                    bundle=str(bundle_dir),
+                )
+            except Exception as exc:
+                logger.error(
+                    "workflow_bundle_load_failed",
+                    bundle=str(bundle_dir),
+                    error=str(exc),
+                    exc_info=True,
+                )
+
+        return loaded_count
+
+    def _load_bundle(self, bundle_dir: Path) -> WorkflowDefinition:
+        """Parse bundle manifest and resolve entrypoint callable into a PluggableWorkflow."""
+        manifest_file = bundle_dir / "manifest.json"
+        if not manifest_file.is_file():
+            raise FileNotFoundError(f"Missing manifest.json in '{bundle_dir}'.")
+
+        try:
+            content = manifest_file.read_text(encoding="utf-8")
+            data = json.loads(content)
+        except Exception as exc:
+            raise ValueError(f"Failed to parse manifest.json in '{bundle_dir}': {exc}") from exc
+
+        if not isinstance(data, dict):
+            raise ValueError(
+                f"manifest.json in '{bundle_dir}' must contain a JSON object, got {type(data).__name__}."
+            )
+
+        entrypoint = data.get("entrypoint")
+        if not entrypoint or not isinstance(entrypoint, str) or not entrypoint.strip():
+            raise ValueError(f"manifest.json in '{bundle_dir}' is missing non-empty 'entrypoint'.")
+        entrypoint = entrypoint.strip()
+
+        if ":" not in entrypoint:
+            raise ValueError(
+                f"Invalid entrypoint '{entrypoint}' in '{bundle_dir}'. Expected format 'module_name:callable_name'."
+            )
+
+        module_spec, callable_name = entrypoint.split(":", 1)
+        module_spec = module_spec.strip()
+        callable_name = callable_name.strip()
+        if not module_spec or not callable_name:
+            raise ValueError(
+                f"Invalid entrypoint '{entrypoint}' in '{bundle_dir}'. Both module and callable must be non-empty."
+            )
+
+        # Parse into WorkflowInfo
+        info = WorkflowInfo.model_validate(data)
+
+        # Ensure bundle_dir is in sys.path so sibling imports work
+        bundle_dir_str = str(bundle_dir.resolve())
+        if bundle_dir_str not in sys.path:
+            sys.path.insert(0, bundle_dir_str)
+
+        target_file: Path | None = None
+        if module_spec.endswith(".py"):
+            cand = bundle_dir / module_spec
+            if cand.is_file():
+                target_file = cand
+        else:
+            rel = module_spec.replace(".", "/")
+            cand_py = bundle_dir / f"{rel}.py"
+            cand_init = bundle_dir / rel / "__init__.py"
+            cand_direct = bundle_dir / module_spec
+            if cand_py.is_file():
+                target_file = cand_py
+            elif cand_init.is_file():
+                target_file = cand_init
+            elif cand_direct.is_file():
+                target_file = cand_direct
+
+        if target_file is not None and target_file.is_file():
+            clean_bundle = re.sub(r"[^a-zA-Z0-9_]", "_", bundle_dir.name)
+            clean_mod = re.sub(r"[^a-zA-Z0-9_]", "_", module_spec)
+            unique_mod_name = f"_dynamic_workflow_{clean_bundle}_{clean_mod}"
+
+            spec = importlib.util.spec_from_file_location(
+                unique_mod_name,
+                str(target_file),
+                submodule_search_locations=[str(bundle_dir)] if target_file.name == "__init__.py" else None,
+            )
+            if spec is None or spec.loader is None:
+                raise ImportError(f"Cannot initialize module spec from '{target_file}'.")
+
+            mod = importlib.util.module_from_spec(spec)
+            sys.modules[unique_mod_name] = mod
+            spec.loader.exec_module(mod)
+        else:
+            mod = importlib.import_module(module_spec)
+
+        if not hasattr(mod, callable_name):
+            raise AttributeError(
+                f"Module '{module_spec}' in '{bundle_dir}' has no callable attribute '{callable_name}'."
+            )
+
+        callable_obj = getattr(mod, callable_name)
+        if not callable(callable_obj) and not hasattr(callable_obj, "invoke") and not hasattr(callable_obj, "ainvoke"):
+            raise TypeError(
+                f"Entrypoint '{entrypoint}' in '{bundle_dir}' resolved to non-callable, non-runnable object of type {type(callable_obj).__name__}."
+            )
+
+        return PluggableWorkflow(info=info, graph=callable_obj)
 
     def get(self, workflow_id: str) -> WorkflowDefinition:
         """Retrieve a registered workflow by ID. Raises KeyError if not found."""
@@ -132,8 +310,20 @@ def register_workflow(
     return _decorator(target)
 
 
+def load_workflows_from_directory(
+    path: Path | str,
+    *,
+    registry: WorkflowRegistry | None = None,
+    override: bool = False,
+) -> int:
+    """Helper function to load dynamic workflows from directory into a target or default registry."""
+    target_registry = registry if registry is not None else _default_registry
+    return target_registry.load_from_directory(path, override=override)
+
+
 __all__ = [
     "WorkflowRegistry",
     "get_workflow_registry",
     "register_workflow",
+    "load_workflows_from_directory",
 ]

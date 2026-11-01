@@ -14,6 +14,7 @@ from app.rag.workflows.react_agent import ReActAgentWorkflow
 from app.rag.workflows.registry import (
     WorkflowRegistry,
     get_workflow_registry,
+    load_workflows_from_directory,
     register_workflow,
 )
 from app.rag.workflows.runner import (
@@ -66,6 +67,7 @@ __all__ = [
     "WorkflowRegistry",
     "get_workflow_registry",
     "register_workflow",
+    "load_workflows_from_directory",
     "WorkflowRunner",
     "get_workflow_runner",
     "SelfCorrectiveRagWorkflow",

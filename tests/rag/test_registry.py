@@ -19,6 +19,7 @@ def _make_mock_workflow(wf_id: str, name: str = "") -> WorkflowDefinition:
         id=wf_id,
         name=name or wf_id.title(),
         description=f"Description for {wf_id}",
+        generation_nodes={"generate"},
     )
     wf.get_compiled_graph = MagicMock(return_value=f"graph_{wf_id}")
     return wf
@@ -72,6 +73,58 @@ def test_registry_invalid_workflow():
         reg.register(invalid_wf)
 
 
+def test_registry_preflight_non_workflow_info_type():
+    reg = WorkflowRegistry()
+    invalid_wf = MagicMock()
+    invalid_wf.info = {"id": "mock_id"}
+
+    with pytest.raises(ValueError, match="must be an instance of WorkflowInfo"):
+        reg.register(invalid_wf)
+
+
+def test_registry_preflight_empty_id():
+    reg = WorkflowRegistry()
+    invalid_wf = MagicMock()
+    invalid_wf.info = WorkflowInfo(
+        id="",
+        name="Empty ID WF",
+        description="WF with empty id",
+        supports_streaming=False,
+    )
+
+    with pytest.raises(ValueError, match="must have an 'info' attribute with a non-empty 'id'"):
+        reg.register(invalid_wf)
+
+
+def test_registry_preflight_streaming_without_generation_nodes():
+    reg = WorkflowRegistry()
+    wf = MagicMock()
+    wf.info = WorkflowInfo(
+        id="streaming_no_nodes",
+        name="Streaming WF",
+        description="Streaming WF without generation nodes",
+        supports_streaming=True,
+        generation_nodes=set(),
+    )
+
+    with pytest.raises(ValueError, match="declares supports_streaming=True but has empty generation_nodes"):
+        reg.register(wf)
+
+
+def test_registry_preflight_streaming_false_without_generation_nodes_succeeds():
+    reg = WorkflowRegistry()
+    wf = MagicMock()
+    wf.info = WorkflowInfo(
+        id="non_streaming_ok",
+        name="Non Streaming WF",
+        description="Non-streaming WF without generation nodes",
+        supports_streaming=False,
+        generation_nodes=set(),
+    )
+    reg.register(wf)
+    assert "non_streaming_ok" in reg
+
+
 def test_registry_list_ids_and_info():
     reg = WorkflowRegistry()
     reg.register(_make_mock_workflow("b_workflow", "B"))
@@ -115,6 +168,7 @@ def test_register_decorator_and_global_singleton():
                     id="decorated_wf",
                     name="Decorated Workflow",
                     description="Class decorated workflow",
+                    generation_nodes={"generate"},
                 )
                 self.get_compiled_graph = MagicMock()
 

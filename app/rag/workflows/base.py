@@ -16,6 +16,7 @@ class WorkflowInfo(BaseModel):
     id: str = Field(..., description="Unique slug identifying the workflow")
     name: str = Field(..., description="Human-readable display name")
     description: str = Field(..., description="Short explanation of workflow purpose and behavior")
+    entrypoint: str | None = Field(default=None, description="Dynamic entrypoint specifier module:function")
     is_conversational: bool = Field(default=False, description="Whether the workflow maintains conversational history")
     supports_streaming: bool = Field(default=True, description="Whether the workflow supports real-time token streaming")
     step_labels: dict[str, str] = Field(

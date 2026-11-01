@@ -13,9 +13,9 @@ Modernize `WorkflowRegistry` in `app/rag/workflows/registry.py` to support dynam
 
 **Blocked by:** 02: `StandardWorkflowState` & `PluggableWorkflow` Implementation
 
-**Status:** open
+**Status:** closed
 
-- [ ] Pre-flight validation in `WorkflowRegistry.register()`
-- [ ] `WorkflowRegistry.load_from_directory()` implemented with dynamic import resolution
-- [ ] Comprehensive unit tests in `tests/rag/test_registry_loader.py` covering valid bundles, invalid manifests, and syntax error modules
-- [ ] Verification suite: `uv run pytest tests/rag/test_registry_loader.py`
+- [x] Pre-flight validation in `WorkflowRegistry.register()`
+- [x] `WorkflowRegistry.load_from_directory()` implemented with dynamic import resolution
+- [x] Comprehensive unit tests in `tests/rag/test_registry_loader.py` covering valid bundles, invalid manifests, and syntax error modules
+- [x] Verification suite: `uv run pytest tests/rag/test_registry_loader.py`
