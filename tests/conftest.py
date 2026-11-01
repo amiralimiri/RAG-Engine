@@ -15,7 +15,12 @@ import app.core.telemetry as telemetry
 from app.api.schemas import ChatRequest, ChatResponse
 from app.rag.evaluation import reset_evaluator
 from app.rag.workflows import register_default_workflows
-from app.rag.workflows.base import EvalContext, WorkflowInfo
+from app.rag.workflows.base import (
+    EvalContext,
+    WorkflowInfo,
+    WorkflowInput,
+    WorkflowOutput,
+)
 from app.rag.workflows.registry import WorkflowRegistry, get_workflow_registry
 from app.rag.workflows.runner import (
     DEFAULT_GENERATION_NODES,
@@ -150,12 +155,27 @@ class MockWorkflowDefinition:
         mock.astream_events = _astream_events
         return mock
 
-    def to_initial_state(self, request: ChatRequest, trace_id: str | None = None) -> dict[str, Any]:
+    def to_initial_state(self, request: Any, trace_id: str | None = None) -> dict[str, Any]:
+        question = getattr(request, "question", "")
+        req_tid = getattr(request, "trace_id", None)
         return {
-            "question": request.question,
-            "trace_id": trace_id or request.trace_id,
-            "current_query": request.question,
+            "question": question,
+            "trace_id": trace_id or req_tid,
+            "current_query": question,
         }
+
+    def to_workflow_output(self, final_state: dict[str, Any], trace_id: str | None = None) -> WorkflowOutput:
+        return WorkflowOutput(
+            workflow=self.info.id,
+            answer=final_state.get("answer") or self.answer,
+            source_used=final_state.get("source_used") or self.source_used,
+            trace=final_state.get("trace") or self.trace,
+            citations=final_state.get("citations") or self.citations,
+            rewritten_query=final_state.get("rewritten_query")
+            or final_state.get("current_query")
+            or final_state.get("question"),
+            trace_id=trace_id or final_state.get("trace_id"),
+        )
 
     def to_chat_response(self, final_state: dict[str, Any], trace_id: str | None = None) -> ChatResponse:
         return ChatResponse(

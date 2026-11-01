@@ -11,10 +11,10 @@
 
 | Ticket | Title | Blocked By | Status |
 | :--- | :--- | :--- | :--- |
-| **01** | Domain DTOs (`WorkflowInput`, `WorkflowOutput`) & Transport Decoupling | None | Ready |
-| **02** | `StandardWorkflowState` & `PluggableWorkflow` Implementation | 01 | Pending |
+| **01** | Domain DTOs (`WorkflowInput`, `WorkflowOutput`) & Transport Decoupling | None | Completed |
+| **02** | `StandardWorkflowState` & `PluggableWorkflow` Implementation | 01 | Ready |
 | **03** | Dynamic Manifest + Factory Discovery in `WorkflowRegistry` | 02 | Pending |
-| **04** | `ExecutionProfile` 3-Tier Resolution & Multi-Dimensional Telemetry | 01 | Pending |
+| **04** | `ExecutionProfile` 3-Tier Resolution & Multi-Dimensional Telemetry | 01 | Ready |
 | **05** | Supervised Evaluator Seam Enhancement & Matrix Benchmarking Runner | 04 | Pending |
 
 ---

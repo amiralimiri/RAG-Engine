@@ -5,11 +5,12 @@ from typing import Any
 import pytest
 from langgraph.graph import END, START, StateGraph
 
-from app.api.schemas import ChatRequest, ChatResponse
 from app.rag.workflows.base import (
     EvalContext,
     WorkflowDefinition,
     WorkflowInfo,
+    WorkflowInput,
+    WorkflowOutput,
 )
 
 
@@ -35,12 +36,12 @@ class BaseWorkflowContractTest:
             )
 
     def test_to_initial_state_contract(self, workflow: WorkflowDefinition):
-        request = ChatRequest(
+        wf_input = WorkflowInput(
             question="How do I setup company VPN?",
             session_id="test_sess_001",
             user_id="user_123",
         )
-        state = workflow.to_initial_state(request, trace_id="trace_xyz")
+        state = workflow.to_initial_state(wf_input, trace_id="trace_xyz")
         assert isinstance(state, dict), "to_initial_state must return a dict"
         # Check that query content is preserved in state
         serialized_state = str(state)
@@ -48,9 +49,9 @@ class BaseWorkflowContractTest:
             "Inbound question must be preserved in internal initial state"
         )
 
-    def test_to_chat_response_contract(self, workflow: WorkflowDefinition):
-        request = ChatRequest(question="Test question")
-        init_state = workflow.to_initial_state(request, trace_id="trace_abc")
+    def test_to_workflow_output_contract(self, workflow: WorkflowDefinition):
+        wf_input = WorkflowInput(question="Test question")
+        init_state = workflow.to_initial_state(wf_input, trace_id="trace_abc")
         # Ensure minimal answer fields exist for state conversion
         test_state = dict(init_state)
         if not test_state.get("answer"):
@@ -62,18 +63,18 @@ class BaseWorkflowContractTest:
         if not test_state.get("trace"):
             test_state["trace"] = ["Step 1", "Step 2"]
 
-        response = workflow.to_chat_response(test_state, trace_id="trace_abc")
-        assert isinstance(response, ChatResponse), "to_chat_response must return a ChatResponse instance"
-        assert response.workflow == workflow.info.id, "ChatResponse workflow must match workflow.info.id"
-        assert response.answer, "ChatResponse answer must not be empty"
-        assert response.source_used, "ChatResponse source_used must be declared"
-        assert isinstance(response.citations, list), "ChatResponse citations must be a list"
-        assert isinstance(response.trace, list), "ChatResponse trace must be a list"
-        assert response.trace_id == "trace_abc", "ChatResponse trace_id must match passed trace_id"
+        response = workflow.to_workflow_output(test_state, trace_id="trace_abc")
+        assert isinstance(response, WorkflowOutput), "to_workflow_output must return a WorkflowOutput instance"
+        assert response.workflow == workflow.info.id, "WorkflowOutput workflow must match workflow.info.id"
+        assert response.answer, "WorkflowOutput answer must not be empty"
+        assert response.source_used, "WorkflowOutput source_used must be declared"
+        assert isinstance(response.citations, list), "WorkflowOutput citations must be a list"
+        assert isinstance(response.trace, list), "WorkflowOutput trace must be a list"
+        assert response.trace_id == "trace_abc", "WorkflowOutput trace_id must match passed trace_id"
 
     def test_extract_eval_context_contract(self, workflow: WorkflowDefinition):
-        request = ChatRequest(question="Test question")
-        init_state = workflow.to_initial_state(request)
+        wf_input = WorkflowInput(question="Test question")
+        init_state = workflow.to_initial_state(wf_input)
         test_state = dict(init_state)
         if not test_state.get("source_used"):
             test_state["source_used"] = "vectorstore"
@@ -92,9 +93,9 @@ class BaseWorkflowContractTest:
         exc = RuntimeError("Simulated upstream service outage")
         fallback_state = workflow.handle_error(exc, current_state={})
         assert isinstance(fallback_state, dict), "handle_error must return a dict state"
-        response = workflow.to_chat_response(fallback_state, trace_id="err_trace")
-        assert isinstance(response, ChatResponse), "Fallback state must convert into a valid ChatResponse"
-        assert response.answer, "Fallback ChatResponse must contain a user-facing explanation"
+        response = workflow.to_workflow_output(fallback_state, trace_id="err_trace")
+        assert isinstance(response, WorkflowOutput), "Fallback state must convert into a valid WorkflowOutput"
+        assert response.answer, "Fallback WorkflowOutput must contain a user-facing explanation"
         assert "error" in response.source_used.lower() or response.source_used == "insufficient_evidence", (
             f"Fallback source_used should indicate an error condition, got: '{response.source_used}'"
         )
@@ -140,11 +141,11 @@ class FakeWorkflow:
             self._compiled_graph = builder.compile()
         return self._compiled_graph
 
-    def to_initial_state(self, request: ChatRequest, trace_id: str | None = None) -> dict[str, Any]:
+    def to_initial_state(self, input: WorkflowInput | Any, trace_id: str | None = None) -> dict[str, Any]:
         return {
-            "question": request.question,
-            "session_id": request.session_id,
-            "trace_id": trace_id,
+            "question": getattr(input, "question", ""),
+            "session_id": getattr(input, "session_id", None),
+            "trace_id": trace_id or getattr(input, "trace_id", None),
             "answer": "",
             "source_used": "",
             "citations": [],
@@ -152,8 +153,8 @@ class FakeWorkflow:
             "retrieved_contexts": [],
         }
 
-    def to_chat_response(self, final_state: dict[str, Any], trace_id: str | None = None) -> ChatResponse:
-        return ChatResponse(
+    def to_workflow_output(self, final_state: dict[str, Any], trace_id: str | None = None) -> WorkflowOutput:
+        return WorkflowOutput(
             workflow=self.info.id,
             answer=final_state.get("answer") or "Fallback answer",
             source_used=final_state.get("source_used") or "direct",
@@ -161,6 +162,23 @@ class FakeWorkflow:
             trace=final_state.get("trace") or [],
             trace_id=trace_id,
         )
+
+    to_chat_response = to_workflow_output
+
+    def extract_eval_context(self, final_state: dict[str, Any]) -> EvalContext:
+        return EvalContext(
+            source_used=final_state.get("source_used", "direct"),
+            retrieved_contexts=final_state.get("retrieved_contexts", []),
+        )
+
+    def handle_error(self, exc: Exception, current_state: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "answer": "An unexpected error occurred while processing your request.",
+            "source_used": "error_fallback",
+            "trace": [f"Error: {str(exc)}"],
+            "citations": [],
+            "retrieved_contexts": [],
+        }
 
     def extract_eval_context(self, final_state: dict[str, Any]) -> EvalContext:
         return EvalContext(

@@ -13,12 +13,12 @@ Decouple `app/rag/workflows/` completely from the transport layer (`app.api.sche
 
 **Blocked by:** None (can start immediately)
 
-**Status:** open
+**Status:** completed
 
-- [ ] `WorkflowInput` and `WorkflowOutput` defined in `app/rag/workflows/base.py`
-- [ ] No imports from `app.api.schemas` present in `app/rag/workflows/base.py`, `react_agent.py`, `self_corrective.py`
-- [ ] `WorkflowDefinition` Protocol updated with domain DTO signatures
-- [ ] `SelfCorrectiveRagWorkflow` and `ReActAgentWorkflow` implement `to_workflow_output`
-- [ ] `WorkflowRunner` translates between transport models (`ChatRequest`/`ChatResponse`) and domain DTOs
-- [ ] Conformance tests in `tests/rag/test_workflow_contracts.py` updated and passing
-- [ ] All existing workflow and runner tests pass: `uv run pytest tests/rag/test_workflow_runner.py tests/rag/test_workflow_contracts.py`
+- [x] `WorkflowInput` and `WorkflowOutput` defined in `app/rag/workflows/base.py`
+- [x] No imports from `app.api.schemas` present in `app/rag/workflows/base.py`, `react_agent.py`, `self_corrective.py`
+- [x] `WorkflowDefinition` Protocol updated with domain DTO signatures
+- [x] `SelfCorrectiveRagWorkflow` and `ReActAgentWorkflow` implement `to_workflow_output`
+- [x] `WorkflowRunner` translates between transport models (`ChatRequest`/`ChatResponse`) and domain DTOs
+- [x] Conformance tests in `tests/rag/test_workflow_contracts.py` updated and passing
+- [x] All existing workflow and runner tests pass: `uv run pytest tests/rag/test_workflow_runner.py tests/rag/test_workflow_contracts.py`

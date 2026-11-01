@@ -18,10 +18,12 @@ from langchain_core.messages import (
 from langchain_core.tools import BaseTool
 from langgraph.checkpoint.memory import MemorySaver
 
-from app.rag.workflows.base import EvalContext, WorkflowInfo
-
-if TYPE_CHECKING:
-    from app.api.schemas import ChatRequest, ChatResponse
+from app.rag.workflows.base import (
+    EvalContext,
+    WorkflowInfo,
+    WorkflowInput,
+    WorkflowOutput,
+)
 
 DEFAULT_REACT_STEP_LABELS: dict[str, str] = {
     "agent": "Reasoning & planning response...",
@@ -144,35 +146,61 @@ class ReActAgentWorkflow:
                 )
             return self._compiled_graph
 
-    def to_initial_state(self, request: ChatRequest, trace_id: str | None = None) -> dict[str, Any]:
+    def to_initial_state(self, input: WorkflowInput | Any, trace_id: str | None = None) -> dict[str, Any]:
         messages: list[BaseMessage] = []
-        if request.messages:
-            for m in request.messages:
-                role = (m.role or "").lower()
-                if role in ("user", "human"):
-                    messages.append(HumanMessage(content=m.content))
-                elif role in ("assistant", "ai"):
-                    messages.append(AIMessage(content=m.content))
-                elif role == "system":
-                    messages.append(SystemMessage(content=m.content))
+        raw_messages = getattr(input, "messages", None)
+        if raw_messages:
+            for m in raw_messages:
+                if isinstance(m, BaseMessage):
+                    messages.append(m)
+                elif isinstance(m, dict):
+                    role = (m.get("role") or "").lower()
+                    content = m.get("content", "")
+                    if role in ("user", "human"):
+                        messages.append(HumanMessage(content=content))
+                    elif role in ("assistant", "ai"):
+                        messages.append(AIMessage(content=content))
+                    elif role == "system":
+                        messages.append(SystemMessage(content=content))
+                    else:
+                        messages.append(HumanMessage(content=content))
                 else:
-                    messages.append(HumanMessage(content=m.content))
+                    role = (getattr(m, "role", "") or "").lower()
+                    content = getattr(m, "content", "")
+                    if role in ("user", "human"):
+                        messages.append(HumanMessage(content=content))
+                    elif role in ("assistant", "ai"):
+                        messages.append(AIMessage(content=content))
+                    elif role == "system":
+                        messages.append(SystemMessage(content=content))
+                    else:
+                        messages.append(HumanMessage(content=content))
 
+        question = getattr(input, "question", "")
         # Append incoming question as latest HumanMessage if not already ending with it
-        if not messages or getattr(messages[-1], "content", None) != request.question:
-            messages.append(HumanMessage(content=request.question))
+        if not messages or getattr(messages[-1], "content", None) != question:
+            messages.append(HumanMessage(content=question))
+
+        attachments = []
+        raw_attachments = getattr(input, "attachments", None)
+        if raw_attachments:
+            for a in raw_attachments:
+                if isinstance(a, dict):
+                    attachments.append(a)
+                elif hasattr(a, "model_dump"):
+                    attachments.append(a.model_dump())
+                else:
+                    attachments.append(dict(a))
 
         return {
             "messages": messages,
-            "question": request.question,
-            "session_id": request.session_id,
-            "trace_id": trace_id or request.trace_id,
-            "attachments": request.attachments or [],
+            "question": question,
+            "session_id": getattr(input, "session_id", None),
+            "trace_id": trace_id or getattr(input, "trace_id", None),
+            "attachments": attachments,
         }
 
-    def to_chat_response(self, final_state: dict[str, Any], trace_id: str | None = None) -> ChatResponse:
-        from app.api.schemas import ChatResponse
-
+    def to_workflow_output(self, final_state: dict[str, Any], trace_id: str | None = None) -> WorkflowOutput:
         messages = final_state.get("messages", [])
         last_ai = None
         for m in reversed(messages):
@@ -246,7 +274,7 @@ class ReActAgentWorkflow:
         trace.append("Synthesized conversational response")
 
         resolved_tid = trace_id or final_state.get("trace_id")
-        return ChatResponse(
+        return WorkflowOutput(
             workflow=self.info.id,
             answer=answer,
             source_used=source_used,
@@ -255,6 +283,8 @@ class ReActAgentWorkflow:
             rewritten_query=question,
             trace_id=resolved_tid,
         )
+
+    to_chat_response = to_workflow_output
 
     def extract_eval_context(self, final_state: dict[str, Any]) -> EvalContext:
         messages = final_state.get("messages", [])

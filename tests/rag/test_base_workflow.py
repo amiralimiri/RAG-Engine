@@ -16,6 +16,8 @@ from app.rag.workflows.base import (
     EvalContext,
     WorkflowDefinition,
     WorkflowInfo,
+    WorkflowInput,
+    WorkflowOutput,
 )
 
 
@@ -36,8 +38,16 @@ class DummyCompliantWorkflow:
     def get_compiled_graph(self) -> Any:
         return "mock_compiled_graph"
 
-    def to_initial_state(self, request: ChatRequest, trace_id: str | None = None) -> dict[str, Any]:
-        return {"question": request.question, "trace_id": trace_id}
+    def to_initial_state(self, input: WorkflowInput | Any, trace_id: str | None = None) -> dict[str, Any]:
+        return {"question": getattr(input, "question", ""), "trace_id": trace_id}
+
+    def to_workflow_output(self, final_state: dict[str, Any], trace_id: str | None = None) -> WorkflowOutput:
+        return WorkflowOutput(
+            workflow="dummy_workflow",
+            answer=final_state.get("answer", "ok"),
+            source_used=final_state.get("source_used", "direct"),
+            trace_id=trace_id,
+        )
 
     def to_chat_response(self, final_state: dict[str, Any], trace_id: str | None = None) -> ChatResponse:
         return ChatResponse(
@@ -121,6 +131,47 @@ def test_chat_message_and_attachment_schemas():
     )
     assert att.filename == "screenshot.png"
     assert att.url == "https://example.com/screenshot.png"
+
+
+def test_workflow_input_schema():
+    wf_in = WorkflowInput(question="How do I setup VPN?")
+    assert wf_in.question == "How do I setup VPN?"
+    assert wf_in.messages is None
+    assert wf_in.attachments is None
+    assert wf_in.session_id is None
+    assert wf_in.user_id is None
+    assert wf_in.trace_id is None
+    assert wf_in.variant_id is None
+    assert wf_in.parameters == {}
+
+    custom_in = WorkflowInput(
+        question="Query",
+        messages=[{"role": "user", "content": "hello"}],
+        attachments=[{"filename": "doc.pdf", "content_type": "application/pdf"}],
+        session_id="s1",
+        user_id="u1",
+        trace_id="t1",
+        variant_id="v1",
+        parameters={"temperature": 0.5},
+    )
+    assert custom_in.session_id == "s1"
+    assert custom_in.variant_id == "v1"
+    assert custom_in.parameters["temperature"] == 0.5
+
+
+def test_workflow_output_schema():
+    wf_out = WorkflowOutput(
+        workflow="test_wf",
+        answer="Hello there!",
+    )
+    assert wf_out.workflow == "test_wf"
+    assert wf_out.answer == "Hello there!"
+    assert wf_out.source_used == "direct"
+    assert wf_out.citations == []
+    assert wf_out.trace == []
+    assert wf_out.rewritten_query is None
+    assert wf_out.trace_id is None
+    assert wf_out.variant_id is None
 
 
 def test_chat_request_backward_compatibility():

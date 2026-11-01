@@ -23,7 +23,12 @@ from app.core.telemetry import (
     get_langfuse_callback,
 )
 from app.rag.evaluation import FakeEvaluator, get_evaluator
-from app.rag.workflows.base import EvalContext, WorkflowInfo
+from app.rag.workflows.base import (
+    EvalContext,
+    WorkflowInfo,
+    WorkflowInput,
+    WorkflowOutput,
+)
 from app.rag.workflows.registry import WorkflowRegistry, get_workflow_registry
 from app.rag.workflows.runner import (
     ExecutionResult,
@@ -62,14 +67,25 @@ class MockWorkflow:
     def get_compiled_graph(self) -> Any:
         return self.mock_graph
 
-    def to_initial_state(self, request: ChatRequest, trace_id: str | None = None) -> dict[str, Any]:
+    def to_initial_state(self, request: Any, trace_id: str | None = None) -> dict[str, Any]:
         return {
-            "question": request.question,
-            "trace_id": trace_id or request.trace_id,
-            "session_id": request.session_id,
+            "question": getattr(request, "question", ""),
+            "trace_id": trace_id or getattr(request, "trace_id", None),
+            "session_id": getattr(request, "session_id", None),
             "retrieved_contexts": [],
             "trace": [],
         }
+
+    def to_workflow_output(self, final_state: dict[str, Any], trace_id: str | None = None) -> WorkflowOutput:
+        return WorkflowOutput(
+            workflow=self.info.id,
+            answer=final_state.get("answer", ""),
+            source_used=final_state.get("source_used", "direct"),
+            trace=final_state.get("trace", []),
+            citations=final_state.get("citations", []),
+            rewritten_query=final_state.get("current_query") or final_state.get("question"),
+            trace_id=trace_id or final_state.get("trace_id"),
+        )
 
     def to_chat_response(self, final_state: dict[str, Any], trace_id: str | None = None) -> ChatResponse:
         return ChatResponse(
@@ -1476,3 +1492,140 @@ async def test_evaluator_exception_shielded_in_finalize_and_stream():
         await asyncio.gather(*list(runner._background_tasks), return_exceptions=True)
         assert failing_eval.aevaluate.called
         assert mock_warn.called
+
+
+def test_runner_bridges_chat_request_to_workflow_input(clean_registry):
+    """Verify WorkflowRunner transforms ChatRequest to domain WorkflowInput."""
+    recorded_input: list[WorkflowInput] = []
+
+    class PureDomainWorkflow:
+        info = WorkflowInfo(
+            id="pure_domain_wf",
+            name="Pure Domain Workflow",
+            description="Workflow with zero transport dependencies",
+            step_labels={"node1": "Running"},
+            generation_nodes={"node1"},
+        )
+
+        def get_compiled_graph(self):
+            graph = MagicMock()
+            graph.invoke.return_value = {
+                "answer": "Pure domain answer",
+                "source_used": "direct",
+                "citations": [],
+                "trace": [],
+            }
+            return graph
+
+        def to_initial_state(self, input: WorkflowInput, trace_id: str | None = None):
+            recorded_input.append(input)
+            return {"question": input.question, "trace_id": trace_id}
+
+        def to_workflow_output(self, final_state: dict[str, Any], trace_id: str | None = None) -> WorkflowOutput:
+            return WorkflowOutput(
+                workflow=self.info.id,
+                answer=final_state.get("answer", ""),
+                source_used=final_state.get("source_used", "direct"),
+                trace_id=trace_id,
+            )
+
+        def extract_eval_context(self, final_state):
+            return EvalContext(source_used="direct", retrieved_contexts=[])
+
+        def handle_error(self, exc, current_state):
+            return {"answer": f"Error: {exc}", "source_used": "error"}
+
+    clean_registry.register(PureDomainWorkflow())
+    runner = WorkflowRunner(registry=clean_registry)
+
+    req = ChatRequest(
+        question="How to configure VPN?",
+        workflow="pure_domain_wf",
+        session_id="session_100",
+        user_id="user_200",
+        trace_id="trace_300",
+    )
+    resp = runner.execute(req)
+
+    assert isinstance(resp, ChatResponse)
+    assert resp.answer == "Pure domain answer"
+    assert resp.workflow == "pure_domain_wf"
+    assert resp.trace_id == "trace_300"
+    assert len(recorded_input) == 1
+    assert isinstance(recorded_input[0], WorkflowInput)
+    assert recorded_input[0].question == "How to configure VPN?"
+    assert recorded_input[0].session_id == "session_100"
+    assert recorded_input[0].user_id == "user_200"
+    assert recorded_input[0].trace_id == "trace_300"
+
+
+@pytest.mark.asyncio
+async def test_runner_bridges_workflow_output_in_stream(clean_registry):
+    """Verify WorkflowRunner transforms WorkflowOutput to ChatResponse metadata in stream."""
+    class StreamPureDomainWorkflow:
+        info = WorkflowInfo(
+            id="stream_pure_wf",
+            name="Stream Pure Workflow",
+            description="Stream workflow with zero transport dependencies",
+            step_labels={"gen": "Generating..."},
+            generation_nodes={"gen"},
+        )
+
+        def get_compiled_graph(self):
+            graph = MagicMock()
+
+            async def _astream_events(*args, **kwargs):
+                yield {
+                    "event": "on_chat_model_stream",
+                    "metadata": {"langgraph_node": "gen"},
+                    "data": {"chunk": MagicMock(content="Token 1", tool_call_chunks=[])},
+                }
+                yield {
+                    "event": "on_chain_end",
+                    "metadata": {"langgraph_node": "gen"},
+                    "data": {
+                        "output": {
+                            "answer": "Token 1",
+                            "source_used": "vectorstore",
+                            "citations": [{"title": "guide.pdf"}],
+                            "trace": ["gen"],
+                        }
+                    },
+                }
+
+            graph.astream_events = _astream_events
+            return graph
+
+        def to_initial_state(self, input: WorkflowInput, trace_id: str | None = None):
+            return {"question": input.question, "trace_id": trace_id}
+
+        def to_workflow_output(self, final_state: dict[str, Any], trace_id: str | None = None) -> WorkflowOutput:
+            return WorkflowOutput(
+                workflow=self.info.id,
+                answer=final_state.get("answer", ""),
+                source_used=final_state.get("source_used", "direct"),
+                citations=final_state.get("citations", []),
+                trace=final_state.get("trace", []),
+                trace_id=trace_id,
+            )
+
+        def extract_eval_context(self, final_state):
+            return EvalContext(source_used="vectorstore", retrieved_contexts=["ctx"])
+
+        def handle_error(self, exc, current_state):
+            return {"answer": f"Error: {exc}", "source_used": "error"}
+
+    clean_registry.register(StreamPureDomainWorkflow())
+    runner = WorkflowRunner(registry=clean_registry)
+
+    req = ChatRequest(question="Streaming question?", workflow="stream_pure_wf", trace_id="trace_stream_1")
+    events = [event async for event in runner.stream(req)]
+
+    # Final event must be metadata containing StreamMetadataEvent payload
+    meta_event = [e for e in events if "event: metadata" in e]
+    assert len(meta_event) == 1
+    meta_data = json.loads(meta_event[0].replace("event: metadata\ndata: ", "").strip())
+    assert meta_data["workflow"] == "stream_pure_wf"
+    assert meta_data["source_used"] == "vectorstore"
+    assert meta_data["citations"] == [{"title": "guide.pdf"}]
+    assert meta_data["trace_id"] == "trace_stream_1"

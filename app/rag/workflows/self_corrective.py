@@ -10,10 +10,12 @@ from langchain_core.tools import BaseTool
 
 from app.rag.classifiers import WorkflowClassifier
 from app.rag.engine import create_agentic_rag_graph
-from app.rag.workflows.base import EvalContext, WorkflowInfo
-
-if TYPE_CHECKING:
-    from app.api.schemas import ChatRequest, ChatResponse
+from app.rag.workflows.base import (
+    EvalContext,
+    WorkflowInfo,
+    WorkflowInput,
+    WorkflowOutput,
+)
 
 DEFAULT_STEP_LABELS: dict[str, str] = {
     "route_question": "Analyzing inquiry & routing...",
@@ -88,9 +90,20 @@ class SelfCorrectiveRagWorkflow:
                 )
             return self._compiled_graph
 
-    def to_initial_state(self, request: ChatRequest, trace_id: str | None = None) -> dict[str, Any]:
+    def to_initial_state(self, input: WorkflowInput | Any, trace_id: str | None = None) -> dict[str, Any]:
+        attachments = []
+        raw_attachments = getattr(input, "attachments", None)
+        if raw_attachments:
+            for a in raw_attachments:
+                if isinstance(a, dict):
+                    attachments.append(a)
+                elif hasattr(a, "model_dump"):
+                    attachments.append(a.model_dump())
+                else:
+                    attachments.append(dict(a))
+
         return {
-            "question": request.question,
+            "question": getattr(input, "question", ""),
             "current_query": "",
             "kb_docs": [],
             "web_results": "",
@@ -101,23 +114,33 @@ class SelfCorrectiveRagWorkflow:
             "retry_count": 0,
             "trace": [],
             "citations": [],
-            "trace_id": trace_id or request.trace_id,
+            "trace_id": trace_id or getattr(input, "trace_id", None),
             "retrieved_contexts": [],
-            "attachments": request.attachments or [],
+            "attachments": attachments,
         }
 
-    def to_chat_response(self, final_state: dict[str, Any], trace_id: str | None = None) -> ChatResponse:
-        from app.api.schemas import ChatResponse
+    def to_workflow_output(self, final_state: dict[str, Any], trace_id: str | None = None) -> WorkflowOutput:
         resolved_tid = trace_id or final_state.get("trace_id")
-        return ChatResponse(
+        citations = []
+        for c in final_state.get("citations") or []:
+            if isinstance(c, dict):
+                citations.append(c)
+            elif hasattr(c, "model_dump"):
+                citations.append(c.model_dump())
+            else:
+                citations.append({"text": str(c)})
+
+        return WorkflowOutput(
             workflow=self.info.id,
             answer=final_state.get("answer") or "",
             source_used=final_state.get("source_used") or "direct",
             trace=final_state.get("trace") or [],
-            citations=final_state.get("citations") or [],
+            citations=citations,
             rewritten_query=final_state.get("current_query") or final_state.get("question"),
             trace_id=resolved_tid,
         )
+
+    to_chat_response = to_workflow_output
 
     def extract_eval_context(self, final_state: dict[str, Any]) -> EvalContext:
         return EvalContext(

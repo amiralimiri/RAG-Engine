@@ -25,7 +25,12 @@ from app.core.telemetry import (
     get_langfuse_callback,
 )
 from app.rag.evaluation import Evaluator, get_evaluator
-from app.rag.workflows.base import EvalContext, WorkflowDefinition
+from app.rag.workflows.base import (
+    EvalContext,
+    WorkflowDefinition,
+    WorkflowInput,
+    WorkflowOutput,
+)
 from app.rag.workflows.registry import WorkflowRegistry, get_workflow_registry
 
 logger = structlog.get_logger(__name__)
@@ -172,6 +177,103 @@ class WorkflowRunner:
         except KeyError:
             raise HTTPException(status_code=400, detail=f"Unknown workflow: {workflow_name}")
 
+    def _to_workflow_input(
+        self,
+        request: ChatRequest | WorkflowInput,
+        trace_id: str | None = None,
+    ) -> WorkflowInput:
+        """Bridge inbound transport ChatRequest or WorkflowInput to domain WorkflowInput."""
+        if isinstance(request, WorkflowInput):
+            if trace_id and not request.trace_id:
+                return request.model_copy(update={"trace_id": trace_id})
+            return request
+
+        raw_msgs = getattr(request, "messages", None)
+        messages = None
+        if raw_msgs:
+            messages = [
+                m.model_dump()
+                if hasattr(m, "model_dump")
+                else (dict(m) if isinstance(m, dict) else {"role": getattr(m, "role", ""), "content": getattr(m, "content", "")})
+                for m in raw_msgs
+            ]
+
+        raw_att = getattr(request, "attachments", None)
+        attachments = None
+        if raw_att:
+            attachments = [
+                a.model_dump() if hasattr(a, "model_dump") else (dict(a) if isinstance(a, dict) else dict(a))
+                for a in raw_att
+            ]
+
+        return WorkflowInput(
+            question=request.question,
+            messages=messages,
+            attachments=attachments,
+            session_id=getattr(request, "session_id", None),
+            user_id=getattr(request, "user_id", None),
+            trace_id=trace_id or getattr(request, "trace_id", None),
+            variant_id=getattr(request, "variant_id", None),
+            parameters=getattr(request, "parameters", None) or {},
+        )
+
+    def _to_chat_response(
+        self,
+        output: WorkflowOutput | ChatResponse,
+        trace_id: str | None = None,
+    ) -> ChatResponse:
+        """Bridge domain WorkflowOutput or ChatResponse to transport ChatResponse."""
+        from app.api.schemas import ChatResponse
+
+        if isinstance(output, ChatResponse):
+            if trace_id and not output.trace_id:
+                output.trace_id = trace_id
+            return output
+
+        resolved_tid = trace_id or getattr(output, "trace_id", None)
+        return ChatResponse(
+            workflow=output.workflow,
+            answer=output.answer,
+            source_used=output.source_used,
+            citations=output.citations,
+            trace=output.trace,
+            rewritten_query=output.rewritten_query,
+            trace_id=resolved_tid,
+        )
+
+    def _adapt_workflow_output(
+        self,
+        wf_def: WorkflowDefinition,
+        final_state: dict[str, Any],
+        trace_id: str | None = None,
+    ) -> WorkflowOutput:
+        """Extract domain WorkflowOutput from workflow instance adapting either to_workflow_output or to_chat_response."""
+        if hasattr(wf_def, "to_workflow_output"):
+            out = wf_def.to_workflow_output(final_state, trace_id=trace_id)
+            if isinstance(out, WorkflowOutput):
+                return out
+            return WorkflowOutput(
+                workflow=getattr(out, "workflow", wf_def.info.id),
+                answer=getattr(out, "answer", ""),
+                source_used=getattr(out, "source_used", "direct"),
+                citations=getattr(out, "citations", []),
+                trace=getattr(out, "trace", []),
+                rewritten_query=getattr(out, "rewritten_query", None),
+                trace_id=getattr(out, "trace_id", trace_id),
+            )
+        if hasattr(wf_def, "to_chat_response"):
+            resp = wf_def.to_chat_response(final_state, trace_id=trace_id)
+            return WorkflowOutput(
+                workflow=getattr(resp, "workflow", wf_def.info.id),
+                answer=getattr(resp, "answer", ""),
+                source_used=getattr(resp, "source_used", "direct"),
+                citations=getattr(resp, "citations", []),
+                trace=getattr(resp, "trace", []),
+                rewritten_query=getattr(resp, "rewritten_query", None),
+                trace_id=getattr(resp, "trace_id", trace_id),
+            )
+        raise AttributeError(f"Workflow '{wf_def}' does not implement to_workflow_output or to_chat_response")
+
     def _prepare_execution(
         self,
         request: ChatRequest,
@@ -232,7 +334,8 @@ class WorkflowRunner:
             context_bindings["user_id"] = request.user_id
         structlog.contextvars.bind_contextvars(**context_bindings)
 
-        initial_state = wf_def.to_initial_state(request, trace_id=trace_id)
+        wf_input = self._to_workflow_input(request, trace_id=trace_id)
+        initial_state = wf_def.to_initial_state(wf_input, trace_id=trace_id)
 
         if config is not None:
             run_config = dict(config)
@@ -304,7 +407,8 @@ class WorkflowRunner:
         """Convert final state to ChatResponse, bind resolved trace context, and schedule online evaluation."""
         tr_extractor = self.trace_extractor
 
-        chat_response = wf_def.to_chat_response(final_state, trace_id=trace_id)
+        domain_output = self._adapt_workflow_output(wf_def, final_state, trace_id=trace_id)
+        chat_response = self._to_chat_response(domain_output, trace_id=trace_id)
         resolved_tid = tr_extractor(handler) or trace_id or chat_response.trace_id
 
         if resolved_tid:
@@ -671,7 +775,7 @@ class WorkflowRunner:
                 fallback_answer = final_output.get("answer")
                 if not fallback_answer and wf_def is not None:
                     try:
-                        candidate_resp = wf_def.to_chat_response(final_output)
+                        candidate_resp = self._adapt_workflow_output(wf_def, final_output)
                         fallback_answer = candidate_resp.answer
                     except Exception:
                         pass
@@ -684,7 +788,8 @@ class WorkflowRunner:
             # 5. Terminal Metadata Event
             resolved_tid = tr_extractor(handler) or trace_id
             if wf_def is not None:
-                chat_resp = wf_def.to_chat_response(final_output, trace_id=resolved_tid)
+                domain_output = self._adapt_workflow_output(wf_def, final_output, trace_id=resolved_tid)
+                chat_resp = self._to_chat_response(domain_output, trace_id=resolved_tid)
                 eval_ctx = wf_def.extract_eval_context(final_output)
                 final_trace = accumulated_trace or chat_resp.trace
                 final_source_used = chat_resp.source_used or (

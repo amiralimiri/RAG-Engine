@@ -1,7 +1,13 @@
 """Workflows package for multi-workflow agentic execution."""
 
 from app.rag.classifiers import JevClassifierAdapter, OpenAIClassifierAdapter
-from app.rag.workflows.base import EvalContext, WorkflowDefinition, WorkflowInfo
+from app.rag.workflows.base import (
+    EvalContext,
+    WorkflowDefinition,
+    WorkflowInfo,
+    WorkflowInput,
+    WorkflowOutput,
+)
 from app.rag.workflows.react_agent import ReActAgentWorkflow
 from app.rag.workflows.registry import (
     WorkflowRegistry,
@@ -51,6 +57,8 @@ register_default_workflows()
 __all__ = [
     "WorkflowInfo",
     "EvalContext",
+    "WorkflowInput",
+    "WorkflowOutput",
     "ExecutionResult",
     "WorkflowDefinition",
     "WorkflowRegistry",
