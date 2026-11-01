@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
-from typing import Any, Protocol, runtime_checkable
+import threading
+from collections.abc import Callable, Sequence
+from typing import Any, Protocol, TypedDict, runtime_checkable
 
-from pydantic import BaseModel, Field, field_validator
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
+from pydantic import BaseModel, Field
 
 
 class WorkflowInfo(BaseModel):
@@ -107,10 +110,341 @@ class WorkflowDefinition(Protocol):
         ...
 
 
+class StandardWorkflowState(TypedDict, total=False):
+    """Canonical state dictionary contract for pluggable workflow topologies."""
+
+    question: str
+    messages: Sequence[BaseMessage]
+    attachments: list[dict[str, Any]]
+    session_id: str | None
+    trace_id: str | None
+    answer: str
+    retrieved_contexts: list[str]
+    source_used: str
+    citations: list[dict[str, Any]]
+    trace: list[str]
+    rewritten_query: str | None
+
+
+def _extract_text_content(content: Any) -> str:
+    """Extract plain string content from string, list of blocks, or object."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for c in content:
+            if isinstance(c, dict):
+                parts.append(str(c.get("text", "")))
+            elif hasattr(c, "text"):
+                parts.append(str(getattr(c, "text", "") or ""))
+            else:
+                parts.append(str(c))
+        return "".join(parts)
+    return str(content) if content is not None else ""
+
+
+def _extract_answer(state: dict[str, Any]) -> str:
+    """Extract answer text from state['answer'] or trailing AIMessage in state['messages']."""
+    raw_answer = state.get("answer")
+    if raw_answer:
+        if isinstance(raw_answer, AIMessage):
+            ans = _extract_text_content(raw_answer.content)
+            if ans.strip():
+                return ans
+        elif isinstance(raw_answer, str):
+            if raw_answer.strip():
+                return raw_answer
+        else:
+            ans = _extract_text_content(raw_answer)
+            if ans.strip():
+                return ans
+
+    messages = state.get("messages")
+    if isinstance(messages, Sequence):
+        for m in reversed(messages):
+            if isinstance(m, AIMessage):
+                text = _extract_text_content(m.content)
+                if text.strip():
+                    return text
+            elif isinstance(m, dict) and (m.get("role") or "").lower() in ("assistant", "ai"):
+                text = _extract_text_content(m.get("content", ""))
+                if text.strip():
+                    return text
+            elif hasattr(m, "role") and str(getattr(m, "role", "")).lower() in ("assistant", "ai"):
+                text = _extract_text_content(getattr(m, "content", ""))
+                if text.strip():
+                    return text
+
+    return ""
+
+
+class PluggableWorkflow:
+    """Generic adapter wrapping compiled LangGraph runnables or factory callables."""
+
+    def __init__(
+        self,
+        info: WorkflowInfo,
+        graph: Any | Callable[[], Any],
+    ) -> None:
+        self.info = info
+        self._raw_graph = graph
+        self._lock = threading.RLock()
+        self._compiled_graph: Any | None = None
+        self._variant_graphs: dict[str, Any] = {}
+
+        if hasattr(graph, "invoke") or hasattr(graph, "ainvoke"):
+            self._compiled_graph = graph
+            self._graph_factory = None
+        elif callable(graph):
+            self._compiled_graph = None
+            self._graph_factory = graph
+        else:
+            self._compiled_graph = graph
+            self._graph_factory = None
+
+    def get_compiled_graph(self, variant_id: str | None = None) -> Any:
+        """Return the compiled, thread-safe LangGraph runnable."""
+        with self._lock:
+            if variant_id is not None:
+                if variant_id in self._variant_graphs:
+                    return self._variant_graphs[variant_id]
+                if self._graph_factory is not None:
+                    try:
+                        vg = self._graph_factory(variant_id=variant_id)  # type: ignore
+                    except TypeError:
+                        vg = self._graph_factory()
+                    self._variant_graphs[variant_id] = vg
+                    return vg
+                if self._compiled_graph is not None:
+                    return self._compiled_graph
+
+            if self._compiled_graph is None:
+                if self._graph_factory is not None:
+                    self._compiled_graph = self._graph_factory()
+                else:
+                    self._compiled_graph = self._raw_graph
+            return self._compiled_graph
+
+    def to_initial_state(
+        self,
+        input: WorkflowInput | dict[str, Any] | Any,
+        trace_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Normalize inbound WorkflowInput into canonical StandardWorkflowState."""
+        if isinstance(input, dict):
+            raw_question = input.get("question", "")
+            raw_messages = input.get("messages")
+            raw_attachments = input.get("attachments")
+            session_id = input.get("session_id")
+            resolved_tid = trace_id or input.get("trace_id")
+            variant_id = input.get("variant_id")
+        else:
+            raw_question = getattr(input, "question", "")
+            raw_messages = getattr(input, "messages", None)
+            raw_attachments = getattr(input, "attachments", None)
+            session_id = getattr(input, "session_id", None)
+            resolved_tid = trace_id or getattr(input, "trace_id", None)
+            variant_id = getattr(input, "variant_id", None)
+
+        messages: list[BaseMessage] = []
+        if raw_messages:
+            for m in raw_messages:
+                if isinstance(m, BaseMessage):
+                    messages.append(m)
+                elif isinstance(m, dict):
+                    role = (m.get("role") or "").lower()
+                    content = m.get("content", "")
+                    if role in ("user", "human"):
+                        messages.append(HumanMessage(content=content))
+                    elif role in ("assistant", "ai"):
+                        messages.append(AIMessage(content=content))
+                    elif role == "system":
+                        messages.append(SystemMessage(content=content))
+                    else:
+                        messages.append(HumanMessage(content=content))
+                else:
+                    role = (getattr(m, "role", "") or "").lower()
+                    content = getattr(m, "content", "")
+                    if role in ("user", "human"):
+                        messages.append(HumanMessage(content=content))
+                    elif role in ("assistant", "ai"):
+                        messages.append(AIMessage(content=content))
+                    elif role == "system":
+                        messages.append(SystemMessage(content=content))
+                    else:
+                        messages.append(HumanMessage(content=content))
+
+        question = raw_question or ""
+        if question:
+            if not messages or getattr(messages[-1], "content", None) != question:
+                messages.append(HumanMessage(content=question))
+        elif messages:
+            for m in reversed(messages):
+                if isinstance(m, HumanMessage):
+                    question = str(m.content)
+                    break
+
+        attachments: list[dict[str, Any]] = []
+        if raw_attachments:
+            for a in raw_attachments:
+                if isinstance(a, dict):
+                    attachments.append(a)
+                elif hasattr(a, "model_dump"):
+                    attachments.append(a.model_dump())
+                else:
+                    attachments.append(dict(a))
+
+        state: dict[str, Any] = {
+            "question": question,
+            "messages": messages,
+            "attachments": attachments,
+            "session_id": session_id,
+            "trace_id": resolved_tid,
+            "answer": "",
+            "retrieved_contexts": [],
+            "source_used": "",
+            "citations": [],
+            "trace": [],
+            "rewritten_query": None,
+        }
+        if variant_id is not None:
+            state["variant_id"] = variant_id
+
+        return state
+
+    def to_workflow_output(
+        self,
+        final_state: dict[str, Any],
+        trace_id: str | None = None,
+    ) -> WorkflowOutput:
+        """Convert internal graph state into standard domain WorkflowOutput."""
+        answer = _extract_answer(final_state)
+        resolved_tid = trace_id or final_state.get("trace_id")
+
+        source_used = final_state.get("source_used")
+        if not source_used:
+            if final_state.get("retrieved_contexts"):
+                source_used = "knowledge_base"
+            else:
+                source_used = "direct"
+
+        citations: list[dict[str, Any]] = []
+        for c in final_state.get("citations") or []:
+            if isinstance(c, dict):
+                citations.append(c)
+            elif hasattr(c, "model_dump"):
+                citations.append(c.model_dump())
+            else:
+                citations.append({"text": str(c)})
+
+        if not citations:
+            messages = final_state.get("messages")
+            if isinstance(messages, Sequence):
+                for m in messages:
+                    artifact = getattr(m, "artifact", None)
+                    if isinstance(artifact, list):
+                        for item in artifact:
+                            if isinstance(item, dict) and item not in citations:
+                                citations.append(item)
+
+        raw_trace = final_state.get("trace")
+        if isinstance(raw_trace, list):
+            trace = [str(t) for t in raw_trace]
+        elif raw_trace:
+            trace = [str(raw_trace)]
+        else:
+            trace = []
+
+        rewritten_query = final_state.get("rewritten_query")
+        if not rewritten_query:
+            rewritten_query = final_state.get("question")
+        if not rewritten_query:
+            messages = final_state.get("messages")
+            if isinstance(messages, Sequence):
+                for m in reversed(messages):
+                    if isinstance(m, HumanMessage):
+                        rewritten_query = _extract_text_content(m.content)
+                        break
+                    if isinstance(m, dict) and (m.get("role") or "").lower() in ("user", "human"):
+                        rewritten_query = _extract_text_content(m.get("content", ""))
+                        break
+
+        return WorkflowOutput(
+            workflow=self.info.id,
+            answer=answer,
+            source_used=str(source_used),
+            citations=citations,
+            trace=trace,
+            rewritten_query=rewritten_query,
+            trace_id=resolved_tid,
+            variant_id=final_state.get("variant_id"),
+        )
+
+    to_chat_response = to_workflow_output
+
+    def extract_eval_context(self, final_state: dict[str, Any]) -> EvalContext:
+        """Extract evidence contexts and source used for online evaluation."""
+        source_used = final_state.get("source_used") or "direct"
+        raw_contexts = final_state.get("retrieved_contexts") or []
+        retrieved_contexts: list[str] = []
+        if isinstance(raw_contexts, list):
+            for c in raw_contexts:
+                if isinstance(c, str):
+                    retrieved_contexts.append(c)
+                elif isinstance(c, dict):
+                    retrieved_contexts.append(str(c.get("content") or c.get("text") or c))
+                else:
+                    retrieved_contexts.append(str(c))
+        elif isinstance(raw_contexts, str):
+            retrieved_contexts.append(raw_contexts)
+
+        if not retrieved_contexts:
+            messages = final_state.get("messages")
+            if isinstance(messages, Sequence):
+                for m in messages:
+                    if hasattr(m, "content") and (
+                        getattr(m, "type", "") == "tool" or m.__class__.__name__ == "ToolMessage"
+                    ):
+                        retrieved_contexts.append(str(m.content))
+                    elif isinstance(m, dict) and m.get("role") == "tool":
+                        retrieved_contexts.append(str(m.get("content", "")))
+
+        return EvalContext(
+            source_used=str(source_used),
+            retrieved_contexts=retrieved_contexts,
+        )
+
+    def handle_error(self, exc: Exception, current_state: dict[str, Any]) -> dict[str, Any]:
+        """Synthesize graceful fallback state in the event of an unhandled node failure."""
+        err_msg = (
+            "I encountered an unexpected issue while processing your request. "
+            "Please try again or contact support if the problem persists."
+        )
+        existing_trace = current_state.get("trace", []) if isinstance(current_state.get("trace"), list) else []
+        fallback_trace = list(existing_trace)
+        fallback_trace.append(f"Workflow error fallback: {str(exc)}")
+
+        return {
+            "question": current_state.get("question", ""),
+            "messages": current_state.get("messages", []),
+            "attachments": current_state.get("attachments", []),
+            "session_id": current_state.get("session_id"),
+            "trace_id": current_state.get("trace_id"),
+            "answer": err_msg,
+            "source_used": "error_fallback",
+            "retrieved_contexts": current_state.get("retrieved_contexts", []),
+            "citations": current_state.get("citations", []),
+            "trace": fallback_trace,
+            "rewritten_query": current_state.get("rewritten_query") or current_state.get("question"),
+        }
+
+
 __all__ = [
     "WorkflowInfo",
     "EvalContext",
     "WorkflowInput",
     "WorkflowOutput",
     "WorkflowDefinition",
+    "StandardWorkflowState",
+    "PluggableWorkflow",
 ]

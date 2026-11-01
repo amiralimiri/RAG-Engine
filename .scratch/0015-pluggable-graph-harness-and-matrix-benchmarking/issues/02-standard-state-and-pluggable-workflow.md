@@ -14,11 +14,11 @@ Implement the standard state schema and generic pluggable workflow adapter:
 
 **Blocked by:** 01: Domain DTOs (`WorkflowInput`, `WorkflowOutput`) & Transport Decoupling
 
-**Status:** open
+**Status:** closed
 
-- [ ] `StandardWorkflowState` defined in `app/rag/workflows/base.py`
-- [ ] `PluggableWorkflow` class implemented satisfying `WorkflowDefinition`
-- [ ] Answer extraction supports direct string and `AIMessage` fallback
-- [ ] Error fallback produces valid fallback `WorkflowOutput` with error trace
-- [ ] Unit tests in `tests/rag/test_pluggable_workflow.py` passing via `BaseWorkflowContractTest`
-- [ ] Verification suite: `uv run pytest tests/rag/test_pluggable_workflow.py`
+- [x] `StandardWorkflowState` defined in `app/rag/workflows/base.py`
+- [x] `PluggableWorkflow` class implemented satisfying `WorkflowDefinition`
+- [x] Answer extraction supports direct string and `AIMessage` fallback
+- [x] Error fallback produces valid fallback `WorkflowOutput` with error trace
+- [x] Unit tests in `tests/rag/test_pluggable_workflow.py` passing via `BaseWorkflowContractTest`
+- [x] Verification suite: `uv run pytest tests/rag/test_pluggable_workflow.py`

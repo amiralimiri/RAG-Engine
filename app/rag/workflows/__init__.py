@@ -3,6 +3,8 @@
 from app.rag.classifiers import JevClassifierAdapter, OpenAIClassifierAdapter
 from app.rag.workflows.base import (
     EvalContext,
+    PluggableWorkflow,
+    StandardWorkflowState,
     WorkflowDefinition,
     WorkflowInfo,
     WorkflowInput,
@@ -68,5 +70,7 @@ __all__ = [
     "get_workflow_runner",
     "SelfCorrectiveRagWorkflow",
     "ReActAgentWorkflow",
+    "PluggableWorkflow",
+    "StandardWorkflowState",
     "register_default_workflows",
 ]
