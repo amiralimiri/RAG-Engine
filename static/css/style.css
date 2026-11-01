@@ -1803,3 +1803,90 @@ details[open] summary .accordion-arrow {
     min-height: 36px;
   }
 }
+
+/* --------------------------------------------------------------------------
+   15. Ticket 7: Turn Edit & Fork Branching UI
+   -------------------------------------------------------------------------- */
+
+.btn-edit-turn {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 13px;
+  padding: 2px 6px;
+  margin-left: 8px;
+  opacity: 0.6;
+  border-radius: var(--radius-sm);
+  transition: opacity var(--transition-fast), transform var(--transition-fast);
+  vertical-align: middle;
+}
+
+.message.user:hover .btn-edit-turn,
+.btn-edit-turn:hover {
+  opacity: 1;
+  transform: scale(1.1);
+  color: var(--text-primary);
+}
+
+.turn-action-banner {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px 14px;
+  margin-bottom: 8px;
+  background-color: var(--bg-surface-elevated, var(--bg-surface));
+  border: 1px solid var(--border-subtle);
+  border-left: 4px solid var(--accent-primary);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
+  animation: toast-slide-in 0.2s ease-out;
+}
+
+.turn-action-banner .banner-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-right: auto;
+}
+
+.btn-sm {
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  border: none;
+  transition: background-color var(--transition-fast), opacity var(--transition-fast);
+}
+
+.btn-primary {
+  background-color: var(--accent-primary);
+  color: #ffffff;
+}
+
+.btn-primary:hover {
+  background-color: var(--accent-primary-hover);
+}
+
+.btn-secondary {
+  background-color: var(--bg-surface);
+  color: var(--text-primary);
+  border: 1px solid var(--border-subtle);
+}
+
+.btn-secondary:hover {
+  background-color: var(--border-subtle);
+}
+
+.btn-ghost {
+  background: transparent;
+  color: var(--text-muted);
+  border: none;
+}
+
+.btn-ghost:hover {
+  color: var(--text-primary);
+}
+

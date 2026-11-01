@@ -1007,6 +1007,34 @@ function initTheme() {
    Session Lifecycle & Storage Engine
    ========================================================================== */
 let currentSessionId = null;
+let pendingRewindTurnIndex = null;
+
+async function fetchSessionList() {
+  try {
+    const res = await fetch("/api/chat/sessions");
+    if (!res || !res.ok) {
+      throw new Error(res ? `HTTP ${res.status}` : "Fetch failed");
+    }
+    const data = await readJsonSafe(res);
+    const sessions = data && Array.isArray(data.sessions) ? data.sessions : [];
+    const localIndex = sessions.map((s) => ({
+      id: s.session_id,
+      session_id: s.session_id,
+      title: s.title || "New Chat",
+      updatedAt: s.updated_at ? new Date(s.updated_at).getTime() : Date.now(),
+      messageCount: (s.turn_count || 0) * 2,
+      parent_session_id: s.parent_session_id || null,
+      forked_from_turn:
+        s.forked_from_turn !== undefined ? s.forked_from_turn : null,
+    }));
+    saveSessionsIndex(localIndex);
+    renderRecentChatsList(sessions);
+    return sessions;
+  } catch (_) {
+    renderRecentChatsList(getSessionsIndex());
+    return getSessionsIndex();
+  }
+}
 
 function getSessionsIndex() {
   const raw = storage.getItem(STORAGE_KEY_SESSIONS_INDEX);
@@ -1073,9 +1101,11 @@ function updateSessionIndexMetadata(sessionId, sessionData) {
   renderRecentChatsList();
 }
 
-function renderRecentChatsList() {
+function renderRecentChatsList(sessionsList) {
   if (!recentChatsList) return;
-  const sessions = getSessionsIndex();
+  const sessions = Array.isArray(sessionsList)
+    ? sessionsList
+    : getSessionsIndex();
   recentChatsList.innerHTML = "";
 
   if (sessions.length === 0) {
@@ -1089,30 +1119,41 @@ function renderRecentChatsList() {
   }
 
   sessions.forEach((session) => {
+    const sid = session.session_id || session.id;
+    const title = session.title || "New Chat";
+    const rawTime = session.updated_at || session.updatedAt;
+    const timeNum =
+      typeof rawTime === "number"
+        ? rawTime
+        : rawTime
+          ? new Date(rawTime).getTime()
+          : Date.now();
+
     const li = document.createElement("li");
-    const isActive = session.id === currentSessionId;
+    const isActive = sid === currentSessionId;
     li.className = `session-item ${isActive ? "active" : ""}`;
-    li.dataset.sessionId = session.id;
+    li.dataset.sessionId = sid;
+    li.setAttribute("data-session-id", sid);
     li.setAttribute("tabindex", "0");
     li.setAttribute("role", "button");
-    li.setAttribute("aria-label", `Load conversation: ${session.title}`);
+    li.setAttribute("aria-label", `Load conversation: ${title}`);
 
     const titleDiv = document.createElement("div");
     titleDiv.className = "session-title";
     titleDiv.setAttribute(
       "title",
-      `${session.title} (${formatRelativeTime(session.updatedAt)})`,
+      `${title} (${formatRelativeTime(timeNum)})`,
     );
 
     const titleText = document.createElement("span");
     titleText.className = "session-text";
-    titleText.textContent = session.title;
+    titleText.textContent = title;
 
     const timeSpan = document.createElement("span");
     timeSpan.className = "session-time";
     timeSpan.style.cssText =
       "font-size: 10px; color: var(--text-muted); margin-left: 6px; font-weight: normal; flex-shrink: 0;";
-    timeSpan.textContent = formatRelativeTime(session.updatedAt);
+    timeSpan.textContent = formatRelativeTime(timeNum);
 
     titleDiv.appendChild(titleText);
     titleDiv.appendChild(timeSpan);
@@ -1126,20 +1167,20 @@ function renderRecentChatsList() {
 
     deleteBtn.addEventListener("click", (e) => {
       e.stopPropagation();
-      deleteSession(session.id);
+      deleteSession(sid);
     });
 
     li.appendChild(titleDiv);
     li.appendChild(deleteBtn);
 
     li.addEventListener("click", () => {
-      switchSession(session.id);
+      switchSession(sid);
     });
 
     li.addEventListener("keydown", (e) => {
       if (e.key === "Enter" || e.key === " ") {
         e.preventDefault();
-        switchSession(session.id);
+        switchSession(sid);
       }
     });
 
@@ -1149,10 +1190,14 @@ function renderRecentChatsList() {
 
 function clearMessageFeed() {
   if (chatMessages) {
-    const messages = chatMessages.querySelectorAll(
-      ".message:not(.thinking-bubble)",
-    );
-    messages.forEach((m) => m.remove());
+    const messages = chatMessages.querySelectorAll
+      ? chatMessages.querySelectorAll(".message")
+      : [];
+    messages.forEach((m) => {
+      if (!m.classList || !m.classList.contains("thinking-bubble")) {
+        removeElement(m);
+      }
+    });
   }
   if (welcomeCard) {
     welcomeCard.classList.remove("hidden");
@@ -1304,13 +1349,61 @@ function appendHtmlToElement(targetEl, htmlStr) {
   }
 }
 
-function createStreamingAssistantBubble() {
+function hydrateSessionTurns(data) {
+  clearMessageFeed();
+  if (data && data.turns && Array.isArray(data.turns) && data.turns.length > 0) {
+    if (welcomeCard) welcomeCard.classList.add("hidden");
+    for (const turn of data.turns) {
+      addMessage(
+        "user",
+        turn.user_query,
+        "",
+        [],
+        "",
+        "",
+        [],
+        null,
+        turn.turn_index,
+      );
+      addMessage(
+        "assistant",
+        turn.assistant_answer,
+        turn.source_used || "vectorstore",
+        turn.citations || [],
+        data.workflow || "",
+        turn.trace_id || "",
+        turn.trace || [],
+        turn.feedback || null,
+        turn.turn_index,
+      );
+    }
+  } else {
+    if (welcomeCard) welcomeCard.classList.remove("hidden");
+  }
+}
+
+function createStreamingAssistantBubble(turnIndexParam = null) {
   if (welcomeCard) {
     welcomeCard.classList.add("hidden");
   }
 
   const wrap = document.createElement("div");
   wrap.className = "message assistant";
+
+  let turnIndex = 0;
+  if (typeof turnIndexParam === "number") {
+    turnIndex = turnIndexParam;
+  } else if (chatMessages) {
+    const existingAssistantMsgs = chatMessages.querySelectorAll
+      ? Array.from(chatMessages.querySelectorAll(".message")).filter(
+          (m) => m.classList && m.classList.contains("assistant"),
+        )
+      : [];
+    turnIndex = existingAssistantMsgs.length;
+  }
+
+  wrap.setAttribute("data-turn-index", String(turnIndex));
+  wrap.dataset.turnIndex = String(turnIndex);
 
   const avatar = document.createElement("div");
   avatar.className = "avatar";
@@ -1354,6 +1447,7 @@ function addMessage(
   traceId = "",
   traceSteps = [],
   feedback = null,
+  turnIndexParam = null,
 ) {
   if (welcomeCard) {
     welcomeCard.classList.add("hidden");
@@ -1361,6 +1455,21 @@ function addMessage(
 
   const wrap = document.createElement("div");
   wrap.className = `message ${role}`;
+
+  let turnIndex = 0;
+  if (typeof turnIndexParam === "number") {
+    turnIndex = turnIndexParam;
+  } else if (chatMessages) {
+    const existingRoleMsgs = chatMessages.querySelectorAll
+      ? Array.from(chatMessages.querySelectorAll(".message")).filter(
+          (m) => m.classList && m.classList.contains(role),
+        )
+      : [];
+    turnIndex = existingRoleMsgs.length;
+  }
+
+  wrap.setAttribute("data-turn-index", String(turnIndex));
+  wrap.dataset.turnIndex = String(turnIndex);
 
   const citeHtml = buildCitationsHtml(citations);
   let accordionHtml = "";
@@ -1372,9 +1481,17 @@ function addMessage(
   }
 
   const avatarLabel = role === "user" ? "You" : "AI";
-  const bodyHtml =
-    role === "assistant" ? renderMarkdown(text) : formatText(text);
-  const compositeHtml = `<div class="avatar">${avatarLabel}</div><div class="bubble">${bodyHtml}${citeHtml}${accordionHtml}${feedbackHtml}</div>`;
+  let compositeHtml = "";
+
+  if (role === "user") {
+    const bodyHtml = formatText(text);
+    const editBtnHtml = `<button type="button" class="btn-edit-turn" data-turn-index="${turnIndex}" data-query="${escapeHtml(text)}" title="Edit message" aria-label="Edit message">✏️</button>`;
+    compositeHtml = `<div class="avatar">${avatarLabel}</div><div class="bubble"><span class="user-text">${bodyHtml}</span>${editBtnHtml}</div>`;
+  } else {
+    const bodyHtml = renderMarkdown(text);
+    compositeHtml = `<div class="avatar">${avatarLabel}</div><div class="bubble">${bodyHtml}${citeHtml}${accordionHtml}${feedbackHtml}</div>`;
+  }
+
   wrap.innerHTML = sanitizeHtml(compositeHtml);
 
   if (
@@ -1433,9 +1550,185 @@ function abortCurrentStream() {
   return false;
 }
 
-function startNewChat() {
+/* ==========================================================================
+   Ticket 7: Turn Edit, Rewind & Session Fork Controls
+   ========================================================================== */
+function pruneDOMTurns(fromTurnIndex) {
+  if (!chatMessages) return;
+  const msgs = chatMessages.querySelectorAll
+    ? chatMessages.querySelectorAll(".message")
+    : [];
+  for (const msg of msgs) {
+    const tIdxStr =
+      (msg.dataset && msg.dataset.turnIndex) ||
+      (typeof msg.getAttribute === "function"
+        ? msg.getAttribute("data-turn-index")
+        : "") ||
+      "-1";
+    const tIdx = parseInt(tIdxStr, 10);
+    if (!isNaN(tIdx) && tIdx >= fromTurnIndex) {
+      removeElement(msg);
+    }
+  }
+
+  const sessionData = getSessionData(currentSessionId);
+  if (sessionData && Array.isArray(sessionData.messages)) {
+    sessionData.messages = sessionData.messages.slice(0, 2 * fromTurnIndex);
+    saveSessionData(currentSessionId, sessionData);
+    updateSessionIndexMetadata(currentSessionId, sessionData);
+  }
+}
+
+function removeTurnActionBanner() {
+  pendingRewindTurnIndex = null;
+  const banner =
+    $("turnActionBanner") ||
+    (typeof document !== "undefined" && document.querySelector
+      ? document.querySelector("#turnActionBanner")
+      : null);
+  if (banner) {
+    removeElement(banner);
+  }
+}
+
+function handleCancelEdit() {
+  removeTurnActionBanner();
+}
+
+function renderTurnActionBanner(turnIndex) {
+  removeTurnActionBanner();
+  pendingRewindTurnIndex = turnIndex;
+
+  const banner = document.createElement("div");
+  banner.id = "turnActionBanner";
+  banner.className = "turn-action-banner";
+  banner.innerHTML = sanitizeHtml(
+    `<span class="banner-title">Editing Turn #${turnIndex + 1}</span>` +
+      `<button id="btnRewindSubmit" class="btn-sm btn-primary" type="button">Edit &amp; Rewind Here</button>` +
+      `<button id="btnForkSubmit" class="btn-sm btn-secondary" type="button">Branch to New Chat</button>` +
+      `<button id="btnCancelEdit" class="btn-sm btn-ghost" type="button">Cancel</button>`,
+  );
+
+  if (
+    form &&
+    form.parentNode &&
+    typeof form.parentNode.insertBefore === "function"
+  ) {
+    form.parentNode.insertBefore(banner, form);
+  } else if (form && typeof form.insertBefore === "function") {
+    form.insertBefore(banner, form.firstChild);
+  } else if (chatMessages && typeof chatMessages.appendChild === "function") {
+    chatMessages.appendChild(banner);
+  }
+
+  const btnCancel = banner.querySelector
+    ? banner.querySelector("#btnCancelEdit")
+    : null;
+  if (btnCancel && typeof btnCancel.addEventListener === "function") {
+    btnCancel.addEventListener("click", handleCancelEdit);
+  }
+
+  const btnRewind = banner.querySelector
+    ? banner.querySelector("#btnRewindSubmit")
+    : null;
+  if (btnRewind && typeof btnRewind.addEventListener === "function") {
+    btnRewind.addEventListener("click", handleSubmitRewind);
+  }
+
+  const btnFork = banner.querySelector
+    ? banner.querySelector("#btnForkSubmit")
+    : null;
+  if (btnFork && typeof btnFork.addEventListener === "function") {
+    btnFork.addEventListener("click", handleSubmitFork);
+  }
+}
+
+function handleEditTurnClick(btn) {
+  if (!btn) return;
+  const turnIndexStr =
+    (btn.dataset && btn.dataset.turnIndex) ||
+    (typeof btn.getAttribute === "function"
+      ? btn.getAttribute("data-turn-index")
+      : "0");
+  const turnIndex = parseInt(turnIndexStr, 10);
+  pendingRewindTurnIndex = turnIndex;
+
+  let queryText =
+    (btn.dataset && btn.dataset.query) ||
+    (typeof btn.getAttribute === "function"
+      ? btn.getAttribute("data-query")
+      : "");
+  if (!queryText) {
+    const bubble = findClosest(btn, ".bubble");
+    const textEl = bubble
+      ? bubble.querySelector
+        ? bubble.querySelector(".user-text")
+        : null
+      : null;
+    queryText = textEl
+      ? textEl.textContent.trim()
+      : bubble
+        ? bubble.textContent.replace("✏️", "").trim()
+        : "";
+  }
+
+  if (question) {
+    question.value = queryText;
+    question.style.height = "auto";
+    question.focus();
+  }
+
+  renderTurnActionBanner(turnIndex);
+}
+
+async function handleSubmitRewind() {
+  const turnIndex =
+    pendingRewindTurnIndex !== null ? pendingRewindTurnIndex : 0;
+  const text = question ? question.value.trim() : "";
+  if (!text) return;
+
+  pruneDOMTurns(turnIndex);
+  removeTurnActionBanner();
+  await askAgent(text, { rewindTurnIndex: turnIndex });
+}
+
+async function handleSubmitFork() {
+  const turnIndex =
+    pendingRewindTurnIndex !== null ? pendingRewindTurnIndex : 0;
+  const text = question ? question.value.trim() : "";
+  if (!text) return;
+
+  try {
+    const uptoTurn = turnIndex - 1;
+    const res = await fetch(`/api/chat/${currentSessionId}/fork`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ upto_turn_index: uptoTurn }),
+    });
+    const data = await readJsonSafe(res);
+    if (!res.ok) {
+      throw new Error(data.detail || `Fork failed with HTTP ${res.status}`);
+    }
+
+    currentSessionId = data.session_id;
+    storage.setItem(STORAGE_KEY_CURRENT_SESSION, currentSessionId);
+    pruneDOMTurns(turnIndex);
+    removeTurnActionBanner();
+
+    await askAgent(text);
+    await fetchSessionList();
+    showToast("Branched to a new conversation session", "success");
+  } catch (err) {
+    console.error("Fork session error:", err);
+    showToast(`Failed to branch conversation: ${err.message}`, "error");
+  }
+}
+
+async function startNewChat() {
   abortCurrentStream();
   hideThinking();
+  removeTurnActionBanner();
+
   const newSessionId = generateUUID();
   currentSessionId = newSessionId;
   storage.setItem(STORAGE_KEY_CURRENT_SESSION, currentSessionId);
@@ -1449,12 +1742,18 @@ function startNewChat() {
     question.style.height = "auto";
     question.focus();
   }
+
+  try {
+    await fetchSessionList();
+  } catch (_) {}
 }
 
-function switchSession(sessionId) {
+async function switchSession(sessionId) {
   if (!sessionId) return;
   abortCurrentStream();
   hideThinking();
+  removeTurnActionBanner();
+
   if (sessionId === currentSessionId) {
     closeSidebar();
     return;
@@ -1463,39 +1762,65 @@ function switchSession(sessionId) {
   currentSessionId = sessionId;
   storage.setItem(STORAGE_KEY_CURRENT_SESSION, currentSessionId);
 
+  // Optimistic/immediate render from local storage transcript
   const sessionData = getSessionData(sessionId);
-  renderSessionTranscript(sessionData);
-
-  if (sessionData && sessionData.workflow && workflowSelect) {
-    const options = workflowSelect.options ? Array.from(workflowSelect.options) : [];
-    const matchingOption = options.find(
-      (opt) => opt.value === sessionData.workflow,
-    );
-    if (matchingOption) {
-      workflowSelect.value = sessionData.workflow;
+  if (sessionData) {
+    renderSessionTranscript(sessionData);
+    if (sessionData.workflow && workflowSelect) {
+      const options = workflowSelect.options
+        ? Array.from(workflowSelect.options)
+        : [];
+      const matchingOption = options.find(
+        (opt) => opt.value === sessionData.workflow,
+      );
+      if (matchingOption) {
+        workflowSelect.value = sessionData.workflow;
+      }
     }
   }
 
   renderRecentChatsList();
   closeSidebar();
-
   if (chatArea) {
     chatArea.scrollTop = chatArea.scrollHeight;
   }
+
+  // Hydrate fresh state from server
+  try {
+    const res = await fetch(`/api/chat/${sessionId}`);
+    if (res && res.ok) {
+      const data = await readJsonSafe(res);
+      hydrateSessionTurns(data);
+      renderRecentChatsList();
+      if (chatArea) chatArea.scrollTop = chatArea.scrollHeight;
+    }
+  } catch (err) {
+    // Retain optimistic transcript
+  }
 }
 
-function deleteSession(sessionId) {
+async function deleteSession(sessionId) {
   if (!sessionId) return;
+
   deleteSessionData(sessionId);
 
-  let index = getSessionsIndex().filter((s) => s.id !== sessionId);
+  let index = getSessionsIndex().filter(
+    (s) => (s.id || s.session_id) !== sessionId,
+  );
   saveSessionsIndex(index);
 
+  // Synchronously transition active session and UI for immediate DOM responsiveness
   if (sessionId === currentSessionId) {
     startNewChat();
   } else {
     renderRecentChatsList();
   }
+
+  // Asynchronously synchronize with backend
+  try {
+    await fetch(`/api/chat/${sessionId}`, { method: "DELETE" });
+    await fetchSessionList();
+  } catch (_) {}
 }
 
 function clearAllHistory() {
@@ -1508,7 +1833,7 @@ function clearAllHistory() {
   }
 
   const index = getSessionsIndex();
-  index.forEach((s) => deleteSessionData(s.id));
+  index.forEach((s) => deleteSessionData(s.id || s.session_id));
 
   // Purge any orphan session entries
   const allKeys = storage.getAllKeys();
@@ -1522,17 +1847,46 @@ function clearAllHistory() {
   startNewChat();
 }
 
-function initSessions() {
+async function initSessions() {
   let storedSessionId = storage.getItem(STORAGE_KEY_CURRENT_SESSION);
+  const hadStoredId = Boolean(storedSessionId);
   if (!storedSessionId) {
     storedSessionId = generateUUID();
     storage.setItem(STORAGE_KEY_CURRENT_SESSION, storedSessionId);
   }
   currentSessionId = storedSessionId;
-
-  const sessionData = getSessionData(currentSessionId);
-  renderSessionTranscript(sessionData);
   renderRecentChatsList();
+
+  try {
+    await fetchSessionList();
+  } catch (_) {}
+
+  if (hadStoredId) {
+    try {
+      const res = await fetch(`/api/chat/${currentSessionId}`);
+      if (res && res.ok) {
+        const data = await readJsonSafe(res);
+        hydrateSessionTurns(data);
+        renderRecentChatsList();
+        return;
+      } else if (res && res.status === 404) {
+        currentSessionId = generateUUID();
+        storage.setItem(STORAGE_KEY_CURRENT_SESSION, currentSessionId);
+        clearMessageFeed();
+        renderRecentChatsList();
+        return;
+      }
+    } catch (err) {
+      // Server session fetch failed, falling back to local storage
+    }
+
+    const sessionData = getSessionData(currentSessionId);
+    renderSessionTranscript(sessionData);
+    renderRecentChatsList();
+  } else {
+    clearMessageFeed();
+    renderRecentChatsList();
+  }
 }
 
 /* ==========================================================================
@@ -1861,9 +2215,18 @@ function flushProgressiveRender(contentEl) {
 /* ==========================================================================
    Chat Agent Interaction & Progressive UI State Machine (Ticket 6)
    ========================================================================== */
-async function askAgent(q) {
+async function askAgent(q, options = {}) {
   if (!q || !q.trim()) return;
   const promptText = q.trim();
+
+  let rewindTurnIndex = null;
+  if (options && typeof options.rewindTurnIndex === "number") {
+    rewindTurnIndex = options.rewindTurnIndex;
+  } else if (pendingRewindTurnIndex !== null) {
+    rewindTurnIndex = pendingRewindTurnIndex;
+    pruneDOMTurns(rewindTurnIndex);
+  }
+  removeTurnActionBanner();
 
   // Ensure an active session ID exists
   if (!currentSessionId) {
@@ -1933,6 +2296,9 @@ async function askAgent(q) {
       session_id: currentSessionId,
       workflow: activeWf,
     };
+    if (typeof rewindTurnIndex === "number" && rewindTurnIndex >= 0) {
+      payload.rewind_turn_index = rewindTurnIndex;
+    }
 
     const stream = streamChat(payload, {
       signal: currentAbortController ? currentAbortController.signal : undefined,
@@ -2289,7 +2655,36 @@ if (typeof document !== "undefined" && document.addEventListener) {
       }
     }
 
-    // 4. Click outside comment popovers closes them
+    // 4. Ticket 7: Turn edit & fork branching buttons
+    const editBtn = findClosest(target, ".btn-edit-turn");
+    if (editBtn) {
+      if (typeof e.preventDefault === "function") e.preventDefault();
+      handleEditTurnClick(editBtn);
+      return;
+    }
+
+    const rewindBtn = findClosest(target, "#btnRewindSubmit");
+    if (rewindBtn) {
+      if (typeof e.preventDefault === "function") e.preventDefault();
+      handleSubmitRewind();
+      return;
+    }
+
+    const forkBtn = findClosest(target, "#btnForkSubmit");
+    if (forkBtn) {
+      if (typeof e.preventDefault === "function") e.preventDefault();
+      handleSubmitFork();
+      return;
+    }
+
+    const cancelBtn = findClosest(target, "#btnCancelEdit");
+    if (cancelBtn) {
+      if (typeof e.preventDefault === "function") e.preventDefault();
+      handleCancelEdit();
+      return;
+    }
+
+    // 5. Click outside comment popovers closes them
     if (
       !findClosest(target, ".comment-popover") &&
       !findClosest(target, ".add-note-btn")
@@ -2314,7 +2709,7 @@ if (typeof document !== "undefined" && document.addEventListener) {
    Initialization Bootstrap
    ========================================================================== */
 initTheme();
-initSessions();
+initSessions().catch((err) => console.warn("initSessions bootstrap error:", err));
 initMobileSidebar();
 loadWorkflows();
 hideThinking();
@@ -2376,5 +2771,20 @@ if (typeof module !== "undefined" && module.exports) {
     appendHtmlToElement,
     abortCurrentStream,
     getCurrentAbortController: () => currentAbortController,
+    // Ticket 7 Client Memory & Branching exports
+    initSessions,
+    fetchSessionList,
+    getCurrentSessionId: () => currentSessionId,
+    setCurrentSessionId: (id) => {
+      currentSessionId = id;
+    },
+    handleEditTurnClick,
+    handleSubmitRewind,
+    handleSubmitFork,
+    handleCancelEdit,
+    pruneDOMTurns,
+    renderTurnActionBanner,
+    removeTurnActionBanner,
+    getPendingRewindTurnIndex: () => pendingRewindTurnIndex,
   };
 }

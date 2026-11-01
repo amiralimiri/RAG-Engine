@@ -1,7 +1,7 @@
 # Ticket 07: Frontend Client Server-First Resumption, Session Switching, & Turn Edit/Fork UI
 
 - **Milestone:** Unified Pluggable Conversation Memory (ADR-0016)
-- **Status:** Pending
+- **Status:** Complete
 - **Dependency:** Ticket 06
 - **Estimated Scope:** Medium
 
