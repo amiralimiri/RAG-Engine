@@ -562,7 +562,7 @@ class WorkflowRunner:
     def _finalize_execution(
         self,
         wf_def: WorkflowDefinition,
-        request: ChatRequest,
+        request: ChatRequest | WorkflowInput,
         final_state: dict[str, Any],
         trace_id: str | None,
         handler: Any,
@@ -667,7 +667,7 @@ class WorkflowRunner:
 
     def _execute_with_state(
         self,
-        request: ChatRequest,
+        request: ChatRequest | WorkflowInput,
         background_tasks: BackgroundTasks | None = None,
         *,
         callback: Any | None = None,
@@ -695,7 +695,7 @@ class WorkflowRunner:
                 if not isinstance(final_state, dict):
                     final_state = {"answer": str(final_state)}
             except Exception as exc:
-                logger.exception("Error executing workflow %s: %s", request.workflow, exc)
+                logger.exception("Error executing workflow %s: %s", getattr(request, "workflow", "unknown"), exc)
                 final_state = wf_def.handle_error(exc, initial_state)
 
             response = self._finalize_execution(
@@ -720,7 +720,7 @@ class WorkflowRunner:
 
     def execute(
         self,
-        request: ChatRequest,
+        request: ChatRequest | WorkflowInput,
         background_tasks: BackgroundTasks | None = None,
         *,
         callback: Any | None = None,
@@ -741,7 +741,7 @@ class WorkflowRunner:
 
     def execute_with_context(
         self,
-        request: ChatRequest,
+        request: ChatRequest | WorkflowInput,
         background_tasks: BackgroundTasks | None = None,
         *,
         callback: Any | None = None,

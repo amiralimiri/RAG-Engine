@@ -12,15 +12,17 @@ import time
 from pathlib import Path
 from typing import Any
 
+import yaml
+
 # Ensure project root is in sys.path when executed directly as a script
 project_root = Path(__file__).resolve().parent.parent
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
-from app.api.schemas import ChatRequest
 from app.core.config import get_settings
 from app.core.telemetry import get_langfuse_client
 from app.rag.evaluation import Evaluator, get_evaluator
+from app.rag.workflows.base import ExecutionProfile, WorkflowInput
 from app.rag.workflows.runner import WorkflowRunner, get_workflow_runner
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -99,12 +101,12 @@ def run_workflow_benchmark(
     run_timestamp: int | None = None,
     runner: WorkflowRunner | None = None,
     evaluator: Evaluator | None = None,
+    variant_id: str | None = None,
+    parameters: dict[str, Any] | None = None,
+    profile: ExecutionProfile | None = None,
 ) -> dict[str, Any]:
     """Runs a single workflow against all benchmark items in the dataset."""
     ts = run_timestamp or int(time.time())
-    run_name = f"{workflow_name}-run-{ts}"
-    logger.info("=== Running Experiment for Workflow: %s (%s) ===", workflow_name, run_name)
-
     active_runner = runner or get_workflow_runner()
     active_evaluator = evaluator or getattr(active_runner, "evaluator", None) or get_evaluator(client=client)
     try:
@@ -115,22 +117,47 @@ def run_workflow_benchmark(
             f"Available workflows: {active_runner.registry.list_ids()}"
         )
 
+    if profile is not None:
+        active_runner.registry.register_profile(workflow_name, profile)
+        if not variant_id:
+            variant_id = profile.variant_id
+
+    effective_variant = variant_id or "default"
+    run_name = f"{workflow_name}@{effective_variant}--{ts}"
+    logger.info("=== Running Experiment for Workflow: %s (%s) ===", workflow_name, run_name)
+
     items = getattr(dataset, "items", dataset) if dataset else []
     total_latencies: list[float] = []
     faithfulness_scores: list[float] = []
     relevancy_scores: list[float] = []
+    source_accuracy_scores: list[float] = []
 
     for item in items:
         if isinstance(item, dict):
             inp = item.get("input", "")
             question = inp.get("question", "") if isinstance(inp, dict) else str(inp)
+            expected_output = item.get("expected_output")
+            meta = item.get("metadata") or {}
+            expected_source = item.get("expected_source") or (
+                meta.get("expected_source") if isinstance(meta, dict) else None
+            )
         else:
             inp = getattr(item, "input", "")
             question = inp.get("question", "") if isinstance(inp, dict) else str(inp)
+            expected_output = getattr(item, "expected_output", None)
+            meta = getattr(item, "metadata", None) or {}
+            expected_source = (
+                meta.get("expected_source") if isinstance(meta, dict) else None
+            ) or getattr(item, "expected_source", None)
 
         start_t = time.perf_counter()
-        req = ChatRequest(question=question, workflow=workflow_name)
-        exec_result = active_runner.execute_with_context(req)
+        wf_input = WorkflowInput(
+            question=question,
+            workflow=workflow_name,
+            variant_id=variant_id,
+            parameters=parameters or {},
+        )
+        exec_result = active_runner.execute_with_context(wf_input)
         latency = time.perf_counter() - start_t
         chat_resp = exec_result.response
         eval_ctx = exec_result.eval_context
@@ -141,13 +168,24 @@ def run_workflow_benchmark(
 
         total_latencies.append(latency)
 
-        eval_res = active_evaluator.evaluate(
-            question=question,
-            answer=answer,
-            source_used=source_used,
-            retrieved_contexts=contexts,
-            trace_id=trace_id,
-        )
+        try:
+            eval_res = active_evaluator.evaluate(
+                question=question,
+                answer=answer,
+                source_used=source_used,
+                retrieved_contexts=contexts,
+                trace_id=trace_id,
+                expected_output=expected_output,
+                expected_source=expected_source,
+            )
+        except TypeError:
+            eval_res = active_evaluator.evaluate(
+                question=question,
+                answer=answer,
+                source_used=source_used,
+                retrieved_contexts=contexts,
+                trace_id=trace_id,
+            )
 
         faith_val = eval_res.faithfulness
         if faith_val is not None:
@@ -156,6 +194,12 @@ def run_workflow_benchmark(
         rel_val = eval_res.answer_relevancy
         if rel_val is not None:
             relevancy_scores.append(rel_val)
+
+        src_val = eval_res.source_accuracy
+        if src_val is None and hasattr(eval_res, "scores") and "source_accuracy" in eval_res.scores:
+            src_val = eval_res.scores["source_accuracy"]
+        if src_val is not None:
+            source_accuracy_scores.append(src_val)
 
         # Link dataset item to experiment run if supported
         link_fn = getattr(item, "link", None)
@@ -169,30 +213,166 @@ def run_workflow_benchmark(
     avg_lat = sum(total_latencies) / len(total_latencies) if total_latencies else 0.0
     avg_faith = sum(faithfulness_scores) / len(faithfulness_scores) if faithfulness_scores else 0.0
     avg_rel = sum(relevancy_scores) / len(relevancy_scores) if relevancy_scores else 0.0
+    avg_src = sum(source_accuracy_scores) / len(source_accuracy_scores) if source_accuracy_scores else 0.0
 
     return {
         "Workflow": workflow_name,
+        "Variant": effective_variant,
         "Items Evaluated": items_count,
         "Avg Latency (s)": round(avg_lat, 3),
         "Avg Faithfulness": round(avg_faith, 3),
         "Avg Relevancy": round(avg_rel, 3),
+        "Source Accuracy": round(avg_src, 3),
     }
+
+
+def load_matrix_config(matrix_file: Path | str) -> list[dict[str, Any]]:
+    """Loads and normalizes matrix configuration from a YAML file."""
+    path = Path(matrix_file)
+    if not path.exists():
+        raise FileNotFoundError(f"Missing matrix configuration file: {path}")
+
+    with open(path, encoding="utf-8") as f:
+        data = yaml.safe_load(f)
+
+    if not data:
+        return []
+
+    if isinstance(data, list):
+        raw_entries = data
+    elif isinstance(data, dict):
+        if "matrix" in data and isinstance(data["matrix"], list):
+            raw_entries = data["matrix"]
+        elif "runs" in data and isinstance(data["runs"], list):
+            raw_entries = data["runs"]
+        elif "workflows" in data and isinstance(data["workflows"], list):
+            raw_entries = []
+            for wf in data["workflows"]:
+                wf_id = wf.get("id") or wf.get("workflow") or wf.get("workflow_id")
+                profiles = wf.get("profiles", [])
+                if not profiles:
+                    raw_entries.append({"workflow": wf_id, **wf})
+                else:
+                    for p in profiles:
+                        entry = {**wf, **p, "workflow": wf_id}
+                        entry.pop("profiles", None)
+                        raw_entries.append(entry)
+        else:
+            raw_entries = [data]
+    else:
+        raise ValueError(f"Invalid YAML matrix format in {path}: expected list or mapping")
+
+    entries: list[dict[str, Any]] = []
+    for raw in raw_entries:
+        if not isinstance(raw, dict):
+            continue
+        wf = raw.get("workflow") or raw.get("workflow_id") or raw.get("id")
+        if not wf:
+            continue
+        entry = {
+            "workflow": str(wf),
+            "variant_id": raw.get("variant_id") or raw.get("variant"),
+            "model_name": raw.get("model_name"),
+            "prompt_version": raw.get("prompt_version"),
+            "temperature": float(raw["temperature"]) if raw.get("temperature") is not None else None,
+            "parameters": raw.get("parameters") or {},
+            "tags": raw.get("tags") or [],
+            "metadata": raw.get("metadata") or {},
+        }
+        entries.append(entry)
+
+    return entries
+
+
+def run_matrix_benchmark(
+    matrix_file: Path | str,
+    dataset: Any = None,
+    client: Any = None,
+    run_timestamp: int | None = None,
+    runner: WorkflowRunner | None = None,
+    evaluator: Evaluator | None = None,
+) -> list[dict[str, Any]]:
+    """Runs matrix benchmarking across multiple workflow and execution profile configurations."""
+    entries = load_matrix_config(matrix_file)
+    if not entries:
+        logger.warning("No valid entries found in matrix configuration: %s", matrix_file)
+        return []
+
+    active_runner = runner or get_workflow_runner()
+    ts = run_timestamp or int(time.time())
+    results_table: list[dict[str, Any]] = []
+
+    for entry in entries:
+        workflow_name = entry["workflow"]
+        variant_id = entry.get("variant_id")
+
+        profile = None
+        if variant_id or entry.get("model_name") or entry.get("temperature") is not None or entry.get("prompt_version"):
+            profile = ExecutionProfile(
+                variant_id=variant_id or "default",
+                model_name=entry.get("model_name"),
+                prompt_version=entry.get("prompt_version"),
+                temperature=entry.get("temperature"),
+                parameters=entry.get("parameters") or {},
+                tags=entry.get("tags") or [],
+                metadata=entry.get("metadata") or {},
+            )
+
+        summary = run_workflow_benchmark(
+            workflow_name=workflow_name,
+            dataset=dataset,
+            client=client,
+            run_timestamp=ts,
+            runner=active_runner,
+            evaluator=evaluator,
+            variant_id=variant_id,
+            parameters=entry.get("parameters"),
+            profile=profile,
+        )
+        results_table.append(summary)
+
+    return results_table
+
+
+def format_matrix_table(results_table: list[dict[str, Any]]) -> str:
+    """Formats comparison matrix table displaying latency, faithfulness, relevancy, and source accuracy."""
+    header = f"{'Workflow':<20} | {'Variant':<15} | {'Latency':<10} | {'Faithfulness':<12} | {'Relevancy':<10} | {'Source Acc':<10}"
+    separator = "-" * len(header)
+    rows = [header, separator]
+    for r in results_table:
+        wf = str(r.get("Workflow", ""))
+        var = str(r.get("Variant", "default"))
+        lat = f"{r.get('Avg Latency (s)', 0.0):.3f}s"
+        faith = f"{r.get('Avg Faithfulness', 0.0):.3f}"
+        rel = f"{r.get('Avg Relevancy', 0.0):.3f}"
+        src_acc = f"{r.get('Source Accuracy', 0.0):.3f}"
+        rows.append(f"{wf:<20} | {var:<15} | {lat:<10} | {faith:<12} | {rel:<10} | {src_acc:<10}")
+    return "\n".join(rows)
 
 
 def format_summary_table(results_table: list[dict[str, Any]]) -> str:
     """Formats experiment evaluation results into a formatted summary table string."""
     lines = [
         "",
-        "=" * 65,
+        "=" * 85,
         "           LANGFUSE BENCHMARK EXPERIMENT RESULTS",
-        "=" * 65,
+        "=" * 85,
     ]
     for r in results_table:
-        lines.append(f"Workflow: {r['Workflow']}")
+        variant_info = f" (Variant: {r['Variant']})" if "Variant" in r and r["Variant"] != "default" else ""
+        lines.append(f"Workflow: {r['Workflow']}{variant_info}")
         lines.append(f"  - Avg Latency:       {r['Avg Latency (s)']}s")
         lines.append(f"  - Avg Faithfulness:  {r['Avg Faithfulness']}")
         lines.append(f"  - Avg Relevancy:     {r['Avg Relevancy']}")
-        lines.append("-" * 65)
+        if "Source Accuracy" in r:
+            lines.append(f"  - Source Accuracy:   {r['Source Accuracy']}")
+        lines.append("-" * 85)
+
+    if results_table:
+        lines.append("")
+        lines.append("COMPARISON MATRIX:")
+        lines.append(format_matrix_table(results_table))
+        lines.append("=" * 85)
 
     return "\n".join(lines)
 
@@ -205,6 +385,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--workflows",
         default="fix_single_llm,fix_single_jev",
         help="Comma-separated list of workflow names to benchmark",
+    )
+    parser.add_argument(
+        "--matrix",
+        default=None,
+        help="Path to YAML matrix benchmarking configuration file",
     )
     parser.add_argument(
         "--benchmark-file",
@@ -237,25 +422,35 @@ def main(
         dataset = load_gold_benchmarks(args.benchmark_file)
 
     active_runner = runner or get_workflow_runner()
-    available_ids = set(active_runner.registry.list_ids())
-    target_workflows = [w.strip() for w in args.workflows.split(",") if w.strip() in available_ids]
-    if not target_workflows:
-        logger.error("No valid workflows selected. Available: %s", sorted(available_ids))
-        return []
-
-    results_table = []
     run_timestamp = int(time.time())
 
-    for wf_name in target_workflows:
-        summary = run_workflow_benchmark(
-            workflow_name=wf_name,
+    if args.matrix:
+        results_table = run_matrix_benchmark(
+            matrix_file=args.matrix,
             dataset=dataset,
             client=client,
             run_timestamp=run_timestamp,
             runner=active_runner,
             evaluator=evaluator,
         )
-        results_table.append(summary)
+    else:
+        available_ids = set(active_runner.registry.list_ids())
+        target_workflows = [w.strip() for w in args.workflows.split(",") if w.strip() in available_ids]
+        if not target_workflows:
+            logger.error("No valid workflows selected. Available: %s", sorted(available_ids))
+            return []
+
+        results_table = []
+        for wf_name in target_workflows:
+            summary = run_workflow_benchmark(
+                workflow_name=wf_name,
+                dataset=dataset,
+                client=client,
+                run_timestamp=run_timestamp,
+                runner=active_runner,
+                evaluator=evaluator,
+            )
+            results_table.append(summary)
 
     print(format_summary_table(results_table))
     return results_table

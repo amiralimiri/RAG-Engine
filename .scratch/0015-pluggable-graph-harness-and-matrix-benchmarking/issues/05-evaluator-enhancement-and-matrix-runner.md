@@ -18,11 +18,11 @@ Upgrade the `Evaluator` seam and benchmark experiment runner for offline matrix 
 
 **Blocked by:** 04: `ExecutionProfile` 3-Tier Resolution & Multi-Dimensional Telemetry
 
-**Status:** open
+**Status:** closed
 
-- [ ] `Evaluator` protocol updated with optional `expected_output` and `expected_source`
-- [ ] `FakeEvaluator` and `EvaluationEngine` support ground-truth scoring (`source_accuracy`)
-- [ ] `evaluation/run_experiment.py` accepts `--matrix` YAML plans
-- [ ] Experiment runs in Langfuse formatted as `<workflow_id>@<variant_id>--<timestamp>`
-- [ ] Formatted comparison matrix table printed to console
-- [ ] Unit & integration tests in `tests/test_experiment_runner.py` passing: `uv run pytest tests/test_experiment_runner.py`
+- [x] `Evaluator` protocol updated with optional `expected_output` and `expected_source`
+- [x] `FakeEvaluator` and `EvaluationEngine` support ground-truth scoring (`source_accuracy`)
+- [x] `evaluation/run_experiment.py` accepts `--matrix` YAML plans
+- [x] Experiment runs in Langfuse formatted as `<workflow_id>@<variant_id>--<timestamp>`
+- [x] Formatted comparison matrix table printed to console
+- [x] Unit & integration tests in `tests/test_experiment_runner.py` passing: `uv run pytest tests/test_experiment_runner.py`

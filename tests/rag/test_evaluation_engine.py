@@ -321,3 +321,95 @@ async def test_evaluation_engine_aevaluate_threadpool_offloading() -> None:
             retrieved_contexts=["Tokens can be generated via OAuth."],
         )
         assert res.answer_relevancy == 0.92
+
+
+def test_evaluation_engine_source_accuracy_and_expected_output() -> None:
+    """Verify EvaluationEngine computes source_accuracy and stores expected_output."""
+    mock_client = MagicMock()
+    mock_judge = MagicMock()
+
+    engine = EvaluationEngine(
+        settings=Settings(
+            langfuse_enabled=True,
+            eval_sample_rate=1.0,
+            eval_metrics=[],
+        ),
+        judge_provider=lambda: mock_judge,
+        client=mock_client,
+    )
+
+    # Test match (case-insensitive)
+    res_match = engine.evaluate(
+        question="How to reset password?",
+        answer="Click forgot password link.",
+        source_used="vectorstore",
+        retrieved_contexts=[],
+        trace_id="tr-match-1",
+        expected_output="Reset password instructions.",
+        expected_source="VectorStore",
+    )
+    assert res_match.source_accuracy == 1.0
+    assert res_match.scores["source_accuracy"] == 1.0
+    assert res_match.details["expected_source"] == "VectorStore"
+    assert res_match.details["expected_output"] == "Reset password instructions."
+    assert res_match.details["source_accuracy"] == 1.0
+    assert mock_client.create_score.call_count == 1
+    call_kwargs = mock_client.create_score.call_args.kwargs
+    assert call_kwargs["name"] == "source_accuracy"
+    assert call_kwargs["value"] == 1.0
+    assert call_kwargs["trace_id"] == "tr-match-1"
+
+    # Test mismatch
+    mock_client.reset_mock()
+    res_mismatch = engine.evaluate(
+        question="How to reset password?",
+        answer="I don't know.",
+        source_used="direct",
+        retrieved_contexts=[],
+        trace_id="tr-mismatch-1",
+        expected_output="Reset password instructions.",
+        expected_source="vectorstore",
+    )
+    assert res_mismatch.source_accuracy == 0.0
+    assert res_mismatch.scores["source_accuracy"] == 0.0
+    assert mock_client.create_score.call_count == 1
+    assert mock_client.create_score.call_args.kwargs["value"] == 0.0
+
+
+def test_fake_evaluator_ground_truth_source_accuracy() -> None:
+    """Verify FakeEvaluator computes source_accuracy based on expected_source and records score."""
+    fake = FakeEvaluator()
+
+    res = fake.evaluate(
+        question="What is VPN?",
+        answer="Virtual Private Network.",
+        source_used="vectorstore",
+        retrieved_contexts=[],
+        trace_id="tr-fake-1",
+        expected_output="VPN definition.",
+        expected_source="vectorstore",
+    )
+    assert res.source_accuracy == 1.0
+    assert res.scores["source_accuracy"] == 1.0
+    assert res.details["expected_source"] == "vectorstore"
+    assert res.details["expected_output"] == "VPN definition."
+    assert len(fake.score_calls) == 1
+    assert fake.score_calls[0]["name"] == "source_accuracy"
+    assert fake.score_calls[0]["score"] == 1.0
+    assert fake.score_calls[0]["trace_id"] == "tr-fake-1"
+    assert fake.evaluate_calls[0]["expected_source"] == "vectorstore"
+    assert fake.evaluate_calls[0]["expected_output"] == "VPN definition."
+
+    # Test mismatch
+    res_mismatch = fake.evaluate(
+        question="What is VPN?",
+        answer="Something else.",
+        source_used="web_search",
+        retrieved_contexts=[],
+        trace_id="tr-fake-2",
+        expected_source="vectorstore",
+    )
+    assert res_mismatch.source_accuracy == 0.0
+    assert res_mismatch.scores["source_accuracy"] == 0.0
+    assert len(fake.score_calls) == 2
+    assert fake.score_calls[1]["score"] == 0.0

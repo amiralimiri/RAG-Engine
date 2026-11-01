@@ -394,3 +394,296 @@ def test_main_cli_invalid_workflow():
 
     results = main(["--workflows", "nonexistent_workflow"])
     assert results == []
+
+
+def test_load_matrix_config_formats(tmp_path):
+    from evaluation.run_experiment import load_matrix_config
+
+    # 1. Format: list of entries
+    yaml_list = """
+- workflow: fix_single_llm
+  variant_id: baseline
+  temperature: 0.0
+- workflow: fix_single_jev
+  variant_id: tuned_v1
+  temperature: 0.7
+  parameters:
+    top_k: 5
+"""
+    p1 = tmp_path / "matrix_list.yaml"
+    p1.write_text(yaml_list, encoding="utf-8")
+    entries1 = load_matrix_config(p1)
+    assert len(entries1) == 2
+    assert entries1[0]["workflow"] == "fix_single_llm"
+    assert entries1[0]["variant_id"] == "baseline"
+    assert entries1[0]["temperature"] == 0.0
+    assert entries1[1]["workflow"] == "fix_single_jev"
+    assert entries1[1]["variant_id"] == "tuned_v1"
+    assert entries1[1]["parameters"] == {"top_k": 5}
+
+    # 2. Format: dict with "matrix"
+    yaml_matrix = """
+matrix:
+  - workflow: fix_single_llm
+    variant_id: var_a
+    model_name: gpt-4o
+"""
+    p2 = tmp_path / "matrix_dict.yaml"
+    p2.write_text(yaml_matrix, encoding="utf-8")
+    entries2 = load_matrix_config(p2)
+    assert len(entries2) == 1
+    assert entries2[0]["workflow"] == "fix_single_llm"
+    assert entries2[0]["variant_id"] == "var_a"
+    assert entries2[0]["model_name"] == "gpt-4o"
+
+    # 3. Format: dict with "workflows" and "profiles"
+    yaml_workflows = """
+workflows:
+  - id: fix_single_llm
+    profiles:
+      - variant_id: prof_1
+        temperature: 0.3
+      - variant_id: prof_2
+        temperature: 0.9
+"""
+    p3 = tmp_path / "matrix_workflows.yaml"
+    p3.write_text(yaml_workflows, encoding="utf-8")
+    entries3 = load_matrix_config(p3)
+    assert len(entries3) == 2
+    assert entries3[0]["workflow"] == "fix_single_llm"
+    assert entries3[0]["variant_id"] == "prof_1"
+    assert entries3[0]["temperature"] == 0.3
+    assert entries3[1]["workflow"] == "fix_single_llm"
+    assert entries3[1]["variant_id"] == "prof_2"
+    assert entries3[1]["temperature"] == 0.9
+
+    # 4. Missing file
+    with pytest.raises(FileNotFoundError, match="Missing matrix configuration file"):
+        load_matrix_config(tmp_path / "does_not_exist.yaml")
+
+
+def test_run_workflow_benchmark_link_naming_and_source_accuracy():
+    """Verify run_workflow_benchmark links runs formatted as <workflow_id>@<variant_id>--<timestamp>
+
+    and aggregates source_accuracy.
+    """
+    from app.api.schemas import ChatResponse
+    from app.rag.evaluation import FakeEvaluator
+    from app.rag.workflows.base import EvalContext, WorkflowInput
+    from app.rag.workflows.runner import ExecutionResult
+    from evaluation.run_experiment import run_workflow_benchmark
+
+    mock_client = MagicMock()
+    mock_dataset = MagicMock()
+
+    item1 = MagicMock()
+    item1.input = {"question": "How to connect VPN?"}
+    item1.expected_output = "Connect to VPN via client."
+    item1.metadata = {"expected_source": "vectorstore"}
+    item1.link = MagicMock()
+
+    item2 = MagicMock()
+    item2.input = {"question": "What is the weather?"}
+    item2.expected_output = "I cannot check weather."
+    item2.metadata = {"expected_source": "insufficient_evidence"}
+    item2.link = MagicMock()
+
+    mock_dataset.items = [item1, item2]
+
+    mock_runner = MagicMock()
+    mock_runner.registry.get.return_value = MagicMock()
+
+    resp1 = ChatResponse(workflow="fix_single_llm", answer="Connect via client", source_used="vectorstore", trace_id="tr-1")
+    ctx1 = EvalContext(source_used="vectorstore", retrieved_contexts=["VPN doc"])
+    resp2 = ChatResponse(workflow="fix_single_llm", answer="I don't know", source_used="vectorstore", trace_id="tr-2")
+    ctx2 = EvalContext(source_used="vectorstore", retrieved_contexts=[])
+
+    mock_runner.execute_with_context.side_effect = [
+        ExecutionResult(response=resp1, eval_context=ctx1),
+        ExecutionResult(response=resp2, eval_context=ctx2),
+    ]
+
+    fake_eval = FakeEvaluator(faithfulness=1.0, answer_relevancy=0.9)
+
+    summary = run_workflow_benchmark(
+        workflow_name="fix_single_llm",
+        dataset=mock_dataset,
+        client=mock_client,
+        run_timestamp=1700000000,
+        runner=mock_runner,
+        evaluator=fake_eval,
+        variant_id="prompt-v2",
+        parameters={"temp": 0.5},
+    )
+
+    # Verify run name formatted as <workflow_id>@<variant_id>--<timestamp>
+    expected_run_name = "fix_single_llm@prompt-v2--1700000000"
+    item1.link.assert_called_once_with(trace_or_observation="tr-1", run_name=expected_run_name)
+    item2.link.assert_called_once_with(trace_or_observation="tr-2", run_name=expected_run_name)
+
+    # Verify execute_with_context received WorkflowInput
+    assert mock_runner.execute_with_context.call_count == 2
+    first_wf_input = mock_runner.execute_with_context.call_args_list[0][0][0]
+    assert isinstance(first_wf_input, WorkflowInput)
+    assert first_wf_input.workflow == "fix_single_llm"
+    assert first_wf_input.variant_id == "prompt-v2"
+    assert first_wf_input.parameters == {"temp": 0.5}
+
+    # Verify metrics: item 1 matched vectorstore (1.0), item 2 mismatched expected insufficient_evidence (0.0) -> avg 0.5
+    assert summary["Workflow"] == "fix_single_llm"
+    assert summary["Variant"] == "prompt-v2"
+    assert summary["Items Evaluated"] == 2
+    assert summary["Source Accuracy"] == 0.5
+    assert summary["Avg Faithfulness"] == 1.0
+    assert summary["Avg Relevancy"] == 0.9
+
+
+def test_run_matrix_benchmark_execution(tmp_path):
+    """Verify run_matrix_benchmark executes multiple workflow/profile definitions."""
+    from app.api.schemas import ChatResponse
+    from app.rag.evaluation import FakeEvaluator
+    from app.rag.workflows.base import EvalContext
+    from app.rag.workflows.runner import ExecutionResult
+    from evaluation.run_experiment import run_matrix_benchmark
+
+    yaml_matrix = """
+matrix:
+  - workflow: fix_single_llm
+    variant_id: baseline
+    temperature: 0.0
+  - workflow: fix_single_jev
+    variant_id: tuned_variant
+    temperature: 0.7
+    parameters:
+      top_k: 8
+"""
+    matrix_file = tmp_path / "test_matrix.yaml"
+    matrix_file.write_text(yaml_matrix, encoding="utf-8")
+
+    mock_dataset = [
+        {
+            "input": {"question": "Test question?"},
+            "expected_output": "Expected response.",
+            "expected_source": "vectorstore",
+        }
+    ]
+
+    mock_runner = MagicMock()
+    mock_runner.registry.get.return_value = MagicMock()
+
+    resp = ChatResponse(workflow="fix_single_llm", answer="Test answer", source_used="vectorstore", trace_id="tr-test")
+    ctx = EvalContext(source_used="vectorstore", retrieved_contexts=["context"])
+    mock_runner.execute_with_context.return_value = ExecutionResult(response=resp, eval_context=ctx)
+
+    fake_eval = FakeEvaluator(faithfulness=0.92, answer_relevancy=0.89)
+
+    results = run_matrix_benchmark(
+        matrix_file=matrix_file,
+        dataset=mock_dataset,
+        client=None,
+        run_timestamp=1710000000,
+        runner=mock_runner,
+        evaluator=fake_eval,
+    )
+
+    assert len(results) == 2
+    assert results[0]["Workflow"] == "fix_single_llm"
+    assert results[0]["Variant"] == "baseline"
+    assert results[0]["Source Accuracy"] == 1.0
+
+    assert results[1]["Workflow"] == "fix_single_jev"
+    assert results[1]["Variant"] == "tuned_variant"
+    assert results[1]["Source Accuracy"] == 1.0
+
+    # Profiles registered into runner registry
+    assert mock_runner.registry.register_profile.call_count == 2
+
+
+def test_format_matrix_table_display():
+    """Verify format_matrix_table and format_summary_table output comparison tables with all required columns."""
+    from evaluation.run_experiment import format_matrix_table, format_summary_table
+
+    sample_results = [
+        {
+            "Workflow": "fix_single_llm",
+            "Variant": "baseline",
+            "Items Evaluated": 10,
+            "Avg Latency (s)": 1.250,
+            "Avg Faithfulness": 0.950,
+            "Avg Relevancy": 0.920,
+            "Source Accuracy": 1.000,
+        },
+        {
+            "Workflow": "fix_single_llm",
+            "Variant": "candidate_a",
+            "Items Evaluated": 10,
+            "Avg Latency (s)": 0.950,
+            "Avg Faithfulness": 0.980,
+            "Avg Relevancy": 0.940,
+            "Source Accuracy": 0.900,
+        },
+    ]
+
+    matrix_str = format_matrix_table(sample_results)
+    assert "Workflow" in matrix_str
+    assert "Variant" in matrix_str
+    assert "Latency" in matrix_str
+    assert "Faithfulness" in matrix_str
+    assert "Relevancy" in matrix_str
+    assert "Source Acc" in matrix_str
+    assert "baseline" in matrix_str
+    assert "candidate_a" in matrix_str
+    assert "1.250s" in matrix_str
+    assert "1.000" in matrix_str
+
+    summary_str = format_summary_table(sample_results)
+    assert "LANGFUSE BENCHMARK EXPERIMENT RESULTS" in summary_str
+    assert "COMPARISON MATRIX:" in summary_str
+    assert "candidate_a" in summary_str
+
+
+def test_main_cli_execution_with_matrix(capsys, register_mock_workflow, tmp_path):
+    """Verify CLI main() invocation with --matrix argument."""
+    from app.rag.evaluation import FakeEvaluator, get_evaluator
+    from evaluation.run_experiment import main
+
+    register_mock_workflow("fix_single_llm", answer="Matrix answer", source_used="vectorstore", retrieved_contexts=["ctx"])
+
+    matrix_content = """
+matrix:
+  - workflow: fix_single_llm
+    variant_id: matrix_v1
+    temperature: 0.1
+"""
+    m_path = tmp_path / "cli_matrix.yaml"
+    m_path.write_text(matrix_content, encoding="utf-8")
+
+    fake_evaluator = FakeEvaluator(faithfulness=0.96, answer_relevancy=0.91)
+    get_evaluator(evaluator=fake_evaluator)
+
+    with (
+        patch("evaluation.run_experiment.get_langfuse_client", return_value=None),
+        patch(
+            "evaluation.run_experiment.load_gold_benchmarks",
+            return_value=[
+                {
+                    "id": "tc-01-greeting",
+                    "input": "Hello",
+                    "expected_output": "Hi",
+                    "expected_route": "direct",
+                    "expected_source": "vectorstore",
+                    "category": "direct_conversation",
+                }
+            ],
+        ),
+    ):
+        results = main(["--matrix", str(m_path)])
+        assert len(results) == 1
+        assert results[0]["Workflow"] == "fix_single_llm"
+        assert results[0]["Variant"] == "matrix_v1"
+        assert results[0]["Source Accuracy"] == 1.0
+        assert results[0]["Avg Faithfulness"] == 0.96
+
+        captured = capsys.readouterr()
+        assert "COMPARISON MATRIX:" in captured.out
+        assert "matrix_v1" in captured.out

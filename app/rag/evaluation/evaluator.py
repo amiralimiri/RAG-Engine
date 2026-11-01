@@ -96,6 +96,8 @@ class EvaluationEngine:
         source_used: str,
         retrieved_contexts: list[str],
         trace_id: str | None = None,
+        expected_output: str | None = None,
+        expected_source: str | None = None,
     ) -> EvaluationResult:
         """Core measurement pipeline executed synchronously."""
         if not question or not answer:
@@ -111,6 +113,21 @@ class EvaluationEngine:
         details: dict[str, Any] = {}
         contexts = retrieved_contexts or []
 
+        source_acc_val: float | None = None
+        if expected_source is not None:
+            details["expected_source"] = expected_source
+            is_match = (
+                (source_used.strip().lower() == expected_source.strip().lower())
+                if (source_used and expected_source)
+                else (source_used == expected_source)
+            )
+            source_acc_val = 1.0 if is_match else 0.0
+            scores["source_accuracy"] = source_acc_val
+            details["source_accuracy"] = source_acc_val
+
+        if expected_output is not None:
+            details["expected_output"] = expected_output
+
         should_run_faith = "faithfulness" in self.settings.eval_metrics and source_used != "direct" and bool(contexts)
         should_run_rel = "answer_relevancy" in self.settings.eval_metrics
 
@@ -120,6 +137,14 @@ class EvaluationEngine:
             and self.settings.eval_sample_rate > 0.0
             and (self.settings.eval_sample_rate >= 1.0 or random.random() < self.settings.eval_sample_rate)
         )
+
+        if expected_source is not None and source_acc_val is not None and should_dispatch_scores and trace_id:
+            self.score_metric(
+                trace_id=trace_id,
+                metric_name="source_accuracy",
+                score=source_acc_val,
+                comment=f"Expected: {expected_source}, Actual: {source_used}",
+            )
 
         def _measure_metric(
             metric_class: type[Any],
@@ -186,6 +211,7 @@ class EvaluationEngine:
         return EvaluationResult(
             faithfulness=faith_val,
             answer_relevancy=rel_val,
+            source_accuracy=source_acc_val,
             scores=scores,
             details=details,
         )
@@ -197,6 +223,9 @@ class EvaluationEngine:
         source_used: str,
         retrieved_contexts: list[str],
         trace_id: str | None = None,
+        *,
+        expected_output: str | None = None,
+        expected_source: str | None = None,
     ) -> EvaluationResult:
         """Synchronously execute metric calculation and score submission."""
         return self._compute_metrics(
@@ -205,6 +234,8 @@ class EvaluationEngine:
             source_used=source_used,
             retrieved_contexts=retrieved_contexts,
             trace_id=trace_id,
+            expected_output=expected_output,
+            expected_source=expected_source,
         )
 
     async def aevaluate(
@@ -214,6 +245,9 @@ class EvaluationEngine:
         source_used: str,
         retrieved_contexts: list[str],
         trace_id: str | None = None,
+        *,
+        expected_output: str | None = None,
+        expected_source: str | None = None,
     ) -> EvaluationResult:
         """Asynchronously execute metric calculation using threadpool offloading and timeout shielding."""
         timeout = getattr(self.settings, "eval_timeout_seconds", 0.0)
@@ -225,6 +259,8 @@ class EvaluationEngine:
             source_used=source_used,
             retrieved_contexts=retrieved_contexts,
             trace_id=trace_id,
+            expected_output=expected_output,
+            expected_source=expected_source,
         )
         try:
             if timeout_val:
@@ -253,10 +289,12 @@ class FakeEvaluator:
         self,
         faithfulness: float | None = 1.0,
         answer_relevancy: float | None = 1.0,
+        source_accuracy: float | None = None,
         custom_scores: dict[str, float] | None = None,
     ) -> None:
         self.faithfulness = faithfulness
         self.answer_relevancy = answer_relevancy
+        self.source_accuracy = source_accuracy
         self.custom_scores = custom_scores or {}
         self.evaluate_calls: list[dict[str, Any]] = []
         self.score_calls: list[dict[str, Any]] = []
@@ -268,6 +306,9 @@ class FakeEvaluator:
         source_used: str,
         retrieved_contexts: list[str],
         trace_id: str | None = None,
+        *,
+        expected_output: str | None = None,
+        expected_source: str | None = None,
     ) -> EvaluationResult:
         self.evaluate_calls.append(
             {
@@ -276,6 +317,8 @@ class FakeEvaluator:
                 "source_used": source_used,
                 "retrieved_contexts": retrieved_contexts,
                 "trace_id": trace_id,
+                "expected_output": expected_output,
+                "expected_source": expected_source,
             }
         )
         scores: dict[str, float] = dict(self.custom_scores)
@@ -283,11 +326,41 @@ class FakeEvaluator:
             scores["faithfulness"] = self.faithfulness
         if self.answer_relevancy is not None:
             scores["answer_relevancy"] = self.answer_relevancy
+
+        source_acc_val = self.source_accuracy
+        if source_acc_val is None and expected_source is not None:
+            is_match = (
+                (source_used.strip().lower() == expected_source.strip().lower())
+                if (source_used and expected_source)
+                else (source_used == expected_source)
+            )
+            source_acc_val = 1.0 if is_match else 0.0
+
+        if source_acc_val is not None:
+            scores["source_accuracy"] = source_acc_val
+
+        details: dict[str, Any] = {"fake": True}
+        if expected_output is not None:
+            details["expected_output"] = expected_output
+        if expected_source is not None:
+            details["expected_source"] = expected_source
+        if source_acc_val is not None:
+            details["source_accuracy"] = source_acc_val
+
+        if expected_source is not None and trace_id and source_acc_val is not None:
+            self.score_metric(
+                trace_id=trace_id,
+                metric_name="source_accuracy",
+                score=source_acc_val,
+                comment=f"Expected: {expected_source}, Actual: {source_used}",
+            )
+
         return EvaluationResult(
             faithfulness=self.faithfulness,
             answer_relevancy=self.answer_relevancy,
+            source_accuracy=source_acc_val,
             scores=scores,
-            details={"fake": True},
+            details=details,
         )
 
     async def aevaluate(
@@ -297,6 +370,9 @@ class FakeEvaluator:
         source_used: str,
         retrieved_contexts: list[str],
         trace_id: str | None = None,
+        *,
+        expected_output: str | None = None,
+        expected_source: str | None = None,
     ) -> EvaluationResult:
         return self.evaluate(
             question=question,
@@ -304,6 +380,8 @@ class FakeEvaluator:
             source_used=source_used,
             retrieved_contexts=retrieved_contexts,
             trace_id=trace_id,
+            expected_output=expected_output,
+            expected_source=expected_source,
         )
 
     def score_metric(

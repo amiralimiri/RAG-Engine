@@ -12,6 +12,7 @@ class EvaluationResult(BaseModel):
 
     faithfulness: float | None = None
     answer_relevancy: float | None = None
+    source_accuracy: float | None = None
     scores: dict[str, float] = Field(default_factory=dict)
     details: dict[str, Any] = Field(default_factory=dict)
 
@@ -27,6 +28,9 @@ class Evaluator(Protocol):
         source_used: str,
         retrieved_contexts: list[str],
         trace_id: str | None = None,
+        *,
+        expected_output: str | None = None,
+        expected_source: str | None = None,
     ) -> EvaluationResult:
         """Synchronously measure metrics and optionally push scores to Langfuse."""
         ...
@@ -38,6 +42,9 @@ class Evaluator(Protocol):
         source_used: str,
         retrieved_contexts: list[str],
         trace_id: str | None = None,
+        *,
+        expected_output: str | None = None,
+        expected_source: str | None = None,
     ) -> EvaluationResult:
         """Asynchronously measure metrics with threadpool offloading and push scores."""
         ...
