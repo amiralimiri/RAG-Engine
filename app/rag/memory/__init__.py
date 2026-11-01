@@ -13,6 +13,7 @@ from app.rag.memory.base import (
 )
 from app.rag.memory.in_memory import InMemoryConversationStore
 from app.rag.memory.noop import NoOpMemoryStore
+from app.rag.memory.sqlite import SQLiteConversationStore
 
 if TYPE_CHECKING:
     from app.core.config import Settings
@@ -38,15 +39,8 @@ def get_conversation_memory(settings: Settings | None = None) -> ConversationMem
         elif resolved_backend == "noop":
             adapter = NoOpMemoryStore()
         elif resolved_backend == "sqlite":
-            try:
-                from app.rag.memory.sqlite import SQLiteConversationStore  # type: ignore[reportMissingImports]
-
-                db_path = getattr(cfg, "conversation_db_path", "data/conversations.db")
-                adapter = SQLiteConversationStore(db_path=db_path)
-            except (ImportError, ModuleNotFoundError):
-                raise NotImplementedError(
-                    "SQLiteConversationStore is not yet available; backend 'sqlite' requires Ticket 03 implementation."
-                )
+            db_path = getattr(cfg, "conversation_db_path", "data/conversations.db")
+            adapter = SQLiteConversationStore(db_path=db_path)
         else:
             raise ValueError(f"Unsupported conversation memory backend: '{resolved_backend}'")
 
@@ -68,6 +62,7 @@ __all__ = [
     "ConversationTurn",
     "InMemoryConversationStore",
     "NoOpMemoryStore",
+    "SQLiteConversationStore",
     "SessionInfo",
     "get_conversation_memory",
     "reset_conversation_memory",

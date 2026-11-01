@@ -1,6 +1,7 @@
 """Tests for in-memory, no-op memory adapters and conversation memory factory."""
 
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -12,6 +13,7 @@ from app.rag.memory import (
     ConversationTurn,
     InMemoryConversationStore,
     NoOpMemoryStore,
+    SQLiteConversationStore,
     get_conversation_memory,
     reset_conversation_memory,
 )
@@ -387,7 +389,7 @@ async def test_in_memory_concurrent_access() -> None:
         assert len(turns) == 10
 
 
-def test_factory_resolution_and_singleton(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_factory_resolution_and_singleton(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Validate factory adapter resolution, backend settings, and singleton reset."""
     base_kwargs: dict[str, Any] = {
         "llm_api_key": SecretStr("mock"),
@@ -408,10 +410,14 @@ def test_factory_resolution_and_singleton(monkeypatch: pytest.MonkeyPatch) -> No
     mem_noop = get_conversation_memory(settings=settings_noop)
     assert isinstance(mem_noop, NoOpMemoryStore)
 
-    # Backend resolution from Settings: sqlite raises NotImplementedError until Ticket 03
-    settings_sqlite = Settings(**base_kwargs, conversation_memory_backend="sqlite")
-    with pytest.raises(NotImplementedError, match="Ticket 03"):
-        get_conversation_memory(settings=settings_sqlite)
+    # Backend resolution from Settings: sqlite
+    settings_sqlite = Settings(
+        **base_kwargs,
+        conversation_memory_backend="sqlite",
+        conversation_db_path=str(tmp_path / "factory.db"),
+    )
+    mem_sqlite = get_conversation_memory(settings=settings_sqlite)
+    assert isinstance(mem_sqlite, SQLiteConversationStore)
 
     # Singleton caching when called without settings
     monkeypatch.setenv("CONVERSATION_MEMORY_BACKEND", "noop")
