@@ -124,6 +124,13 @@ Web evidence:
 {{web_results}}""",
 
     "rag:direct_answer": """Respond briefly, warmly, and naturally as an enterprise IT support copilot to: {{question}}""",
+
+    "rag:condense_query": """Given the following conversation and a follow up question, rephrase the follow up question to be a standalone search query.
+Chat History:
+{{chat_history}}
+
+Follow Up: {{question}}
+Standalone question:""",
 }
 
 

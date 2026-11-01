@@ -14,7 +14,6 @@ from langchain_core.messages import (
     ToolMessage,
 )
 from langchain_core.tools import BaseTool
-from langgraph.checkpoint.memory import MemorySaver
 
 from app.rag.workflows.base import (
     EvalContext,
@@ -135,13 +134,10 @@ class ReActAgentWorkflow:
             if self._compiled_graph is None:
                 active_llm = self.llm if self.llm is not None else self._get_default_llm()
                 active_tools = self.tools if self.tools is not None else self._get_default_tools()
-                active_checkpointer = (
-                    self.checkpointer if self.checkpointer is not None else MemorySaver()
-                )
                 self._compiled_graph = create_agent(
                     model=active_llm,
                     tools=active_tools,
-                    checkpointer=active_checkpointer,
+                    checkpointer=self.checkpointer,
                     system_prompt=self.system_prompt,
                 )
             return self._compiled_graph

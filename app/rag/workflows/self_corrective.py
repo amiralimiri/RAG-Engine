@@ -16,9 +16,11 @@ from app.rag.workflows.base import (
     WorkflowInput,
     WorkflowOutput,
     parse_raw_attachments,
+    parse_raw_messages,
 )
 
 DEFAULT_STEP_LABELS: dict[str, str] = {
+    "condense_query": "Contextualizing query...",
     "route_question": "Analyzing inquiry & routing...",
     "retrieve_kb": "Searching internal knowledge base...",
     "grade_kb": "Evaluating evidence sufficiency...",
@@ -92,11 +94,25 @@ class SelfCorrectiveRagWorkflow:
             return self._compiled_graph
 
     def to_initial_state(self, input: WorkflowInput | Any, trace_id: str | None = None) -> dict[str, Any]:
-        attachments = parse_raw_attachments(getattr(input, "attachments", None))
+        if isinstance(input, dict):
+            question = input.get("question") or ""
+            raw_messages = input.get("messages")
+            raw_attachments = input.get("attachments")
+            resolved_tid = trace_id or input.get("trace_id")
+        else:
+            question = getattr(input, "question", "") or ""
+            raw_messages = getattr(input, "messages", None)
+            raw_attachments = getattr(input, "attachments", None)
+            resolved_tid = trace_id or getattr(input, "trace_id", None)
+
+        messages = parse_raw_messages(raw_messages, question)
+        attachments = parse_raw_attachments(raw_attachments)
 
         return {
-            "question": getattr(input, "question", ""),
-            "current_query": "",
+            "question": question,
+            "current_query": question,
+            "messages": messages,
+            "attachments": attachments,
             "kb_docs": [],
             "web_results": "",
             "kb_grade": "",
@@ -106,9 +122,8 @@ class SelfCorrectiveRagWorkflow:
             "retry_count": 0,
             "trace": [],
             "citations": [],
-            "trace_id": trace_id or getattr(input, "trace_id", None),
+            "trace_id": resolved_tid,
             "retrieved_contexts": [],
-            "attachments": attachments,
         }
 
     def to_workflow_output(self, final_state: dict[str, Any], trace_id: str | None = None) -> WorkflowOutput:
@@ -147,6 +162,8 @@ class SelfCorrectiveRagWorkflow:
         return {
             "question": current_state.get("question", ""),
             "current_query": current_state.get("current_query", ""),
+            "messages": current_state.get("messages", []),
+            "attachments": current_state.get("attachments", []),
             "kb_docs": current_state.get("kb_docs", []),
             "web_results": current_state.get("web_results", ""),
             "kb_grade": current_state.get("kb_grade", ""),

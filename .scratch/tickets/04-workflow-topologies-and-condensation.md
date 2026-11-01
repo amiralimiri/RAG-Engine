@@ -1,7 +1,7 @@
 # Ticket 04: Workflow Topologies Multi-Turn State Hygiene, Query Condensation & ReAct Decoupling
 
 - **Milestone:** Unified Pluggable Conversation Memory (ADR-0016)
-- **Status:** Pending
+- **Status:** Completed
 - **Dependency:** Ticket 01
 - **Estimated Scope:** Bite-sized
 

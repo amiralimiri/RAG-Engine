@@ -226,9 +226,9 @@ class TestPromptAutoSeeding:
         monkeypatch.setattr(prompts, "get_langfuse_client", lambda: mock_client)
 
         results = prompts.seed_all_prompts()
-        assert len(results) == 10
+        assert len(results) == len(prompts.LOCAL_PROMPTS)
         assert all(results.values())
-        assert mock_client.create_prompt.call_count == 10
+        assert mock_client.create_prompt.call_count == len(prompts.LOCAL_PROMPTS)
 
     def test_seed_all_prompts_skips_when_already_on_server(self, monkeypatch):
         from app.services import prompts
@@ -246,7 +246,7 @@ class TestPromptAutoSeeding:
         monkeypatch.setattr(prompts, "get_langfuse_client", lambda: mock_client)
 
         results = prompts.seed_all_prompts()
-        assert len(results) == 10
+        assert len(results) == len(prompts.LOCAL_PROMPTS)
         assert all(results.values())
         assert mock_client.create_prompt.call_count == 0
 

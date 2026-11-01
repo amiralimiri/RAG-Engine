@@ -41,7 +41,7 @@ def test_workflow_runner_telemetry_llm_execution(runner_and_mock_graph):
     assert len(args) >= 1
     initial_state = args[0]
     assert initial_state["question"] == "hello"
-    assert initial_state["current_query"] == ""
+    assert initial_state["current_query"] == "hello"
     assert initial_state["kb_docs"] == []
     assert initial_state["web_results"] == ""
     assert initial_state["kb_grade"] == ""

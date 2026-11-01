@@ -1,7 +1,8 @@
 import operator
-from typing import Annotated, Literal, NotRequired
+from typing import Annotated, Any, Literal, NotRequired
 
 from langchain_core.documents import Document
+from langchain_core.messages import BaseMessage
 from pydantic import BaseModel, Field
 from typing_extensions import TypedDict
 
@@ -26,3 +27,5 @@ class AgentState(TypedDict):
     citations: list[dict]
     trace_id: NotRequired[str]
     retrieved_contexts: NotRequired[list[str]]
+    messages: Annotated[list[BaseMessage], operator.add]
+    attachments: NotRequired[list[dict[str, Any]]]
