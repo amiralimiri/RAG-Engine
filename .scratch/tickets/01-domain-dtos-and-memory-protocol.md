@@ -1,7 +1,7 @@
 # Ticket 01: Domain DTOs, Memory Protocol Seam & Configuration
 
 - **Milestone:** Unified Pluggable Conversation Memory (ADR-0016)
-- **Status:** Pending
+- **Status:** Completed
 - **Dependency:** None (Foundational)
 - **Estimated Scope:** Bite-sized
 

@@ -77,6 +77,11 @@ class Settings(BaseSettings):
     )
     eval_timeout_seconds: float = Field(default=120.0, ge=0.0)
 
+    # Conversational Memory Settings
+    conversation_memory_backend: Literal["sqlite", "in_memory", "noop"] = Field(default="sqlite")
+    conversation_db_path: str = Field(default="data/conversations.db")
+    memory_max_turns: int = Field(default=10, ge=1)
+
     # Unit Token Cost Multipliers (USD per 1,000 tokens)
     llm_cost_per_1k_input_tokens: float = Field(default=0.0015, ge=0.0)
     llm_cost_per_1k_output_tokens: float = Field(default=0.0020, ge=0.0)
