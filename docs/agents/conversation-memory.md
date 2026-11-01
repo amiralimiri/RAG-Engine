@@ -87,3 +87,76 @@ When authoring unit and integration tests:
   runner = WorkflowRunner(registry=registry, memory=memory_store)
   ```
 - Never rely on live SQLite database files in unit tests. Use `InMemoryConversationStore` or temporary paths (`tmp_path / "test.db"`).
+
+---
+
+## 4. Safe Rewind & Atomic Truncation Pattern
+
+1. **Defer Truncation Until Generation Succeeds**:
+   - Never pre-emptively truncate or delete historical turns upon receiving an edit/rewind request (`rewind_turn_index = k`).
+   - If the subsequent LLM generation, tool execution, or network connection fails/disconnects, the original conversation turns must remain intact.
+   - During `_prepare_execution`, load bounded history strictly up to `[0 .. k-1]` for prompt compilation, keeping existing turns in the store untouched.
+   - Truncation (`memory.atruncate_from(session_id, k)`) and persistence of the new replacement turn (`memory.asave_turn(...)`) are committed together in `_finalize_execution` **only** after generation completes without error.
+
+2. **Session Branching (`afork_session`)**:
+   - Creating an alternate lineage via session branching copies turns `0 .. upto_turn_index` from the source session to a new session ID.
+   - When branching at Turn 0 before any turns exist, `upto_turn_index = -1` creates an empty branch session recording `parent_session_id` and `forked_from_turn = 0`.
+
+---
+
+## 5. Session Identity Sanitization & Sentinels
+
+1. **Transport Boundary Sanitization**:
+   - Never allow sentinel string literals like `"undefined"`, `"null"`, `""`, or whitespace strings to be accepted as valid `session_id` values.
+   - The transport layer (`ChatRequest.sanitize_session_id`) must strip whitespace and normalize sentinel strings to `None`:
+     ```python
+     @field_validator("session_id", mode="before")
+     @classmethod
+     def sanitize_session_id(cls, v: Any) -> str | None:
+         if v is None:
+             return None
+         if isinstance(v, str):
+             v_str = v.strip()
+             if not v_str or v_str.lower() in ("undefined", "null", '""', "''"):
+                 return None
+             return v_str
+         return str(v)
+     ```
+   - In `WorkflowRunner._ahydrate_memory` and `_apersist_turn`, verify that `session_id` is non-empty and not a sentinel before querying or persisting turns.
+
+2. **Client-Side Storage Normalization**:
+   - Client scripts (`app.js`) must validate `localStorage` values on startup: if `localStorage.getItem("rag_current_session")` is `"undefined"` or `"null"`, purge the key and generate a pristine UUID.
+
+---
+
+## 6. Immutable Data Flow & Checkpointer Isolation
+
+1. **Immutable Domain State Flow**:
+   - Do not mutate caller-provided domain DTOs (`WorkflowInput.messages`) in-place during pipeline preparation or hydration.
+   - When hydrated messages are retrieved from `ConversationMemoryAdapter`, derive initial graph state explicitly (`effective_messages`) without corrupting caller request objects.
+   - In-place mutation risks duplicate history injections when workflows wrap internal checkpointers or re-execute.
+
+2. **Checkpointer vs. Protocol Seam Isolation**:
+   - Workflows with internal checkpointers (e.g., LangGraph `MemorySaver`) manage their own internal turn graph.
+   - When a workflow specifies a checkpointer (`wf.checkpointer is not None`), `to_initial_state` must supply only the new user question (`[HumanMessage(question)]`), avoiding double-injection of historical messages already stored in the checkpointer.
+   - For checkpointer-free workflows (the standard zero-shim design), `to_initial_state` accepts historical messages hydrated from the authoritative `ConversationMemoryAdapter`.
+
+---
+
+## 7. Frontend DOM Execution, Event Delegation & Cache Control
+
+1. **Explicit DOM Mount Anchors**:
+   - Always declare explicit container elements in `templates/index.html` (e.g. `<div id="turnActionContainer"></div>`) for dynamic controls like turn edit/rewind banners.
+   - Never rely on relative DOM walking or `form.parentNode.insertBefore(banner, form)` which breaks depending on CSS layouts or dynamic card visibility.
+
+2. **DOMPurify Whitelist for Event Delegation**:
+   - Interactive components rendered via HTML templates or Markdown require custom `data-*` attributes for event delegation (`data-turn-index`, `data-query`, `data-session-id`, `data-trace-id`).
+   - Ensure `PURIFY_CONFIG.ADD_ATTR` explicitly includes all custom `data-*` attributes used by click handlers. If omitted, DOMPurify silently strips the attributes, breaking event handlers in real browsers while passing headless tests.
+
+3. **Static Asset Cache-Busting**:
+   - Reference static assets in Jinja templates with explicit cache-busting version query strings (e.g. `<script src="/static/js/app.js?v=mem1"></script>`).
+   - Browsers aggressively cache `.js` and `.css` files; cache-busting ensures client scripts and styles reflect recent seam and UI updates immediately.
+
+4. **Resilient Bootstrap State**:
+   - Client bootstrap functions must check `document.readyState` (`complete` or `interactive`) before attaching `DOMContentLoaded` listeners, avoiding race conditions where scripts load asynchronously after the DOM has already parsed.
+

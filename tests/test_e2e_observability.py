@@ -472,6 +472,7 @@ def test_e2e_multi_turn_session_persistence_http(client, monkeypatch):
     react_wf = registry.get("react_agent")
     # Share the same checkpointer-enabled compiled graph
     monkeypatch.setattr(react_wf, "get_compiled_graph", custom_wf.get_compiled_graph)
+    monkeypatch.setattr(react_wf, "checkpointer", custom_wf.checkpointer)
 
     shared_session = "persistent-http-session-999"
 
