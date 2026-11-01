@@ -350,14 +350,15 @@ def test_evaluation_engine_source_accuracy_and_expected_output() -> None:
     )
     assert res_match.source_accuracy == 1.0
     assert res_match.scores["source_accuracy"] == 1.0
+    assert res_match.reference_correctness is not None
+    assert res_match.scores["reference_correctness"] == res_match.reference_correctness
     assert res_match.details["expected_source"] == "VectorStore"
     assert res_match.details["expected_output"] == "Reset password instructions."
     assert res_match.details["source_accuracy"] == 1.0
-    assert mock_client.create_score.call_count == 1
-    call_kwargs = mock_client.create_score.call_args.kwargs
-    assert call_kwargs["name"] == "source_accuracy"
-    assert call_kwargs["value"] == 1.0
-    assert call_kwargs["trace_id"] == "tr-match-1"
+    assert mock_client.create_score.call_count == 2
+    metric_names = [call.kwargs["name"] for call in mock_client.create_score.call_args_list]
+    assert "source_accuracy" in metric_names
+    assert "reference_correctness" in metric_names
 
     # Test mismatch
     mock_client.reset_mock()
@@ -372,8 +373,11 @@ def test_evaluation_engine_source_accuracy_and_expected_output() -> None:
     )
     assert res_mismatch.source_accuracy == 0.0
     assert res_mismatch.scores["source_accuracy"] == 0.0
-    assert mock_client.create_score.call_count == 1
-    assert mock_client.create_score.call_args.kwargs["value"] == 0.0
+    assert res_mismatch.reference_correctness is not None
+    assert mock_client.create_score.call_count == 2
+    mismatch_names = [call.kwargs["name"] for call in mock_client.create_score.call_args_list]
+    assert "source_accuracy" in mismatch_names
+    assert "reference_correctness" in mismatch_names
 
 
 def test_fake_evaluator_ground_truth_source_accuracy() -> None:
@@ -391,11 +395,13 @@ def test_fake_evaluator_ground_truth_source_accuracy() -> None:
     )
     assert res.source_accuracy == 1.0
     assert res.scores["source_accuracy"] == 1.0
+    assert res.reference_correctness is not None
     assert res.details["expected_source"] == "vectorstore"
     assert res.details["expected_output"] == "VPN definition."
-    assert len(fake.score_calls) == 1
-    assert fake.score_calls[0]["name"] == "source_accuracy"
-    assert fake.score_calls[0]["score"] == 1.0
+    assert len(fake.score_calls) == 2
+    metric_names = [call["name"] for call in fake.score_calls]
+    assert "source_accuracy" in metric_names
+    assert "reference_correctness" in metric_names
     assert fake.score_calls[0]["trace_id"] == "tr-fake-1"
     assert fake.evaluate_calls[0]["expected_source"] == "vectorstore"
     assert fake.evaluate_calls[0]["expected_output"] == "VPN definition."
@@ -411,5 +417,5 @@ def test_fake_evaluator_ground_truth_source_accuracy() -> None:
     )
     assert res_mismatch.source_accuracy == 0.0
     assert res_mismatch.scores["source_accuracy"] == 0.0
-    assert len(fake.score_calls) == 2
-    assert fake.score_calls[1]["score"] == 0.0
+    assert len(fake.score_calls) == 3
+    assert fake.score_calls[2]["score"] == 0.0

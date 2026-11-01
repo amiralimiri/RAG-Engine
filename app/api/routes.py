@@ -53,13 +53,16 @@ def list_workflows():
 
 @router.post("/chat", response_model=ChatResponse)
 def chat(payload: ChatRequest, background_tasks: BackgroundTasks):
-    return get_workflow_runner().execute(payload, background_tasks=background_tasks)
+    wf_input = payload.to_workflow_input()
+    wf_output = get_workflow_runner().execute(wf_input, background_tasks=background_tasks)
+    return ChatResponse.from_workflow_output(wf_output)
 
 
 @router.post("/chat/stream")
 async def chat_stream(payload: ChatRequest):
+    wf_input = payload.to_workflow_input()
     return StreamingResponse(
-        get_workflow_runner().stream(payload),
+        get_workflow_runner().stream(wf_input),
         media_type="text/event-stream; charset=utf-8",
         headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
     )

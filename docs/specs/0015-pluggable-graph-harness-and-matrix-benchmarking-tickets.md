@@ -3,7 +3,7 @@
 - **Specification Reference:** `docs/specs/0015-pluggable-graph-harness-and-matrix-benchmarking-spec.md`
 - **ADR Reference:** `docs/adr/0015-pluggable-graph-harness-and-matrix-benchmarking.md`
 - **Target Version:** `0.15.0`
-- **Status:** Approved / In Progress
+- **Status:** Completed
 
 ---
 
@@ -12,10 +12,10 @@
 | Ticket | Title | Blocked By | Status |
 | :--- | :--- | :--- | :--- |
 | **01** | Domain DTOs (`WorkflowInput`, `WorkflowOutput`) & Transport Decoupling | None | Completed |
-| **02** | `StandardWorkflowState` & `PluggableWorkflow` Implementation | 01 | Ready |
-| **03** | Dynamic Manifest + Factory Discovery in `WorkflowRegistry` | 02 | Pending |
-| **04** | `ExecutionProfile` 3-Tier Resolution & Multi-Dimensional Telemetry | 01 | Ready |
-| **05** | Supervised Evaluator Seam Enhancement & Matrix Benchmarking Runner | 04 | Pending |
+| **02** | `StandardWorkflowState` & `PluggableWorkflow` Implementation | 01 | Completed |
+| **03** | Dynamic Manifest + Factory Discovery in `WorkflowRegistry` | 02 | Completed |
+| **04** | `ExecutionProfile` 3-Tier Resolution & Multi-Dimensional Telemetry | 01 | Completed |
+| **05** | Supervised Evaluator Seam Enhancement & Matrix Benchmarking Runner | 04 | Completed |
 
 ---
 

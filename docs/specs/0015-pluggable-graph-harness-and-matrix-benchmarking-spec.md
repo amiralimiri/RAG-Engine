@@ -2,7 +2,7 @@
 
 - **ADR Reference:** `docs/adr/0015-pluggable-graph-harness-and-matrix-benchmarking.md`
 - **Target Version:** `0.15.0`
-- **Status:** Approved / In Progress
+- **Status:** Implemented
 - **Triage Label:** `ready-for-agent`
 - **Work Packages / Tickets:** `docs/specs/0015-pluggable-graph-harness-and-matrix-benchmarking-tickets.md`
 

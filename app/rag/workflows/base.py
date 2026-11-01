@@ -47,7 +47,7 @@ class WorkflowInput(BaseModel):
     """Normalized domain input contract for all workflow executions."""
 
     question: str = Field(..., description="User query or inquiry text")
-    workflow: str = Field(default="fix_single_jev", description="Target LangGraph workflow name")
+    workflow: str | None = Field(default=None, description="Optional target LangGraph workflow name")
     messages: list[dict[str, Any]] | None = Field(
         default=None,
         description="Optional multi-turn conversation messages preceding this query",
@@ -60,6 +60,7 @@ class WorkflowInput(BaseModel):
     user_id: str | None = Field(default=None, description="Optional authenticated user identifier")
     trace_id: str | None = Field(default=None, description="Optional telemetry trace identifier")
     variant_id: str | None = Field(default=None, description="Optional execution variant identifier")
+    stream_steps: bool = Field(default=True, description="Whether to emit intermediate graph step events")
     parameters: dict[str, Any] = Field(
         default_factory=dict,
         description="Dynamic execution parameters and overrides",
@@ -93,7 +94,7 @@ class WorkflowOutput(BaseModel):
     workflow: str = Field(..., description="Unique slug of the workflow executed")
     answer: str = Field(..., description="Final assistant response text")
     source_used: str = Field(default="direct", description="Primary information source utilized")
-    citations: list[Any] = Field(
+    citations: list[dict[str, Any]] = Field(
         default_factory=list,
         description="Cited reference materials and document excerpts",
     )
@@ -201,13 +202,66 @@ def _extract_answer(state: dict[str, Any]) -> str:
     return ""
 
 
+def parse_raw_messages(
+    raw_messages: Sequence[Any] | None,
+    question: str | None = None,
+) -> list[BaseMessage]:
+    """Parse raw message dicts, objects, or BaseMessage instances into LangChain BaseMessage instances."""
+    messages: list[BaseMessage] = []
+    if raw_messages:
+        for m in raw_messages:
+            if isinstance(m, BaseMessage):
+                messages.append(m)
+            elif isinstance(m, dict):
+                role = (m.get("role") or "").lower()
+                content = m.get("content", "")
+                if role in ("user", "human"):
+                    messages.append(HumanMessage(content=content))
+                elif role in ("assistant", "ai"):
+                    messages.append(AIMessage(content=content))
+                elif role == "system":
+                    messages.append(SystemMessage(content=content))
+                else:
+                    messages.append(HumanMessage(content=content))
+            else:
+                role = (getattr(m, "role", "") or "").lower()
+                content = getattr(m, "content", "")
+                if role in ("user", "human"):
+                    messages.append(HumanMessage(content=content))
+                elif role in ("assistant", "ai"):
+                    messages.append(AIMessage(content=content))
+                elif role == "system":
+                    messages.append(SystemMessage(content=content))
+                else:
+                    messages.append(HumanMessage(content=content))
+
+    if question:
+        if not messages or getattr(messages[-1], "content", None) != question:
+            messages.append(HumanMessage(content=question))
+    return messages
+
+
+def parse_raw_attachments(raw_attachments: Sequence[Any] | None) -> list[dict[str, Any]]:
+    """Normalize raw attachment dictionaries or models into list of dictionaries."""
+    attachments: list[dict[str, Any]] = []
+    if raw_attachments:
+        for a in raw_attachments:
+            if isinstance(a, dict):
+                attachments.append(a)
+            elif hasattr(a, "model_dump"):
+                attachments.append(a.model_dump())
+            else:
+                attachments.append(dict(a))
+    return attachments
+
+
 class PluggableWorkflow:
     """Generic adapter wrapping compiled LangGraph runnables or factory callables."""
 
     def __init__(
         self,
         info: WorkflowInfo,
-        graph: Any | Callable[[], Any],
+        graph: Any | Callable[..., Any],
     ) -> None:
         self.info = info
         self._raw_graph = graph
@@ -232,10 +286,14 @@ class PluggableWorkflow:
                 if variant_id in self._variant_graphs:
                     return self._variant_graphs[variant_id]
                 if self._graph_factory is not None:
+                    config = {"variant_id": variant_id}
                     try:
-                        vg = self._graph_factory(variant_id=variant_id)  # type: ignore
+                        vg = self._graph_factory(config=config)  # type: ignore
                     except TypeError:
-                        vg = self._graph_factory()
+                        try:
+                            vg = self._graph_factory(config)  # type: ignore
+                        except TypeError:
+                            vg = self._graph_factory()
                     self._variant_graphs[variant_id] = vg
                     return vg
                 if self._compiled_graph is not None:
@@ -243,7 +301,13 @@ class PluggableWorkflow:
 
             if self._compiled_graph is None:
                 if self._graph_factory is not None:
-                    self._compiled_graph = self._graph_factory()
+                    try:
+                        self._compiled_graph = self._graph_factory(config=None)  # type: ignore
+                    except TypeError:
+                        try:
+                            self._compiled_graph = self._graph_factory(None)  # type: ignore
+                        except TypeError:
+                            self._compiled_graph = self._graph_factory()
                 else:
                     self._compiled_graph = self._raw_graph
             return self._compiled_graph
@@ -269,53 +333,15 @@ class PluggableWorkflow:
             resolved_tid = trace_id or getattr(input, "trace_id", None)
             variant_id = getattr(input, "variant_id", None)
 
-        messages: list[BaseMessage] = []
-        if raw_messages:
-            for m in raw_messages:
-                if isinstance(m, BaseMessage):
-                    messages.append(m)
-                elif isinstance(m, dict):
-                    role = (m.get("role") or "").lower()
-                    content = m.get("content", "")
-                    if role in ("user", "human"):
-                        messages.append(HumanMessage(content=content))
-                    elif role in ("assistant", "ai"):
-                        messages.append(AIMessage(content=content))
-                    elif role == "system":
-                        messages.append(SystemMessage(content=content))
-                    else:
-                        messages.append(HumanMessage(content=content))
-                else:
-                    role = (getattr(m, "role", "") or "").lower()
-                    content = getattr(m, "content", "")
-                    if role in ("user", "human"):
-                        messages.append(HumanMessage(content=content))
-                    elif role in ("assistant", "ai"):
-                        messages.append(AIMessage(content=content))
-                    elif role == "system":
-                        messages.append(SystemMessage(content=content))
-                    else:
-                        messages.append(HumanMessage(content=content))
-
+        messages = parse_raw_messages(raw_messages, raw_question)
         question = raw_question or ""
-        if question:
-            if not messages or getattr(messages[-1], "content", None) != question:
-                messages.append(HumanMessage(content=question))
-        elif messages:
+        if not question and messages:
             for m in reversed(messages):
                 if isinstance(m, HumanMessage):
                     question = str(m.content)
                     break
 
-        attachments: list[dict[str, Any]] = []
-        if raw_attachments:
-            for a in raw_attachments:
-                if isinstance(a, dict):
-                    attachments.append(a)
-                elif hasattr(a, "model_dump"):
-                    attachments.append(a.model_dump())
-                else:
-                    attachments.append(dict(a))
+        attachments = parse_raw_attachments(raw_attachments)
 
         state: dict[str, Any] = {
             "question": question,
@@ -403,8 +429,6 @@ class PluggableWorkflow:
             variant_id=final_state.get("variant_id"),
         )
 
-    to_chat_response = to_workflow_output
-
     def extract_eval_context(self, final_state: dict[str, Any]) -> EvalContext:
         """Extract evidence contexts and source used for online evaluation."""
         source_used = final_state.get("source_used") or "direct"
@@ -471,4 +495,6 @@ __all__ = [
     "WorkflowDefinition",
     "StandardWorkflowState",
     "PluggableWorkflow",
+    "parse_raw_messages",
+    "parse_raw_attachments",
 ]

@@ -73,7 +73,7 @@ def test_e2e_flow_with_langfuse_mocked(client, monkeypatch, register_mock_workfl
     assert chat_data["answer"] == "Follow VPN installation guide for your OS."
     assert chat_data["source_used"] == "knowledge_base"
     assert chat_data["trace_id"] == "trace-e2e-llm-101"
-    assert "vpn_setup.md" in chat_data["citations"]
+    assert any(c.get("title") == "vpn_setup.md" if isinstance(c, dict) else c == "vpn_setup.md" for c in chat_data["citations"])
 
     # Verify background online evaluation task enqueued
     mock_eval.assert_called_once_with(

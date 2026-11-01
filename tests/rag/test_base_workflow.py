@@ -9,7 +9,6 @@ from app.api.schemas import (
     Attachment,
     ChatMessage,
     ChatRequest,
-    ChatResponse,
     WorkflowListResponse,
 )
 from app.rag.workflows.base import (
@@ -43,14 +42,6 @@ class DummyCompliantWorkflow:
 
     def to_workflow_output(self, final_state: dict[str, Any], trace_id: str | None = None) -> WorkflowOutput:
         return WorkflowOutput(
-            workflow="dummy_workflow",
-            answer=final_state.get("answer", "ok"),
-            source_used=final_state.get("source_used", "direct"),
-            trace_id=trace_id,
-        )
-
-    def to_chat_response(self, final_state: dict[str, Any], trace_id: str | None = None) -> ChatResponse:
-        return ChatResponse(
             workflow="dummy_workflow",
             answer=final_state.get("answer", "ok"),
             source_used=final_state.get("source_used", "direct"),

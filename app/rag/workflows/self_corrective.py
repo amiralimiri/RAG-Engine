@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import threading
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.tools import BaseTool
@@ -15,6 +15,7 @@ from app.rag.workflows.base import (
     WorkflowInfo,
     WorkflowInput,
     WorkflowOutput,
+    parse_raw_attachments,
 )
 
 DEFAULT_STEP_LABELS: dict[str, str] = {
@@ -79,7 +80,7 @@ class SelfCorrectiveRagWorkflow:
         self._lock = threading.RLock()
         self._compiled_graph = None
 
-    def get_compiled_graph(self) -> Any:
+    def get_compiled_graph(self, variant_id: str | None = None) -> Any:
         with self._lock:
             if self._compiled_graph is None:
                 self._compiled_graph = create_agentic_rag_graph(
@@ -91,16 +92,7 @@ class SelfCorrectiveRagWorkflow:
             return self._compiled_graph
 
     def to_initial_state(self, input: WorkflowInput | Any, trace_id: str | None = None) -> dict[str, Any]:
-        attachments = []
-        raw_attachments = getattr(input, "attachments", None)
-        if raw_attachments:
-            for a in raw_attachments:
-                if isinstance(a, dict):
-                    attachments.append(a)
-                elif hasattr(a, "model_dump"):
-                    attachments.append(a.model_dump())
-                else:
-                    attachments.append(dict(a))
+        attachments = parse_raw_attachments(getattr(input, "attachments", None))
 
         return {
             "question": getattr(input, "question", ""),
@@ -139,8 +131,6 @@ class SelfCorrectiveRagWorkflow:
             rewritten_query=final_state.get("current_query") or final_state.get("question"),
             trace_id=resolved_tid,
         )
-
-    to_chat_response = to_workflow_output
 
     def extract_eval_context(self, final_state: dict[str, Any]) -> EvalContext:
         return EvalContext(

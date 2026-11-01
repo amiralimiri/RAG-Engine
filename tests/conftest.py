@@ -12,13 +12,11 @@ import pytest
 from opentelemetry.sdk.trace.export import SpanExporter, SpanExportResult
 
 import app.core.telemetry as telemetry
-from app.api.schemas import ChatRequest, ChatResponse
 from app.rag.evaluation import reset_evaluator
 from app.rag.workflows import register_default_workflows
 from app.rag.workflows.base import (
     EvalContext,
     WorkflowInfo,
-    WorkflowInput,
     WorkflowOutput,
 )
 from app.rag.workflows.registry import WorkflowRegistry, get_workflow_registry
@@ -101,13 +99,14 @@ class MockWorkflowDefinition:
         self.answer = answer
         self.source_used = source_used
         self.trace = trace if trace is not None else ["step1", "step2"]
-        self.citations = citations if citations is not None else []
+        raw_citations = citations if citations is not None else []
+        self.citations = [{"title": c} if isinstance(c, str) else c for c in raw_citations]
         self.rewritten_query = rewritten_query
         self.retrieved_contexts = retrieved_contexts if retrieved_contexts is not None else []
         self._custom_graph = graph
         self._stream_events = stream_events
 
-    def get_compiled_graph(self) -> Any:
+    def get_compiled_graph(self, variant_id: str | None = None) -> Any:
         if self._custom_graph is not None:
             return self._custom_graph
 
@@ -165,25 +164,14 @@ class MockWorkflowDefinition:
         }
 
     def to_workflow_output(self, final_state: dict[str, Any], trace_id: str | None = None) -> WorkflowOutput:
+        raw_citations = final_state.get("citations") or self.citations or []
+        citations = [{"title": c} if isinstance(c, str) else c for c in raw_citations]
         return WorkflowOutput(
             workflow=self.info.id,
             answer=final_state.get("answer") or self.answer,
             source_used=final_state.get("source_used") or self.source_used,
             trace=final_state.get("trace") or self.trace,
-            citations=final_state.get("citations") or self.citations,
-            rewritten_query=final_state.get("rewritten_query")
-            or final_state.get("current_query")
-            or final_state.get("question"),
-            trace_id=trace_id or final_state.get("trace_id"),
-        )
-
-    def to_chat_response(self, final_state: dict[str, Any], trace_id: str | None = None) -> ChatResponse:
-        return ChatResponse(
-            workflow=self.info.id,
-            answer=final_state.get("answer") or self.answer,
-            source_used=final_state.get("source_used") or self.source_used,
-            trace=final_state.get("trace") or self.trace,
-            citations=final_state.get("citations") or self.citations,
+            citations=citations,
             rewritten_query=final_state.get("rewritten_query")
             or final_state.get("current_query")
             or final_state.get("question"),

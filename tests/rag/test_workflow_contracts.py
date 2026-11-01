@@ -163,8 +163,6 @@ class FakeWorkflow:
             trace_id=trace_id,
         )
 
-    to_chat_response = to_workflow_output
-
     def extract_eval_context(self, final_state: dict[str, Any]) -> EvalContext:
         return EvalContext(
             source_used=final_state.get("source_used", "direct"),

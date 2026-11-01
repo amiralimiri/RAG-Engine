@@ -13,6 +13,7 @@ class EvaluationResult(BaseModel):
     faithfulness: float | None = None
     answer_relevancy: float | None = None
     source_accuracy: float | None = None
+    reference_correctness: float | None = None
     scores: dict[str, float] = Field(default_factory=dict)
     details: dict[str, Any] = Field(default_factory=dict)
 

@@ -53,7 +53,7 @@ def test_mock_workflow_definition_custom_configuration():
     assert init_state["question"] == "What is the test question?"
     assert init_state["trace_id"] == "trace-123"
 
-    resp = mock_wf.to_chat_response(
+    resp = mock_wf.to_workflow_output(
         {"answer": "Overridden answer", "source_used": "web"},
         trace_id="trace-123",
     )

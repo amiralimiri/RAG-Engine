@@ -5,7 +5,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from app.rag.workflows.base import WorkflowInfo
+from app.rag.workflows.base import WorkflowInfo, WorkflowInput, WorkflowOutput
 
 
 class ChatMessage(BaseModel):
@@ -46,6 +46,27 @@ class ChatRequest(BaseModel):
         description="Dynamic execution parameters and overrides",
     )
 
+    def to_workflow_input(self) -> WorkflowInput:
+        """Translate transport ChatRequest to domain WorkflowInput."""
+        messages = None
+        if self.messages:
+            messages = [m.model_dump() for m in self.messages]
+        attachments = None
+        if self.attachments:
+            attachments = [a.model_dump() for a in self.attachments]
+        return WorkflowInput(
+            question=self.question,
+            workflow=self.workflow,
+            session_id=self.session_id,
+            user_id=self.user_id,
+            trace_id=self.trace_id,
+            stream_steps=self.stream_steps,
+            messages=messages,
+            attachments=attachments,
+            variant_id=self.variant_id,
+            parameters=self.parameters or {},
+        )
+
 
 class ChatResponse(BaseModel):
     """Standard synchronous chat response contract."""
@@ -58,6 +79,20 @@ class ChatResponse(BaseModel):
     rewritten_query: str | None = Field(default=None, description="Rewritten or original query")
     trace_id: str | None = Field(default=None, description="Langfuse trace ID")
     variant_id: str | None = Field(default=None, description="Execution variant identifier")
+
+    @classmethod
+    def from_workflow_output(cls, output: WorkflowOutput) -> ChatResponse:
+        """Construct transport ChatResponse from domain WorkflowOutput."""
+        return cls(
+            workflow=output.workflow,
+            answer=output.answer,
+            source_used=output.source_used,
+            citations=output.citations,
+            trace=output.trace,
+            rewritten_query=output.rewritten_query,
+            trace_id=output.trace_id,
+            variant_id=output.variant_id,
+        )
 
 
 class WorkflowListResponse(BaseModel):

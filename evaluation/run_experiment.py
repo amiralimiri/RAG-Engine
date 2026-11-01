@@ -168,24 +168,15 @@ def run_workflow_benchmark(
 
         total_latencies.append(latency)
 
-        try:
-            eval_res = active_evaluator.evaluate(
-                question=question,
-                answer=answer,
-                source_used=source_used,
-                retrieved_contexts=contexts,
-                trace_id=trace_id,
-                expected_output=expected_output,
-                expected_source=expected_source,
-            )
-        except TypeError:
-            eval_res = active_evaluator.evaluate(
-                question=question,
-                answer=answer,
-                source_used=source_used,
-                retrieved_contexts=contexts,
-                trace_id=trace_id,
-            )
+        eval_res = active_evaluator.evaluate(
+            question=question,
+            answer=answer,
+            source_used=source_used,
+            retrieved_contexts=contexts,
+            trace_id=trace_id,
+            expected_output=expected_output,
+            expected_source=expected_source,
+        )
 
         faith_val = eval_res.faithfulness
         if faith_val is not None:

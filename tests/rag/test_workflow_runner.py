@@ -13,7 +13,6 @@ from fastapi import BackgroundTasks, HTTPException
 
 from app.api.schemas import (
     ChatRequest,
-    ChatResponse,
     StreamStepEvent,
     StreamTokenEvent,
 )
@@ -66,31 +65,20 @@ class MockWorkflow:
             "trace_id": "mock-trace-id",
         }
 
-    def get_compiled_graph(self) -> Any:
+    def get_compiled_graph(self, variant_id: str | None = None) -> Any:
         return self.mock_graph
 
-    def to_initial_state(self, request: Any, trace_id: str | None = None) -> dict[str, Any]:
+    def to_initial_state(self, input: Any, trace_id: str | None = None) -> dict[str, Any]:
         return {
-            "question": getattr(request, "question", ""),
-            "trace_id": trace_id or getattr(request, "trace_id", None),
-            "session_id": getattr(request, "session_id", None),
+            "question": getattr(input, "question", ""),
+            "trace_id": trace_id or getattr(input, "trace_id", None),
+            "session_id": getattr(input, "session_id", None),
             "retrieved_contexts": [],
             "trace": [],
         }
 
     def to_workflow_output(self, final_state: dict[str, Any], trace_id: str | None = None) -> WorkflowOutput:
         return WorkflowOutput(
-            workflow=self.info.id,
-            answer=final_state.get("answer", ""),
-            source_used=final_state.get("source_used", "direct"),
-            trace=final_state.get("trace", []),
-            citations=final_state.get("citations", []),
-            rewritten_query=final_state.get("current_query") or final_state.get("question"),
-            trace_id=trace_id or final_state.get("trace_id"),
-        )
-
-    def to_chat_response(self, final_state: dict[str, Any], trace_id: str | None = None) -> ChatResponse:
-        return ChatResponse(
             workflow=self.info.id,
             answer=final_state.get("answer", ""),
             source_used=final_state.get("source_used", "direct"),
@@ -154,7 +142,7 @@ def test_runner_factory_and_injection():
 def test_execute_unknown_workflow_raises_http_400():
     """Unknown workflow name raises HTTPException 400 with detail."""
     runner = WorkflowRunner()
-    request = ChatRequest(question="What is RAG?", workflow="non_existent_wf")
+    request = WorkflowInput(question="What is RAG?", workflow="non_existent_wf")
 
     with pytest.raises(HTTPException) as exc_info:
         runner.execute(request)
@@ -167,7 +155,7 @@ def test_execute_unknown_workflow_raises_http_400():
 async def test_aexecute_unknown_workflow_raises_http_400():
     """Async execution of unknown workflow raises HTTPException 400."""
     runner = WorkflowRunner()
-    request = ChatRequest(question="What is RAG?", workflow="non_existent_wf")
+    request = WorkflowInput(question="What is RAG?", workflow="non_existent_wf")
 
     with pytest.raises(HTTPException) as exc_info:
         await runner.aexecute(request)
@@ -188,7 +176,7 @@ def test_execute_registered_workflow():
     custom_registry.register(mock_wf)
 
     runner = WorkflowRunner(registry=custom_registry)
-    request = ChatRequest(
+    request = WorkflowInput(
         question="How do I connect to VPN?",
         workflow="test_wf",
         session_id="sess-001",
@@ -197,7 +185,7 @@ def test_execute_registered_workflow():
 
     response = runner.execute(request)
 
-    assert isinstance(response, ChatResponse)
+    assert isinstance(response, WorkflowOutput)
     assert response.workflow == "test_wf"
     assert response.answer == "Mock Answer"
     assert response.source_used == "vectorstore"
@@ -224,9 +212,9 @@ def test_execute_canonical_fix_single_jev_registered_workflow(monkeypatch):
         "current_query": "canonical query",
         "retrieved_contexts": ["retrieved context 1"],
     }
-    monkeypatch.setattr(wf, "get_compiled_graph", lambda: mock_graph)
+    monkeypatch.setattr(wf, "get_compiled_graph", lambda variant_id=None: mock_graph)
 
-    request = ChatRequest(
+    request = WorkflowInput(
         question="What is corporate policy?",
         workflow="fix_single_jev",
         session_id="sess-canon",
@@ -255,9 +243,9 @@ def test_execute_canonical_react_agent_registered_workflow(monkeypatch):
         ],
         "question": "Hello",
     }
-    monkeypatch.setattr(wf, "get_compiled_graph", lambda: mock_graph)
+    monkeypatch.setattr(wf, "get_compiled_graph", lambda variant_id=None: mock_graph)
 
-    request = ChatRequest(
+    request = WorkflowInput(
         question="Hello",
         workflow="react_agent",
         session_id="sess-react",
@@ -289,7 +277,7 @@ async def test_aexecute_with_native_async_graph():
     custom_registry.register(mock_wf)
 
     runner = WorkflowRunner(registry=custom_registry)
-    request = ChatRequest(question="Async question?", workflow="async_wf")
+    request = WorkflowInput(question="Async question?", workflow="async_wf")
 
     response = await runner.aexecute(request)
 
@@ -314,7 +302,7 @@ async def test_aexecute_with_sync_graph_fallback():
     custom_registry.register(mock_wf)
 
     runner = WorkflowRunner(registry=custom_registry)
-    request = ChatRequest(question="Sync question?", workflow="sync_wf")
+    request = WorkflowInput(question="Sync question?", workflow="sync_wf")
 
     response = await runner.aexecute(request)
 
@@ -335,7 +323,7 @@ def test_trace_id_sanitization_and_structlog_bindings():
 
     runner = WorkflowRunner(registry=custom_registry)
     raw_trace_id = "TRACE-99-AbC-dEf"
-    request = ChatRequest(
+    request = WorkflowInput(
         question="Trace test?",
         workflow="trace_wf",
         trace_id=raw_trace_id,
@@ -374,7 +362,7 @@ def test_execute_error_fallback_handling():
     custom_registry.register(mock_wf)
 
     runner = WorkflowRunner(registry=custom_registry)
-    request = ChatRequest(question="Will this fail?", workflow="error_wf")
+    request = WorkflowInput(question="Will this fail?", workflow="error_wf")
 
     response = runner.execute(request)
 
@@ -392,7 +380,7 @@ async def test_aexecute_error_fallback_handling():
     custom_registry.register(mock_wf)
 
     runner = WorkflowRunner(registry=custom_registry)
-    request = ChatRequest(question="Async fail?", workflow="async_err_wf")
+    request = WorkflowInput(question="Async fail?", workflow="async_err_wf")
 
     response = await runner.aexecute(request)
 
@@ -414,7 +402,7 @@ def test_online_evaluation_scheduled_via_background_tasks():
     runner = WorkflowRunner(registry=custom_registry)
     bg_tasks = BackgroundTasks()
 
-    request = ChatRequest(
+    request = WorkflowInput(
         question="How do I configure evaluation?",
         workflow="eval_wf",
         trace_id="eval-trace-123",
@@ -441,7 +429,7 @@ async def test_online_evaluation_scheduled_via_asyncio_create_task():
     custom_registry.register(mock_wf)
 
     runner = WorkflowRunner(registry=custom_registry)
-    request = ChatRequest(
+    request = WorkflowInput(
         question="No BackgroundTasks?",
         workflow="eval_task_wf",
         trace_id="trace-no-bg",
@@ -463,7 +451,7 @@ def test_online_evaluation_no_event_loop_sync_safe():
     custom_registry.register(mock_wf)
 
     runner = WorkflowRunner(registry=custom_registry)
-    request = ChatRequest(question="Sync no loop?", workflow="sync_no_loop_wf")
+    request = WorkflowInput(question="Sync no loop?", workflow="sync_no_loop_wf")
 
     # In regular pytest without asyncio mark, running loop may or may not exist.
     # Let's ensure running execute with background_tasks=None does not raise RuntimeError.
@@ -569,7 +557,7 @@ def test_is_tool_call_chunk_filtering():
 def test_stream_unknown_workflow_raises_http_400():
     """Calling stream with unknown workflow raises HTTPException 400 before generator begins."""
     runner = WorkflowRunner()
-    request = ChatRequest(question="What is RAG?", workflow="non_existent_wf")
+    request = WorkflowInput(question="What is RAG?", workflow="non_existent_wf")
 
     with pytest.raises(HTTPException) as exc_info:
         runner.stream(request)
@@ -667,7 +655,7 @@ async def test_stream_emits_whitelisted_steps_filtered_tokens_and_metadata():
     custom_registry.register(mock_wf)
 
     runner = WorkflowRunner(registry=custom_registry)
-    request = ChatRequest(
+    request = WorkflowInput(
         question="How do I connect?",
         workflow="stream_test_wf",
         session_id="sess-stream",
@@ -724,7 +712,7 @@ async def test_stream_honors_stream_steps_false():
     custom_registry.register(mock_wf)
 
     runner = WorkflowRunner(registry=custom_registry)
-    request = ChatRequest(
+    request = WorkflowInput(
         question="No steps please",
         workflow="no_steps_wf",
         stream_steps=False,
@@ -767,7 +755,7 @@ async def test_stream_fallback_static_answer_synthesis():
     custom_registry.register(mock_wf)
 
     runner = WorkflowRunner(registry=custom_registry)
-    request = ChatRequest(question="Zero tokens?", workflow="fallback_wf")
+    request = WorkflowInput(question="Zero tokens?", workflow="fallback_wf")
 
     frames = [frame async for frame in runner.stream(request)]
     events = parse_sse_events(frames)
@@ -797,7 +785,7 @@ async def test_stream_unhandled_exception_calls_handle_error_and_yields_stream_e
     custom_registry.register(mock_wf)
 
     runner = WorkflowRunner(registry=custom_registry)
-    request = ChatRequest(question="Will streaming fail?", workflow="err_stream_wf")
+    request = WorkflowInput(question="Will streaming fail?", workflow="err_stream_wf")
 
     frames = [frame async for frame in runner.stream(request)]
     events = parse_sse_events(frames)
@@ -827,7 +815,7 @@ async def test_stream_client_cancellation_logging():
     custom_registry.register(mock_wf)
 
     runner = WorkflowRunner(registry=custom_registry)
-    request = ChatRequest(question="Cancel test?", workflow="cancel_wf")
+    request = WorkflowInput(question="Cancel test?", workflow="cancel_wf")
 
     with patch("app.rag.workflows.runner.logger.warning") as mock_log_warn:
         with pytest.raises(asyncio.CancelledError):
@@ -880,7 +868,7 @@ async def test_stream_finally_block_flushes_telemetry():
         callback_factory=mock_cb_factory,
         telemetry_flusher=mock_flush,
     )
-    request = ChatRequest(question="Telemetry test", workflow="telemetry_stream_wf")
+    request = WorkflowInput(question="Telemetry test", workflow="telemetry_stream_wf")
 
     frames = [frame async for frame in runner.stream(request)]
     assert len(frames) >= 1
@@ -916,7 +904,7 @@ async def test_stream_background_evaluation_task_safeguarded():
 
     mock_eval_task = AsyncMock(side_effect=slow_eval)
     runner = WorkflowRunner(registry=custom_registry, eval_task_fn=mock_eval_task)
-    request = ChatRequest(
+    request = WorkflowInput(
         question="Eval stream?",
         workflow="stream_eval_wf",
         trace_id="eval-stream-trace",
@@ -992,7 +980,7 @@ def test_constructor_hook_injection_sync_execute():
         callback_factory=mock_cb_factory,
         telemetry_flusher=mock_flusher,
     )
-    request = ChatRequest(
+    request = WorkflowInput(
         question="How to configure constructor hooks?",
         workflow="cb_inject_sync_wf",
         session_id="sess-cb-sync",
@@ -1036,7 +1024,7 @@ async def test_constructor_hook_injection_async_aexecute():
         callback_factory=mock_cb_factory,
         telemetry_flusher=mock_flusher,
     )
-    request = ChatRequest(
+    request = WorkflowInput(
         question="Async constructor hooks?",
         workflow="cb_inject_async_wf",
         session_id="sess-cb-async",
@@ -1077,7 +1065,7 @@ async def test_constructor_hook_injection_stream():
         callback_factory=mock_cb_factory,
         telemetry_flusher=mock_flusher,
     )
-    request = ChatRequest(
+    request = WorkflowInput(
         question="Stream constructor hooks?",
         workflow="cb_inject_stream_wf",
         session_id="sess-cb-stream",
@@ -1102,7 +1090,7 @@ def test_online_evaluation_scheduling_exception_shielded_with_warning():
     custom_registry.register(mock_wf)
 
     runner = WorkflowRunner(registry=custom_registry)
-    request = ChatRequest(
+    request = WorkflowInput(
         question="Will bg_task error crash execute?",
         workflow="failing_bg_task_wf",
         trace_id="eval-crash-trace",
@@ -1138,7 +1126,7 @@ async def test_online_evaluation_task_exception_shielded_in_aexecute():
 
     mock_failing_eval = AsyncMock(side_effect=RuntimeError("Langfuse evaluation timeout"))
     runner = WorkflowRunner(registry=custom_registry, eval_task_fn=mock_failing_eval)
-    request = ChatRequest(
+    request = WorkflowInput(
         question="Will eval crash aexecute?",
         workflow="failing_eval_task_wf",
         trace_id="eval-aexec-trace",
@@ -1176,7 +1164,7 @@ async def test_online_evaluation_task_exception_shielded_in_stream():
 
     mock_failing_eval = AsyncMock(side_effect=ValueError("DeepEval connection refused"))
     runner = WorkflowRunner(registry=custom_registry, eval_task_fn=mock_failing_eval)
-    request = ChatRequest(
+    request = WorkflowInput(
         question="Will eval crash stream?",
         workflow="failing_stream_eval_wf",
         trace_id="stream-failing-trace",
@@ -1225,7 +1213,7 @@ def test_execute_and_aexecute_ignore_extraneous_hook_kwargs_cleanly():
     bogus_eval = MagicMock()
 
     runner = WorkflowRunner(registry=custom_registry, callback_factory=injected_cb)
-    request = ChatRequest(question="Ignore hook kwargs?", workflow="ignore_kwargs_wf")
+    request = WorkflowInput(question="Ignore hook kwargs?", workflow="ignore_kwargs_wf")
 
     # Sync execute with extraneous hook kwargs
     response_sync = runner.execute(
@@ -1259,7 +1247,7 @@ async def test_aexecute_ignores_extraneous_hook_kwargs_cleanly():
     bogus_cb = MagicMock()
 
     runner = WorkflowRunner(registry=custom_registry, callback_factory=injected_cb)
-    request = ChatRequest(question="Async ignore kwargs?", workflow="async_ignore_kwargs_wf")
+    request = WorkflowInput(question="Async ignore kwargs?", workflow="async_ignore_kwargs_wf")
 
     response_async = await runner.aexecute(
         request,
@@ -1274,7 +1262,7 @@ async def test_aexecute_ignores_extraneous_hook_kwargs_cleanly():
 def test_stream_rejects_extraneous_hook_kwargs_with_type_error():
     """Verify stream() rejects extraneous hook kwargs cleanly by raising TypeError."""
     runner = WorkflowRunner()
-    request = ChatRequest(question="Stream reject kwargs?", workflow="any_wf")
+    request = WorkflowInput(question="Stream reject kwargs?", workflow="any_wf")
 
     with pytest.raises(TypeError) as exc_info1:
         runner.stream(request, callback_factory=MagicMock())  # type: ignore[call-arg]
@@ -1296,7 +1284,7 @@ def test_stream_rejects_extraneous_hook_kwargs_with_type_error():
 
 def test_execution_result_model():
     """Verify ExecutionResult schema bundles response and EvalContext without transport coupling."""
-    resp = ChatResponse(
+    resp = WorkflowOutput(
         workflow="mock_workflow",
         answer="Normalized test answer",
         source_used="vectorstore",
@@ -1310,10 +1298,6 @@ def test_execution_result_model():
     assert result.eval_context.source_used == "vectorstore"
     assert len(result.eval_context.retrieved_contexts) == 2
 
-    # Verify decoupling: accepts arbitrary domain or mock objects
-    raw_result = ExecutionResult(response={"raw": "payload"}, eval_context=ctx)
-    assert raw_result.response == {"raw": "payload"}
-
 
 def test_execute_with_context_returns_execution_result():
     """Verify execute_with_context returns ExecutionResult with response and eval_context."""
@@ -1322,11 +1306,11 @@ def test_execute_with_context_returns_execution_result():
     custom_registry.register(mock_wf)
 
     runner = WorkflowRunner(registry=custom_registry)
-    request = ChatRequest(question="Test context extraction?", workflow="context_wf", trace_id="trace-ctx-1")
+    request = WorkflowInput(question="Test context extraction?", workflow="context_wf", trace_id="trace-ctx-1")
 
     result = runner.execute_with_context(request)
     assert isinstance(result, ExecutionResult)
-    assert isinstance(result.response, ChatResponse)
+    assert isinstance(result.response, WorkflowOutput)
     assert isinstance(result.eval_context, EvalContext)
     assert result.response.answer == "Mock Answer"
     assert result.eval_context.source_used == "vectorstore"
@@ -1355,7 +1339,7 @@ async def test_finalize_execution_delegates_to_evaluator_aevaluate_in_execute():
 
     fake_eval = FakeEvaluator()
     runner = WorkflowRunner(registry=custom_registry, evaluator=fake_eval)
-    request = ChatRequest(question="Evaluator injection test?", workflow="eval_inject_wf", trace_id="trace-eval-inject")
+    request = WorkflowInput(question="Evaluator injection test?", workflow="eval_inject_wf", trace_id="trace-eval-inject")
 
     response = runner.execute(request)
     assert response.answer == "Mock Answer"
@@ -1381,7 +1365,7 @@ async def test_finalize_execution_delegates_to_evaluator_in_background_tasks():
 
     fake_eval = FakeEvaluator()
     runner = WorkflowRunner(registry=custom_registry, evaluator=fake_eval)
-    request = ChatRequest(question="Bg eval test?", workflow="bg_eval_wf", trace_id="trace-bg-eval")
+    request = WorkflowInput(question="Bg eval test?", workflow="bg_eval_wf", trace_id="trace-bg-eval")
     bg_tasks = BackgroundTasks()
 
     response = runner.execute(request, background_tasks=bg_tasks)
@@ -1421,7 +1405,7 @@ async def test_streaming_delegates_to_evaluator_aevaluate():
 
     fake_eval = FakeEvaluator()
     runner = WorkflowRunner(registry=custom_registry, evaluator=fake_eval)
-    request = ChatRequest(
+    request = WorkflowInput(
         question="Stream eval inject?",
         workflow="stream_eval_inject_wf",
         trace_id="stream-inject-trace",
@@ -1473,7 +1457,7 @@ async def test_evaluator_exception_shielded_in_finalize_and_stream():
     # 1. Test in aexecute
     with patch("app.rag.workflows.runner.logger.warning") as mock_warn:
         resp = await runner.aexecute(
-            ChatRequest(question="Shield test?", workflow="shielded_eval_wf", trace_id="trace-s1")
+            WorkflowInput(question="Shield test?", workflow="shielded_eval_wf", trace_id="trace-s1")
         )
         assert resp.answer == "Async shielded answer"
         await asyncio.gather(*list(runner._background_tasks), return_exceptions=True)
@@ -1487,7 +1471,7 @@ async def test_evaluator_exception_shielded_in_finalize_and_stream():
         frames = [
             frame
             async for frame in runner.stream(
-                ChatRequest(question="Shield stream?", workflow="shielded_eval_wf", trace_id="trace-s2")
+                WorkflowInput(question="Shield stream?", workflow="shielded_eval_wf", trace_id="trace-s2")
             )
         ]
         assert len(frames) >= 1
@@ -1509,7 +1493,7 @@ def test_runner_bridges_chat_request_to_workflow_input(clean_registry):
             generation_nodes={"node1"},
         )
 
-        def get_compiled_graph(self):
+        def get_compiled_graph(self, variant_id: str | None = None):
             graph = MagicMock()
             graph.invoke.return_value = {
                 "answer": "Pure domain answer",
@@ -1547,9 +1531,9 @@ def test_runner_bridges_chat_request_to_workflow_input(clean_registry):
         user_id="user_200",
         trace_id="trace_300",
     )
-    resp = runner.execute(req)
+    resp = runner.execute(req)  # type: ignore[arg-type]
 
-    assert isinstance(resp, ChatResponse)
+    assert isinstance(resp, WorkflowOutput)
     assert resp.answer == "Pure domain answer"
     assert resp.workflow == "pure_domain_wf"
     assert resp.trace_id == "trace_300"
@@ -1573,7 +1557,7 @@ async def test_runner_bridges_workflow_output_in_stream(clean_registry):
             generation_nodes={"gen"},
         )
 
-        def get_compiled_graph(self):
+        def get_compiled_graph(self, variant_id: str | None = None):
             graph = MagicMock()
 
             async def _astream_events(*args, **kwargs):
@@ -1621,7 +1605,7 @@ async def test_runner_bridges_workflow_output_in_stream(clean_registry):
     runner = WorkflowRunner(registry=clean_registry)
 
     req = ChatRequest(question="Streaming question?", workflow="stream_pure_wf", trace_id="trace_stream_1")
-    events = [event async for event in runner.stream(req)]
+    events = [event async for event in runner.stream(req)]  # type: ignore[arg-type]
 
     # Final event must be metadata containing StreamMetadataEvent payload
     meta_event = [e for e in events if "event: metadata" in e]
@@ -1768,7 +1752,7 @@ def test_three_tier_resolution_precedence():
     runner = WorkflowRunner(registry=registry)
 
     # Case A: Baseline only (no variant, no explicit parameters)
-    req_baseline = ChatRequest(question="Baseline inquiry?", workflow="three_tier_wf")
+    req_baseline = WorkflowInput(question="Baseline inquiry?", workflow="three_tier_wf")
     _, _, _, _, config_base = runner._prepare_execution(req_baseline)
     cfg_b = config_base["configurable"]
     assert cfg_b["top_k"] == 3
@@ -1779,7 +1763,7 @@ def test_three_tier_resolution_precedence():
     assert "profile_param" not in cfg_b
 
     # Case B: Registered Profile overrides Baseline (Tier 2 > Tier 3)
-    req_profile = ChatRequest(
+    req_profile = WorkflowInput(
         question="Profile inquiry?",
         workflow="three_tier_wf",
         variant_id="profile_var",
@@ -1795,7 +1779,7 @@ def test_three_tier_resolution_precedence():
     assert cfg_p["prompt_version"] == "v2.0"  # Profile overwrote baseline
 
     # Case C: Explicit Overrides override Registered Profile and Baseline (Tier 1 > Tier 2 > Tier 3)
-    req_explicit = ChatRequest(
+    req_explicit = WorkflowInput(
         question="Explicit override inquiry?",
         workflow="three_tier_wf",
         variant_id="profile_var",
@@ -1832,7 +1816,7 @@ def test_configurable_injection_and_invoke_call():
     registry.register_profile("inject_cfg_wf", profile)
 
     runner = WorkflowRunner(registry=registry)
-    req = ChatRequest(
+    req = WorkflowInput(
         question="Configurable injection test",
         workflow="inject_cfg_wf",
         variant_id="test_variant",
@@ -1873,7 +1857,7 @@ def test_multi_dimensional_telemetry_tags_propagation():
     mock_cb_factory = MagicMock(return_value=MagicMock())
     runner = WorkflowRunner(registry=registry, callback_factory=mock_cb_factory)
 
-    req = ChatRequest(
+    req = WorkflowInput(
         question="Telemetry tagging test",
         workflow="telemetry_wf",
         variant_id="gpt4o-v3",
@@ -1903,12 +1887,12 @@ def test_multi_dimensional_telemetry_tags_propagation():
 
 def test_pluggable_workflow_variant_cached_graph_compilation():
     """Verify PluggableWorkflow caches compiled graphs per variant_id."""
-    graph_factory_calls: list[str | None] = []
+    graph_factory_calls: list[Any] = []
 
-    def mock_factory(variant_id: str | None = None):
-        graph_factory_calls.append(variant_id)
+    def mock_factory(config: dict[str, Any] | None = None):
+        graph_factory_calls.append(config)
         mock_graph = MagicMock()
-        mock_graph.variant = variant_id
+        mock_graph.variant = config.get("variant_id") if config else None
         return mock_graph
 
     info = WorkflowInfo(
@@ -1922,7 +1906,7 @@ def test_pluggable_workflow_variant_cached_graph_compilation():
     # First call with variant "alpha" -> triggers factory call
     graph_a1 = pw.get_compiled_graph("alpha")
     assert len(graph_factory_calls) == 1
-    assert graph_factory_calls[0] == "alpha"
+    assert graph_factory_calls[0] == {"variant_id": "alpha"}
     assert graph_a1.variant == "alpha"
 
     # Second call with variant "alpha" -> returns cached graph without calling factory
@@ -1933,7 +1917,7 @@ def test_pluggable_workflow_variant_cached_graph_compilation():
     # Call with variant "beta" -> triggers factory call
     graph_b = pw.get_compiled_graph("beta")
     assert len(graph_factory_calls) == 2
-    assert graph_factory_calls[1] == "beta"
+    assert graph_factory_calls[1] == {"variant_id": "beta"}
     assert graph_b.variant == "beta"
     assert graph_b is not graph_a1
 
@@ -1941,6 +1925,7 @@ def test_pluggable_workflow_variant_cached_graph_compilation():
     graph_default = pw.get_compiled_graph()
     assert len(graph_factory_calls) == 3
     assert graph_factory_calls[2] is None
+    assert graph_default.variant is None
 
     # Repeat call with None -> cached
     graph_default2 = pw.get_compiled_graph(None)
@@ -1991,7 +1976,7 @@ def test_runner_executes_variant_cached_graph():
     registry.register(VariantAwareWorkflow())
     runner = WorkflowRunner(registry=registry)
 
-    req = ChatRequest(
+    req = WorkflowInput(
         question="Execute variant test",
         workflow="variant_aware_wf",
         variant_id="variant-xyz",
@@ -2061,7 +2046,7 @@ async def test_stream_propagates_variant_id_in_terminal_metadata():
     registry.register(StreamVariantWorkflow())
     runner = WorkflowRunner(registry=registry)
 
-    req = ChatRequest(
+    req = WorkflowInput(
         question="Stream variant inquiry",
         workflow="stream_variant_wf",
         variant_id="stream_v1",

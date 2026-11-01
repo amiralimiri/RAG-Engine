@@ -131,9 +131,8 @@ def test_seed_golden_dataset_degrades_gracefully_when_offline():
 
 
 def test_run_benchmark_workflow_execution_and_metrics():
-    from app.api.schemas import ChatResponse
     from app.rag.evaluation import FakeEvaluator
-    from app.rag.workflows.base import EvalContext
+    from app.rag.workflows.base import EvalContext, WorkflowOutput
     from app.rag.workflows.runner import ExecutionResult
     from evaluation.run_experiment import run_workflow_benchmark
 
@@ -148,7 +147,7 @@ def test_run_benchmark_workflow_execution_and_metrics():
     mock_runner = MagicMock()
     mock_wf_def = MagicMock()
     mock_runner.registry.get.return_value = mock_wf_def
-    mock_chat_response = ChatResponse(
+    mock_chat_response = WorkflowOutput(
         workflow="fix_single_llm",
         answer="Install Pulse Secure from Self Service portal.",
         source_used="vectorstore",
@@ -192,9 +191,8 @@ def test_run_benchmark_workflow_execution_and_metrics():
 
 
 def test_run_benchmark_skips_faithfulness_for_direct_source():
-    from app.api.schemas import ChatResponse
     from app.rag.evaluation import FakeEvaluator
-    from app.rag.workflows.base import EvalContext
+    from app.rag.workflows.base import EvalContext, WorkflowOutput
     from app.rag.workflows.runner import ExecutionResult
     from evaluation.run_experiment import run_workflow_benchmark
 
@@ -209,7 +207,7 @@ def test_run_benchmark_skips_faithfulness_for_direct_source():
     mock_runner = MagicMock()
     mock_wf_def = MagicMock()
     mock_runner.registry.get.return_value = mock_wf_def
-    mock_chat_response = ChatResponse(
+    mock_chat_response = WorkflowOutput(
         workflow="fix_single_llm",
         answer="Hello, how can I assist you?",
         source_used="direct",
@@ -256,9 +254,8 @@ def test_run_benchmark_workflow_not_registered_raises_value_error():
 
 
 def test_run_benchmark_workflow_execution_via_runner():
-    from app.api.schemas import ChatResponse
     from app.rag.evaluation import FakeEvaluator
-    from app.rag.workflows.base import EvalContext
+    from app.rag.workflows.base import EvalContext, WorkflowOutput
     from app.rag.workflows.runner import ExecutionResult
     from evaluation.run_experiment import run_workflow_benchmark
 
@@ -273,7 +270,7 @@ def test_run_benchmark_workflow_execution_via_runner():
     mock_runner = MagicMock()
     mock_wf_def = MagicMock()
     mock_runner.registry.get.return_value = mock_wf_def
-    mock_chat_response = ChatResponse(
+    mock_chat_response = WorkflowOutput(
         workflow="fix_single_llm",
         answer="Install VPN client.",
         source_used="vectorstore",
@@ -467,9 +464,8 @@ def test_run_workflow_benchmark_link_naming_and_source_accuracy():
 
     and aggregates source_accuracy.
     """
-    from app.api.schemas import ChatResponse
     from app.rag.evaluation import FakeEvaluator
-    from app.rag.workflows.base import EvalContext, WorkflowInput
+    from app.rag.workflows.base import EvalContext, WorkflowInput, WorkflowOutput
     from app.rag.workflows.runner import ExecutionResult
     from evaluation.run_experiment import run_workflow_benchmark
 
@@ -493,9 +489,9 @@ def test_run_workflow_benchmark_link_naming_and_source_accuracy():
     mock_runner = MagicMock()
     mock_runner.registry.get.return_value = MagicMock()
 
-    resp1 = ChatResponse(workflow="fix_single_llm", answer="Connect via client", source_used="vectorstore", trace_id="tr-1")
+    resp1 = WorkflowOutput(workflow="fix_single_llm", answer="Connect via client", source_used="vectorstore", trace_id="tr-1")
     ctx1 = EvalContext(source_used="vectorstore", retrieved_contexts=["VPN doc"])
-    resp2 = ChatResponse(workflow="fix_single_llm", answer="I don't know", source_used="vectorstore", trace_id="tr-2")
+    resp2 = WorkflowOutput(workflow="fix_single_llm", answer="I don't know", source_used="vectorstore", trace_id="tr-2")
     ctx2 = EvalContext(source_used="vectorstore", retrieved_contexts=[])
 
     mock_runner.execute_with_context.side_effect = [
@@ -540,9 +536,8 @@ def test_run_workflow_benchmark_link_naming_and_source_accuracy():
 
 def test_run_matrix_benchmark_execution(tmp_path):
     """Verify run_matrix_benchmark executes multiple workflow/profile definitions."""
-    from app.api.schemas import ChatResponse
     from app.rag.evaluation import FakeEvaluator
-    from app.rag.workflows.base import EvalContext
+    from app.rag.workflows.base import EvalContext, WorkflowOutput
     from app.rag.workflows.runner import ExecutionResult
     from evaluation.run_experiment import run_matrix_benchmark
 
@@ -571,7 +566,7 @@ matrix:
     mock_runner = MagicMock()
     mock_runner.registry.get.return_value = MagicMock()
 
-    resp = ChatResponse(workflow="fix_single_llm", answer="Test answer", source_used="vectorstore", trace_id="tr-test")
+    resp = WorkflowOutput(workflow="fix_single_llm", answer="Test answer", source_used="vectorstore", trace_id="tr-test")
     ctx = EvalContext(source_used="vectorstore", retrieved_contexts=["context"])
     mock_runner.execute_with_context.return_value = ExecutionResult(response=resp, eval_context=ctx)
 

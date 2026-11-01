@@ -5,14 +5,12 @@ from __future__ import annotations
 import re
 import threading
 from collections.abc import Sequence
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from langchain.agents import create_agent
 from langchain_core.messages import (
     AIMessage,
-    BaseMessage,
     HumanMessage,
-    SystemMessage,
     ToolMessage,
 )
 from langchain_core.tools import BaseTool
@@ -23,6 +21,8 @@ from app.rag.workflows.base import (
     WorkflowInfo,
     WorkflowInput,
     WorkflowOutput,
+    parse_raw_attachments,
+    parse_raw_messages,
 )
 
 DEFAULT_REACT_STEP_LABELS: dict[str, str] = {
@@ -130,7 +130,7 @@ class ReActAgentWorkflow:
         from app.rag.tools import create_retriever_tool, create_web_search_tool
         return [create_retriever_tool(), create_web_search_tool()]
 
-    def get_compiled_graph(self) -> Any:
+    def get_compiled_graph(self, variant_id: str | None = None) -> Any:
         with self._lock:
             if self._compiled_graph is None:
                 active_llm = self.llm if self.llm is not None else self._get_default_llm()
@@ -147,50 +147,10 @@ class ReActAgentWorkflow:
             return self._compiled_graph
 
     def to_initial_state(self, input: WorkflowInput | Any, trace_id: str | None = None) -> dict[str, Any]:
-        messages: list[BaseMessage] = []
         raw_messages = getattr(input, "messages", None)
-        if raw_messages:
-            for m in raw_messages:
-                if isinstance(m, BaseMessage):
-                    messages.append(m)
-                elif isinstance(m, dict):
-                    role = (m.get("role") or "").lower()
-                    content = m.get("content", "")
-                    if role in ("user", "human"):
-                        messages.append(HumanMessage(content=content))
-                    elif role in ("assistant", "ai"):
-                        messages.append(AIMessage(content=content))
-                    elif role == "system":
-                        messages.append(SystemMessage(content=content))
-                    else:
-                        messages.append(HumanMessage(content=content))
-                else:
-                    role = (getattr(m, "role", "") or "").lower()
-                    content = getattr(m, "content", "")
-                    if role in ("user", "human"):
-                        messages.append(HumanMessage(content=content))
-                    elif role in ("assistant", "ai"):
-                        messages.append(AIMessage(content=content))
-                    elif role == "system":
-                        messages.append(SystemMessage(content=content))
-                    else:
-                        messages.append(HumanMessage(content=content))
-
         question = getattr(input, "question", "")
-        # Append incoming question as latest HumanMessage if not already ending with it
-        if not messages or getattr(messages[-1], "content", None) != question:
-            messages.append(HumanMessage(content=question))
-
-        attachments = []
-        raw_attachments = getattr(input, "attachments", None)
-        if raw_attachments:
-            for a in raw_attachments:
-                if isinstance(a, dict):
-                    attachments.append(a)
-                elif hasattr(a, "model_dump"):
-                    attachments.append(a.model_dump())
-                else:
-                    attachments.append(dict(a))
+        messages = parse_raw_messages(raw_messages, question)
+        attachments = parse_raw_attachments(getattr(input, "attachments", None))
 
         return {
             "messages": messages,
@@ -283,8 +243,6 @@ class ReActAgentWorkflow:
             rewritten_query=question,
             trace_id=resolved_tid,
         )
-
-    to_chat_response = to_workflow_output
 
     def extract_eval_context(self, final_state: dict[str, Any]) -> EvalContext:
         messages = final_state.get("messages", [])

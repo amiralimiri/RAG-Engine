@@ -89,7 +89,7 @@ def test_react_agent_to_initial_state_multi_turn():
     assert state["trace_id"] == "tid_xyz"
 
 
-def test_react_agent_to_chat_response_citations_and_source():
+def test_react_agent_to_workflow_output_citations_and_source():
     wf = ReActAgentWorkflow(llm=MockChatModel(), tools=[mock_dummy_tool])
 
     final_state = {
@@ -110,7 +110,7 @@ def test_react_agent_to_chat_response_citations_and_source():
         ],
     }
 
-    response = wf.to_chat_response(final_state, trace_id="trace_777")
+    response = wf.to_workflow_output(final_state, trace_id="trace_777")
     assert response.workflow == "react_agent"
     assert response.answer == "You can download OpenVPN following our internal guide."
     assert response.source_used == "react_agent"
@@ -153,14 +153,14 @@ def test_react_agent_multi_turn_memory_persistence():
     req1 = ChatRequest(question="My name is Bob", session_id=session_thread)
     state1 = wf.to_initial_state(req1)
     res1 = graph.invoke({"messages": state1["messages"]}, config=config)
-    resp1 = wf.to_chat_response(res1)
+    resp1 = wf.to_workflow_output(res1)
     assert "Heard user inputs: My name is Bob" in resp1.answer
 
     # Turn 2: Only pass new question, without resending "My name is Bob"
     req2 = ChatRequest(question="What is my name?", session_id=session_thread)
     state2 = wf.to_initial_state(req2)
     res2 = graph.invoke({"messages": state2["messages"]}, config=config)
-    resp2 = wf.to_chat_response(res2)
+    resp2 = wf.to_workflow_output(res2)
 
     # Agent should recall previous turn
     assert "My name is Bob" in resp2.answer
@@ -193,7 +193,7 @@ def test_react_agent_query_fallback_from_human_message():
             AIMessage(content="Go to IT portal and select reset."),
         ]
     }
-    response = wf.to_chat_response(final_state)
+    response = wf.to_workflow_output(final_state)
     assert response.rewritten_query == "How do I change my network password?"
     assert response.trace[0] == "Inquiry received: 'How do I change my network password?'"
 
@@ -212,7 +212,7 @@ def test_react_agent_error_source_normalization(explicit_source, expected_resp_s
         "messages": [HumanMessage(content="Hello"), AIMessage(content="Error occurred")],
         "source_used": explicit_source,
     }
-    resp = wf.to_chat_response(final_state)
+    resp = wf.to_workflow_output(final_state)
     eval_ctx = wf.extract_eval_context(final_state)
     assert resp.source_used == expected_resp_source
     assert eval_ctx.source_used == expected_eval_source
@@ -228,7 +228,7 @@ def test_react_agent_error_source_normalization(explicit_source, expected_resp_s
     ],
 )
 def test_react_agent_harmonized_source_resolution(tools_in_messages, expected_source, expected_eval_source):
-    """Verify source resolution is harmonized between to_chat_response and extract_eval_context."""
+    """Verify source resolution is harmonized between to_workflow_output and extract_eval_context."""
     wf = ReActAgentWorkflow(llm=MockChatModel(), tools=[mock_dummy_tool])
 
     messages = [HumanMessage(content="Test inquiry")]
@@ -243,7 +243,7 @@ def test_react_agent_harmonized_source_resolution(tools_in_messages, expected_so
     messages.append(AIMessage(content="Final synthesized answer"))
 
     final_state = {"messages": messages}
-    resp = wf.to_chat_response(final_state)
+    resp = wf.to_workflow_output(final_state)
     eval_ctx = wf.extract_eval_context(final_state)
 
     assert resp.source_used == expected_source

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import difflib
 import logging
 import random
 import threading
@@ -125,8 +126,18 @@ class EvaluationEngine:
             scores["source_accuracy"] = source_acc_val
             details["source_accuracy"] = source_acc_val
 
+        ref_corr_val: float | None = None
         if expected_output is not None:
             details["expected_output"] = expected_output
+            if answer.strip().lower() == expected_output.strip().lower():
+                ref_corr_val = 1.0
+            else:
+                ref_corr_val = round(
+                    difflib.SequenceMatcher(None, answer.strip().lower(), expected_output.strip().lower()).ratio(),
+                    4,
+                )
+            scores["reference_correctness"] = ref_corr_val
+            details["reference_correctness"] = ref_corr_val
 
         should_run_faith = "faithfulness" in self.settings.eval_metrics and source_used != "direct" and bool(contexts)
         should_run_rel = "answer_relevancy" in self.settings.eval_metrics
@@ -144,6 +155,14 @@ class EvaluationEngine:
                 metric_name="source_accuracy",
                 score=source_acc_val,
                 comment=f"Expected: {expected_source}, Actual: {source_used}",
+            )
+
+        if expected_output is not None and ref_corr_val is not None and should_dispatch_scores and trace_id:
+            self.score_metric(
+                trace_id=trace_id,
+                metric_name="reference_correctness",
+                score=ref_corr_val,
+                comment=f"Expected: {expected_output}, Actual: {answer}",
             )
 
         def _measure_metric(
@@ -212,6 +231,7 @@ class EvaluationEngine:
             faithfulness=faith_val,
             answer_relevancy=rel_val,
             source_accuracy=source_acc_val,
+            reference_correctness=ref_corr_val,
             scores=scores,
             details=details,
         )
@@ -339,9 +359,22 @@ class FakeEvaluator:
         if source_acc_val is not None:
             scores["source_accuracy"] = source_acc_val
 
+        ref_corr_val: float | None = None
+        if expected_output is not None:
+            if answer.strip().lower() == expected_output.strip().lower():
+                ref_corr_val = 1.0
+            else:
+                ref_corr_val = round(
+                    difflib.SequenceMatcher(None, answer.strip().lower(), expected_output.strip().lower()).ratio(),
+                    4,
+                )
+            scores["reference_correctness"] = ref_corr_val
+
         details: dict[str, Any] = {"fake": True}
         if expected_output is not None:
             details["expected_output"] = expected_output
+        if ref_corr_val is not None:
+            details["reference_correctness"] = ref_corr_val
         if expected_source is not None:
             details["expected_source"] = expected_source
         if source_acc_val is not None:
@@ -355,10 +388,19 @@ class FakeEvaluator:
                 comment=f"Expected: {expected_source}, Actual: {source_used}",
             )
 
+        if expected_output is not None and trace_id and ref_corr_val is not None:
+            self.score_metric(
+                trace_id=trace_id,
+                metric_name="reference_correctness",
+                score=ref_corr_val,
+                comment=f"Expected: {expected_output}, Actual: {answer}",
+            )
+
         return EvaluationResult(
             faithfulness=self.faithfulness,
             answer_relevancy=self.answer_relevancy,
             source_accuracy=source_acc_val,
+            reference_correctness=ref_corr_val,
             scores=scores,
             details=details,
         )

@@ -7,18 +7,13 @@ import json
 import uuid
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any, cast
 
 import structlog
 from fastapi import BackgroundTasks, HTTPException
 from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
-if TYPE_CHECKING:
-    from app.api.schemas import (
-        ChatRequest,
-        ChatResponse,
-    )
 from app.core.config import get_settings
 from app.core.telemetry import (
     extract_trace_id,
@@ -59,7 +54,7 @@ _background_tasks: set[asyncio.Task[Any]] = set()
 class ExecutionResult(BaseModel):
     """Normalized execution result bundling response and domain EvalContext."""
 
-    response: Any
+    response: WorkflowOutput
     eval_context: EvalContext
 
 
@@ -181,130 +176,57 @@ class WorkflowRunner:
 
     def _to_workflow_input(
         self,
-        request: ChatRequest | WorkflowInput,
+        request: Any,
         trace_id: str | None = None,
         variant_id: str | None = None,
         parameters: dict[str, Any] | None = None,
     ) -> WorkflowInput:
-        """Bridge inbound transport ChatRequest or WorkflowInput to domain WorkflowInput."""
-        eff_variant_id = variant_id or getattr(request, "variant_id", None)
+        """Ensure telemetry trace_id, variant_id, and parameters are bound to domain WorkflowInput."""
+        converter = getattr(request, "to_workflow_input", None)
+        if callable(converter):
+            request = converter()
+        elif not isinstance(request, WorkflowInput):
+            messages = getattr(request, "messages", None)
+            if messages:
+                messages = [m.model_dump() if hasattr(m, "model_dump") else m for m in messages]
+            attachments = getattr(request, "attachments", None)
+            if attachments:
+                attachments = [a.model_dump() if hasattr(a, "model_dump") else a for a in attachments]
+            request = WorkflowInput(
+                question=getattr(request, "question", ""),
+                workflow=getattr(request, "workflow", None),
+                session_id=getattr(request, "session_id", None),
+                user_id=getattr(request, "user_id", None),
+                trace_id=getattr(request, "trace_id", None),
+                stream_steps=getattr(request, "stream_steps", True),
+                messages=messages,
+                attachments=attachments,
+                variant_id=getattr(request, "variant_id", None),
+                parameters=getattr(request, "parameters", None) or {},
+            )
+
+        eff_variant_id = variant_id or request.variant_id
         eff_parameters = (
             parameters
             if parameters is not None
-            else (getattr(request, "parameters", None) or {})
+            else (request.parameters or {})
         )
-        eff_trace_id = trace_id or getattr(request, "trace_id", None)
-        eff_workflow = getattr(request, "workflow", "fix_single_jev")
+        eff_trace_id = trace_id or request.trace_id
 
-        if isinstance(request, WorkflowInput):
-            updates: dict[str, Any] = {}
-            if eff_trace_id and request.trace_id != eff_trace_id:
-                updates["trace_id"] = eff_trace_id
-            if eff_variant_id and request.variant_id != eff_variant_id:
-                updates["variant_id"] = eff_variant_id
-            if eff_parameters and request.parameters != eff_parameters:
-                updates["parameters"] = eff_parameters
-            if updates:
-                return request.model_copy(update=updates)
-            return request
-
-        raw_msgs = getattr(request, "messages", None)
-        messages = None
-        if raw_msgs:
-            messages = [
-                m.model_dump()
-                if hasattr(m, "model_dump")
-                else (dict(m) if isinstance(m, dict) else {"role": getattr(m, "role", ""), "content": getattr(m, "content", "")})
-                for m in raw_msgs
-            ]
-
-        raw_att = getattr(request, "attachments", None)
-        attachments = None
-        if raw_att:
-            attachments = [
-                a.model_dump() if hasattr(a, "model_dump") else (dict(a) if isinstance(a, dict) else dict(a))
-                for a in raw_att
-            ]
-
-        return WorkflowInput(
-            question=request.question,
-            workflow=eff_workflow,
-            messages=messages,
-            attachments=attachments,
-            session_id=getattr(request, "session_id", None),
-            user_id=getattr(request, "user_id", None),
-            trace_id=eff_trace_id,
-            variant_id=eff_variant_id,
-            parameters=eff_parameters,
-        )
-
-    def _to_chat_response(
-        self,
-        output: WorkflowOutput | ChatResponse,
-        trace_id: str | None = None,
-    ) -> ChatResponse:
-        """Bridge domain WorkflowOutput or ChatResponse to transport ChatResponse."""
-        from app.api.schemas import ChatResponse
-
-        if isinstance(output, ChatResponse):
-            if trace_id and not output.trace_id:
-                output.trace_id = trace_id
-            return output
-
-        resolved_tid = trace_id or getattr(output, "trace_id", None)
-        resolved_vid = getattr(output, "variant_id", None)
-        return ChatResponse(
-            workflow=output.workflow,
-            answer=output.answer,
-            source_used=output.source_used,
-            citations=output.citations,
-            trace=output.trace,
-            rewritten_query=output.rewritten_query,
-            trace_id=resolved_tid,
-            variant_id=resolved_vid,
-        )
-
-    def _adapt_workflow_output(
-        self,
-        wf_def: WorkflowDefinition,
-        final_state: dict[str, Any],
-        trace_id: str | None = None,
-    ) -> WorkflowOutput:
-        """Extract domain WorkflowOutput from workflow instance adapting either to_workflow_output or to_chat_response."""
-        variant_id = final_state.get("variant_id") if isinstance(final_state, dict) else None
-        if hasattr(wf_def, "to_workflow_output"):
-            out = wf_def.to_workflow_output(final_state, trace_id=trace_id)
-            if isinstance(out, WorkflowOutput):
-                if not out.variant_id and variant_id:
-                    return out.model_copy(update={"variant_id": variant_id})
-                return out
-            return WorkflowOutput(
-                workflow=getattr(out, "workflow", wf_def.info.id),
-                answer=getattr(out, "answer", ""),
-                source_used=getattr(out, "source_used", "direct"),
-                citations=getattr(out, "citations", []),
-                trace=getattr(out, "trace", []),
-                rewritten_query=getattr(out, "rewritten_query", None),
-                trace_id=getattr(out, "trace_id", trace_id),
-                variant_id=getattr(out, "variant_id", None) or variant_id,
-            )
-        if hasattr(wf_def, "to_chat_response"):
-            resp = wf_def.to_chat_response(final_state, trace_id=trace_id)
-            return WorkflowOutput(
-                workflow=getattr(resp, "workflow", wf_def.info.id),
-                answer=getattr(resp, "answer", ""),
-                source_used=getattr(resp, "source_used", "direct"),
-                citations=getattr(resp, "citations", []),
-                trace=getattr(resp, "trace", []),
-                rewritten_query=getattr(resp, "rewritten_query", None),
-                trace_id=getattr(resp, "trace_id", trace_id),
-                variant_id=getattr(resp, "variant_id", None) or variant_id,
-            )
-        raise AttributeError(f"Workflow '{wf_def}' does not implement to_workflow_output or to_chat_response")
+        updates: dict[str, Any] = {}
+        if eff_trace_id and request.trace_id != eff_trace_id:
+            updates["trace_id"] = eff_trace_id
+        if eff_variant_id and request.variant_id != eff_variant_id:
+            updates["variant_id"] = eff_variant_id
+        if eff_parameters and request.parameters != eff_parameters:
+            updates["parameters"] = eff_parameters
+        if updates:
+            return request.model_copy(update=updates)
+        return request
 
     def _prepare_execution(
         self,
-        request: ChatRequest | WorkflowInput,
+        request: WorkflowInput,
         streaming: bool = False,
         callback: Any | None = None,
         metadata: dict[str, Any] | None = None,
@@ -312,7 +234,7 @@ class WorkflowRunner:
         **kwargs: Any,
     ) -> tuple[WorkflowDefinition, str | None, Any, dict[str, Any], dict[str, Any]]:
         """Resolve workflow definition, initialize telemetry contextvars, and prepare initial state."""
-        wf_name = getattr(request, "workflow", None) or kwargs.get("workflow", "fix_single_jev")
+        wf_name = (request.workflow if hasattr(request, "workflow") and request.workflow else None) or kwargs.get("workflow", "fix_single_jev")
         wf_def = self._resolve_workflow(wf_name)
 
         cb_factory = self.callback_factory
@@ -386,8 +308,9 @@ class WorkflowRunner:
             telemetry_tags.extend(profile.tags)
         if kwargs.get("tags") and isinstance(kwargs["tags"], list):
             telemetry_tags.extend(kwargs["tags"])
-        if getattr(request, "tags", None) and isinstance(request.tags, list):
-            telemetry_tags.extend(request.tags)
+        req_tags = getattr(request, "tags", None)
+        if req_tags and isinstance(req_tags, list):
+            telemetry_tags.extend(req_tags)
         if config and "tags" in config and isinstance(config["tags"], list):
             telemetry_tags.extend(config["tags"])
 
@@ -562,39 +485,38 @@ class WorkflowRunner:
     def _finalize_execution(
         self,
         wf_def: WorkflowDefinition,
-        request: ChatRequest | WorkflowInput,
+        request: WorkflowInput,
         final_state: dict[str, Any],
         trace_id: str | None,
         handler: Any,
         background_tasks: BackgroundTasks | None = None,
-    ) -> ChatResponse:
-        """Convert final state to ChatResponse, bind resolved trace context, and schedule online evaluation."""
+    ) -> WorkflowOutput:
+        """Convert final state to domain WorkflowOutput, bind resolved trace context, and schedule online evaluation."""
         tr_extractor = self.trace_extractor
 
-        domain_output = self._adapt_workflow_output(wf_def, final_state, trace_id=trace_id)
-        chat_response = self._to_chat_response(domain_output, trace_id=trace_id)
-        resolved_tid = tr_extractor(handler) or trace_id or chat_response.trace_id
+        domain_output = wf_def.to_workflow_output(final_state, trace_id=trace_id)
+        resolved_tid = tr_extractor(handler) or trace_id or domain_output.trace_id
 
         if resolved_tid:
             structlog.contextvars.bind_contextvars(trace_id=resolved_tid)
-            if not chat_response.trace_id:
-                chat_response.trace_id = resolved_tid
+            if not domain_output.trace_id:
+                domain_output.trace_id = resolved_tid
             if isinstance(final_state, dict) and "trace_id" not in final_state and request.trace_id:
                 final_state["trace_id"] = resolved_tid
 
-        if not chat_response.variant_id:
-            chat_response.variant_id = (
+        if not domain_output.variant_id:
+            domain_output.variant_id = (
                 final_state.get("variant_id") if isinstance(final_state, dict) else None
             ) or getattr(request, "variant_id", None)
 
         logger.info(
             "chat_query_completed",
-            workflow=getattr(request, "workflow", "fix_single_jev"),
+            workflow=getattr(request, "workflow", None) or wf_def.info.id,
             question=request.question,
-            source_used=chat_response.source_used,
-            trace=chat_response.trace,
+            source_used=domain_output.source_used,
+            trace=domain_output.trace,
             trace_id=resolved_tid,
-            variant_id=chat_response.variant_id,
+            variant_id=domain_output.variant_id,
         )
 
         if resolved_tid:
@@ -602,7 +524,7 @@ class WorkflowRunner:
             source_used = (
                 getattr(eval_ctx, "source_used", None)
                 or (eval_ctx.get("source_used") if isinstance(eval_ctx, dict) else None)
-                or chat_response.source_used
+                or domain_output.source_used
                 or "direct"
             )
             retrieved_contexts = (
@@ -617,7 +539,7 @@ class WorkflowRunner:
                         self._safe_evaluate,
                         trace_id=resolved_tid,
                         question=request.question,
-                        answer=chat_response.answer,
+                        answer=domain_output.answer,
                         source_used=source_used,
                         retrieved_contexts=retrieved_contexts,
                     )
@@ -639,7 +561,7 @@ class WorkflowRunner:
                             self._safe_evaluate(
                                 trace_id=resolved_tid,
                                 question=request.question,
-                                answer=chat_response.answer,
+                                answer=domain_output.answer,
                                 source_used=source_used,
                                 retrieved_contexts=retrieved_contexts,
                             )
@@ -663,19 +585,19 @@ class WorkflowRunner:
             except Exception:
                 pass
 
-        return chat_response
+        return domain_output
 
     def _execute_with_state(
         self,
-        request: ChatRequest | WorkflowInput,
+        request: WorkflowInput,
         background_tasks: BackgroundTasks | None = None,
         *,
         callback: Any | None = None,
         metadata: dict[str, Any] | None = None,
         config: dict[str, Any] | None = None,
         **kwargs: Any,
-    ) -> tuple[ChatResponse, dict[str, Any]]:
-        """Synchronously execute workflow and return (ChatResponse, final_state) without model mutation."""
+    ) -> tuple[WorkflowOutput, dict[str, Any]]:
+        """Synchronously execute workflow and return (WorkflowOutput, final_state) without model mutation."""
         try:
             wf_def, trace_id, handler, initial_state, run_config = self._prepare_execution(
                 request,
@@ -685,10 +607,7 @@ class WorkflowRunner:
                 **kwargs,
             )
             variant_id = initial_state.get("variant_id") or run_config.get("configurable", {}).get("variant_id")
-            try:
-                graph = wf_def.get_compiled_graph(variant_id=variant_id)
-            except TypeError:
-                graph = wf_def.get_compiled_graph()
+            graph = wf_def.get_compiled_graph(variant_id=variant_id) if variant_id is not None else wf_def.get_compiled_graph()
 
             try:
                 final_state = graph.invoke(initial_state, config=run_config if run_config else None)
@@ -720,15 +639,15 @@ class WorkflowRunner:
 
     def execute(
         self,
-        request: ChatRequest | WorkflowInput,
+        request: WorkflowInput,
         background_tasks: BackgroundTasks | None = None,
         *,
         callback: Any | None = None,
         metadata: dict[str, Any] | None = None,
         config: dict[str, Any] | None = None,
         **kwargs: Any,
-    ) -> ChatResponse:
-        """Synchronously execute a registered workflow and return ChatResponse."""
+    ) -> WorkflowOutput:
+        """Synchronously execute a registered workflow and return WorkflowOutput."""
         response, _ = self._execute_with_state(
             request,
             background_tasks=background_tasks,
@@ -741,7 +660,7 @@ class WorkflowRunner:
 
     def execute_with_context(
         self,
-        request: ChatRequest | WorkflowInput,
+        request: WorkflowInput,
         background_tasks: BackgroundTasks | None = None,
         *,
         callback: Any | None = None,
@@ -749,7 +668,7 @@ class WorkflowRunner:
         config: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> ExecutionResult:
-        """Public execution entrypoint returning both ChatResponse and normalized EvalContext."""
+        """Public execution entrypoint returning both WorkflowOutput and normalized EvalContext."""
         response, final_state = self._execute_with_state(
             request,
             background_tasks=background_tasks,
@@ -758,21 +677,22 @@ class WorkflowRunner:
             config=config,
             **kwargs,
         )
-        wf_def = self._resolve_workflow(request.workflow)
+        wf_name = (request.workflow if hasattr(request, "workflow") and request.workflow else None) or kwargs.get("workflow") or response.workflow
+        wf_def = self._resolve_workflow(wf_name)
         eval_context = wf_def.extract_eval_context(final_state)
         return ExecutionResult(response=response, eval_context=eval_context)
 
     async def _aexecute_with_state(
         self,
-        request: ChatRequest,
+        request: WorkflowInput,
         background_tasks: BackgroundTasks | None = None,
         *,
         callback: Any | None = None,
         metadata: dict[str, Any] | None = None,
         config: dict[str, Any] | None = None,
         **kwargs: Any,
-    ) -> tuple[ChatResponse, dict[str, Any]]:
-        """Asynchronously execute workflow and return (ChatResponse, final_state) without model mutation."""
+    ) -> tuple[WorkflowOutput, dict[str, Any]]:
+        """Asynchronously execute workflow and return (WorkflowOutput, final_state) without model mutation."""
         try:
             wf_def, trace_id, handler, initial_state, run_config = self._prepare_execution(
                 request,
@@ -782,10 +702,7 @@ class WorkflowRunner:
                 **kwargs,
             )
             variant_id = initial_state.get("variant_id") or run_config.get("configurable", {}).get("variant_id")
-            try:
-                graph = wf_def.get_compiled_graph(variant_id=variant_id)
-            except TypeError:
-                graph = wf_def.get_compiled_graph()
+            graph = wf_def.get_compiled_graph(variant_id=variant_id) if variant_id is not None else wf_def.get_compiled_graph()
 
             try:
                 if hasattr(graph, "ainvoke") and callable(graph.ainvoke):
@@ -800,7 +717,7 @@ class WorkflowRunner:
                 if not isinstance(final_state, dict):
                     final_state = {"answer": str(final_state)}
             except Exception as exc:
-                logger.exception("Error executing workflow %s: %s", request.workflow, exc)
+                logger.exception("Error executing workflow %s: %s", getattr(request, "workflow", "unknown"), exc)
                 final_state = wf_def.handle_error(exc, initial_state)
 
             response = self._finalize_execution(
@@ -825,15 +742,15 @@ class WorkflowRunner:
 
     async def aexecute(
         self,
-        request: ChatRequest,
+        request: WorkflowInput,
         background_tasks: BackgroundTasks | None = None,
         *,
         callback: Any | None = None,
         metadata: dict[str, Any] | None = None,
         config: dict[str, Any] | None = None,
         **kwargs: Any,
-    ) -> ChatResponse:
-        """Asynchronously execute a registered workflow and return ChatResponse."""
+    ) -> WorkflowOutput:
+        """Asynchronously execute a registered workflow and return WorkflowOutput."""
         response, _ = await self._aexecute_with_state(
             request,
             background_tasks=background_tasks,
@@ -846,24 +763,18 @@ class WorkflowRunner:
 
     def stream(
         self,
-        request: ChatRequest,
+        request: WorkflowInput,
     ) -> AsyncGenerator[str]:
         """Validate workflow and return an asynchronous generator yielding pre-formatted SSE frames."""
-        self._resolve_workflow(request.workflow)
+        wf_name = (request.workflow if hasattr(request, "workflow") and request.workflow else None) or "fix_single_jev"
+        self._resolve_workflow(wf_name)
         return self._stream_generator(request)
 
     async def _stream_generator(
         self,
-        request: ChatRequest,
+        request: WorkflowInput,
     ) -> AsyncGenerator[str]:
         """Consume LangGraph astream_events v2 and yield pre-formatted SSE event strings."""
-        from app.api.schemas import (
-            StreamErrorEvent,
-            StreamMetadataEvent,
-            StreamStepEvent,
-            StreamTokenEvent,
-        )
-
         cb_factory = self.callback_factory
         tr_extractor = self.trace_extractor
         tel_flusher = self.telemetry_flusher
@@ -885,10 +796,7 @@ class WorkflowRunner:
                 streaming=True,
             )
             variant_id = initial_state.get("variant_id") or config.get("configurable", {}).get("variant_id")
-            try:
-                graph = wf_def.get_compiled_graph(variant_id=variant_id)
-            except TypeError:
-                graph = wf_def.get_compiled_graph()
+            graph = wf_def.get_compiled_graph(variant_id=variant_id) if variant_id is not None else wf_def.get_compiled_graph()
             step_labels = (wf_def.info.step_labels if wf_def and wf_def.info else None) or DEFAULT_STEP_LABELS
             generation_nodes = (
                 wf_def.info.generation_nodes if wf_def and wf_def.info else None
@@ -903,11 +811,11 @@ class WorkflowRunner:
                 if stream_steps and ev_type == "on_chain_start" and node_name in step_labels:
                     yield self.format_sse(
                         "step",
-                        StreamStepEvent(
-                            step=node_name,
-                            label=step_labels[node_name],
-                            timestamp=datetime.now(UTC).timestamp(),
-                        ),
+                        {
+                            "step": node_name,
+                            "label": step_labels[node_name],
+                            "timestamp": datetime.now(UTC).timestamp(),
+                        },
                     )
 
                 # 2. Whitelisted Token Delta Streaming (Filtered: tool calls & empty strings suppressed)
@@ -932,7 +840,7 @@ class WorkflowRunner:
                     if delta_content:
                         tokens_delivered += 1
                         answer_chunks.append(delta_content)
-                        yield self.format_sse("token", StreamTokenEvent(delta=delta_content))
+                        yield self.format_sse("token", {"delta": delta_content})
 
                 # 3. State capture on node completion
                 elif ev_type == "on_chain_end":
@@ -957,7 +865,7 @@ class WorkflowRunner:
                 fallback_answer = final_output.get("answer")
                 if not fallback_answer and wf_def is not None:
                     try:
-                        candidate_resp = self._adapt_workflow_output(wf_def, final_output)
+                        candidate_resp = wf_def.to_workflow_output(final_output)
                         fallback_answer = candidate_resp.answer
                     except Exception:
                         pass
@@ -965,23 +873,23 @@ class WorkflowRunner:
                     static_answer = str(fallback_answer)
                     tokens_delivered += 1
                     answer_chunks.append(static_answer)
-                    yield self.format_sse("token", StreamTokenEvent(delta=static_answer))
+                    yield self.format_sse("token", {"delta": static_answer})
 
             # 5. Terminal Metadata Event
             resolved_tid = tr_extractor(handler) or trace_id
+            domain_output: WorkflowOutput | None = None
             if wf_def is not None:
-                domain_output = self._adapt_workflow_output(wf_def, final_output, trace_id=resolved_tid)
-                chat_resp = self._to_chat_response(domain_output, trace_id=resolved_tid)
+                domain_output = wf_def.to_workflow_output(final_output, trace_id=resolved_tid)
                 eval_ctx = wf_def.extract_eval_context(final_output)
-                final_trace = accumulated_trace or chat_resp.trace
-                final_source_used = chat_resp.source_used or (
+                final_trace = accumulated_trace or domain_output.trace
+                final_source_used = domain_output.source_used or (
                     getattr(eval_ctx, "source_used", None)
                     or (eval_ctx.get("source_used") if isinstance(eval_ctx, dict) else None)
                     or "direct"
                 )
-                final_citations = chat_resp.citations
-                final_rewritten_query = chat_resp.rewritten_query or final_output.get("current_query", request.question)
-                final_answer = chat_resp.answer or str(final_output.get("answer") or "".join(answer_chunks))
+                final_citations = domain_output.citations
+                final_rewritten_query = domain_output.rewritten_query or final_output.get("current_query", request.question)
+                final_answer = domain_output.answer or str(final_output.get("answer") or "".join(answer_chunks))
                 final_retrieved_contexts = (
                     getattr(eval_ctx, "retrieved_contexts", None)
                     or (eval_ctx.get("retrieved_contexts") if isinstance(eval_ctx, dict) else None)
@@ -997,17 +905,14 @@ class WorkflowRunner:
 
             metadata_dict = {
                 "trace_id": resolved_tid,
-                "workflow": getattr(request, "workflow", "fix_single_jev"),
+                "workflow": getattr(request, "workflow", None) or (wf_def.info.id if wf_def else "fix_single_jev"),
                 "source_used": final_source_used,
                 "citations": final_citations,
                 "trace": final_trace,
                 "rewritten_query": final_rewritten_query,
-                "variant_id": (chat_resp.variant_id if wf_def is not None else None) or variant_id,
+                "variant_id": (domain_output.variant_id if domain_output is not None else None) or variant_id,
             }
-            try:
-                yield self.format_sse("metadata", StreamMetadataEvent(**metadata_dict))
-            except Exception:
-                yield self.format_sse("metadata", metadata_dict)
+            yield self.format_sse("metadata", metadata_dict)
 
             # Safeguard background evaluation task
             if resolved_tid:
@@ -1075,7 +980,7 @@ class WorkflowRunner:
             if isinstance(fallback_state, dict):
                 fallback_answer = fallback_state.get("answer")
                 if fallback_answer and tokens_delivered == 0:
-                    yield self.format_sse("token", StreamTokenEvent(delta=str(fallback_answer)))
+                    yield self.format_sse("token", {"delta": str(fallback_answer)})
                     tokens_delivered += 1
 
                 resolved_tid = tr_extractor(handler) or trace_id or fallback_state.get("trace_id")
@@ -1088,16 +993,10 @@ class WorkflowRunner:
                     "trace": err_trace,
                     "rewritten_query": fallback_state.get("current_query", request.question),
                 }
-                try:
-                    yield self.format_sse("metadata", StreamMetadataEvent(**err_metadata))
-                except Exception:
-                    yield self.format_sse("metadata", err_metadata)
+                yield self.format_sse("metadata", err_metadata)
 
             err_dict = {"message": f"Inference stream failed: {str(exc)}", "code": 500}
-            try:
-                yield self.format_sse("error", StreamErrorEvent(**err_dict))
-            except Exception:
-                yield self.format_sse("error", err_dict)
+            yield self.format_sse("error", err_dict)
 
         finally:
             if handler and hasattr(handler, "flush") and callable(handler.flush):
