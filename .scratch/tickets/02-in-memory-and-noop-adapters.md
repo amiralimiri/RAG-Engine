@@ -1,7 +1,7 @@
 # Ticket 02: In-Memory & NoOp Memory Adapters with Factory Entrypoint
 
 - **Milestone:** Unified Pluggable Conversation Memory (ADR-0016)
-- **Status:** Pending
+- **Status:** Completed
 - **Dependency:** Ticket 01
 - **Estimated Scope:** Bite-sized
 

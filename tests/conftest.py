@@ -13,6 +13,7 @@ from opentelemetry.sdk.trace.export import SpanExporter, SpanExportResult
 
 import app.core.telemetry as telemetry
 from app.rag.evaluation import reset_evaluator
+from app.rag.memory import reset_conversation_memory
 from app.rag.workflows import register_default_workflows
 from app.rag.workflows.base import (
     EvalContext,
@@ -218,6 +219,16 @@ def clean_runner() -> Generator[None]:
 
 
 @pytest.fixture(autouse=True)
+def clean_memory() -> Generator[None]:
+    """Autouse fixture resetting global ConversationMemoryAdapter singleton before and after each test."""
+    reset_conversation_memory()
+    try:
+        yield
+    finally:
+        reset_conversation_memory()
+
+
+@pytest.fixture(autouse=True)
 def clean_evaluator() -> Generator[None]:
     """Autouse fixture resetting global Evaluator singleton before and after each test."""
     reset_evaluator()
@@ -249,6 +260,7 @@ def register_mock_workflow(clean_registry: WorkflowRegistry) -> Callable[..., Mo
 
 __all__ = [
     "MockWorkflowDefinition",
+    "clean_memory",
     "clean_registry",
     "clean_runner",
     "clean_telemetry",
