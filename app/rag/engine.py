@@ -114,16 +114,20 @@ async def direct_answer(
     structlog.contextvars.bind_contextvars(step="direct_answer")
     prompt_obj = get_workflow_prompt("rag:direct_answer")
     raw_history = state.get("messages", [])[:-1] if state.get("messages") else []
-    if raw_history:
-        history_str = _format_chat_history(raw_history)
+    history_str = _format_chat_history(raw_history) if raw_history else ""
+    current_q = state.get("current_query") or state["question"]
+    if history_str:
         try:
             prompt = prompt_obj.compile(
                 question=state["question"],
+                current_query=current_q,
                 history=history_str,
                 chat_history=history_str,
             )
         except TypeError:
             prompt = prompt_obj.compile(question=state["question"])
+        if history_str and history_str not in prompt:
+            prompt = f"Chat History:\n{history_str}\n\n{prompt}"
     else:
         prompt = prompt_obj.compile(question=state["question"])
     run_cfg = _build_prompt_config(prompt_obj, config)
@@ -213,7 +217,8 @@ def create_agentic_rag_graph(
 
     async def node_retrieve_kb(state: AgentState, config: RunnableConfig | None = None) -> dict[str, Any]:
         structlog.contextvars.bind_contextvars(step="retrieve_kb")
-        raw_output = await active_kb_tool.ainvoke({"query": state["current_query"]}, config=config)
+        search_query = state.get("current_query") or state["question"]
+        raw_output = await active_kb_tool.ainvoke({"query": search_query}, config=config)
         content, artifact = _unpack_tool_output(raw_output)
 
         docs = artifact.get("documents", [])
@@ -229,9 +234,10 @@ def create_agentic_rag_graph(
 
     def node_grade_kb(state: AgentState, config: RunnableConfig | None = None) -> dict[str, Any]:
         structlog.contextvars.bind_contextvars(step="grade_kb")
+        search_query = state.get("current_query") or state["question"]
         grade = classifier.grade_kb(
             question=state["question"],
-            current_query=state["current_query"],
+            current_query=search_query,
             kb_docs=state["kb_docs"],
             config=config,
         )
@@ -242,7 +248,8 @@ def create_agentic_rag_graph(
 
     async def node_search_web(state: AgentState, config: RunnableConfig | None = None) -> dict[str, Any]:
         structlog.contextvars.bind_contextvars(step="search_web")
-        raw_output = await active_web_tool.ainvoke({"query": state["current_query"]}, config=config)
+        search_query = state.get("current_query") or state["question"]
+        raw_output = await active_web_tool.ainvoke({"query": search_query}, config=config)
         content, artifact = _unpack_tool_output(raw_output)
 
         citations = artifact.get("citations", [])
@@ -260,9 +267,10 @@ def create_agentic_rag_graph(
 
     def node_grade_web(state: AgentState, config: RunnableConfig | None = None) -> dict[str, Any]:
         structlog.contextvars.bind_contextvars(step="grade_web")
+        search_query = state.get("current_query") or state["question"]
         grade = classifier.grade_web(
             question=state["question"],
-            current_query=state["current_query"],
+            current_query=search_query,
             web_results=state["web_results"],
             config=config,
         )
@@ -274,9 +282,10 @@ def create_agentic_rag_graph(
     async def rewrite_query(state: AgentState, config: RunnableConfig | None = None) -> dict[str, Any]:
         structlog.contextvars.bind_contextvars(step="rewrite_query")
         prompt_obj = get_workflow_prompt("rag:rewrite_query")
+        search_query = state.get("current_query") or state["question"]
         prompt = prompt_obj.compile(
             question=state["question"],
-            current_query=state["current_query"],
+            current_query=search_query,
         )
         run_cfg = _build_prompt_config(prompt_obj, config)
         response = await active_model.ainvoke(prompt, config=run_cfg)
@@ -293,11 +302,13 @@ def create_agentic_rag_graph(
         context = "\n\n".join(f"[Source: {d.metadata.get('source','unknown')}]\n{d.page_content}" for d in state["kb_docs"])
         prompt_obj = get_workflow_prompt("rag:generate_kb")
         raw_history = state.get("messages", [])[:-1] if state.get("messages") else []
-        if raw_history:
-            history_str = _format_chat_history(raw_history)
+        history_str = _format_chat_history(raw_history) if raw_history else ""
+        current_q = state.get("current_query") or state["question"]
+        if history_str:
             try:
                 prompt = prompt_obj.compile(
                     question=state["question"],
+                    current_query=current_q,
                     context=context,
                     history=history_str,
                     chat_history=history_str,
@@ -307,6 +318,8 @@ def create_agentic_rag_graph(
                     question=state["question"],
                     context=context,
                 )
+            if history_str and history_str not in prompt:
+                prompt = f"Chat History:\n{history_str}\n\n{prompt}"
         else:
             prompt = prompt_obj.compile(
                 question=state["question"],
@@ -339,11 +352,13 @@ def create_agentic_rag_graph(
         structlog.contextvars.bind_contextvars(step="generate_from_web")
         prompt_obj = get_workflow_prompt("rag:generate_web")
         raw_history = state.get("messages", [])[:-1] if state.get("messages") else []
-        if raw_history:
-            history_str = _format_chat_history(raw_history)
+        history_str = _format_chat_history(raw_history) if raw_history else ""
+        current_q = state.get("current_query") or state["question"]
+        if history_str:
             try:
                 prompt = prompt_obj.compile(
                     question=state["question"],
+                    current_query=current_q,
                     web_results=state["web_results"],
                     history=history_str,
                     chat_history=history_str,
@@ -353,6 +368,8 @@ def create_agentic_rag_graph(
                     question=state["question"],
                     web_results=state["web_results"],
                 )
+            if history_str and history_str not in prompt:
+                prompt = f"Chat History:\n{history_str}\n\n{prompt}"
         else:
             prompt = prompt_obj.compile(
                 question=state["question"],

@@ -3,7 +3,7 @@
 from datetime import UTC, datetime
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from app.rag.memory.base import ConversationTurn, SessionInfo
 from app.rag.workflows.base import WorkflowInfo, WorkflowInput, WorkflowOutput
@@ -52,6 +52,18 @@ class ChatRequest(BaseModel):
         description="Dynamic execution parameters and overrides",
     )
 
+    @field_validator("session_id", mode="before")
+    @classmethod
+    def sanitize_session_id(cls, v: Any) -> str | None:
+        if v is None:
+            return None
+        if isinstance(v, str):
+            v_str = v.strip()
+            if not v_str or v_str.lower() in ("undefined", "null", '""', "''"):
+                return None
+            return v_str
+        return str(v)
+
     def to_workflow_input(self) -> WorkflowInput:
         """Translate transport ChatRequest to domain WorkflowInput."""
         messages = None
@@ -86,6 +98,7 @@ class ChatResponse(BaseModel):
     rewritten_query: str | None = Field(default=None, description="Rewritten or original query")
     trace_id: str | None = Field(default=None, description="Langfuse trace ID")
     variant_id: str | None = Field(default=None, description="Execution variant identifier")
+    session_id: str | None = Field(default=None, description="Conversational session identifier")
 
     @classmethod
     def from_workflow_output(cls, output: WorkflowOutput) -> ChatResponse:
@@ -99,6 +112,7 @@ class ChatResponse(BaseModel):
             rewritten_query=output.rewritten_query,
             trace_id=output.trace_id,
             variant_id=output.variant_id,
+            session_id=output.session_id,
         )
 
 

@@ -114,6 +114,7 @@ class WorkflowOutput(BaseModel):
     rewritten_query: str | None = Field(default=None, description="Rewritten or original query")
     trace_id: str | None = Field(default=None, description="Telemetry trace identifier")
     variant_id: str | None = Field(default=None, description="Execution variant identifier")
+    session_id: str | None = Field(default=None, description="Conversational session identifier")
 
 
 @runtime_checkable

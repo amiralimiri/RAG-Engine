@@ -260,8 +260,9 @@ class WorkflowRunner:
     async def _ahydrate_memory(self, request: WorkflowInput) -> list[BaseMessage] | None:
         """Hydrate bounded historical messages from conversation memory store."""
         session_id = getattr(request, "session_id", None)
-        if not session_id:
+        if not session_id or not str(session_id).strip() or str(session_id).strip().lower() in ("undefined", "null"):
             return None
+        session_id = str(session_id).strip()
 
         rewind_turn_index = getattr(request, "rewind_turn_index", None)
         settings = self.settings
@@ -276,8 +277,14 @@ class WorkflowRunner:
                 "conversation_memory_hydrated",
                 session_id=session_id,
                 turns_loaded=turns_loaded,
+                history_turns_loaded=turns_loaded,
                 rewind_turn_index=rewind_turn_index,
             )
+            if hydrated:
+                try:
+                    request.messages = hydrated
+                except Exception:
+                    pass
             return hydrated
 
         hydrated = await self.memory.aget_messages(session_id, limit=max_turns)
@@ -286,9 +293,14 @@ class WorkflowRunner:
             "conversation_memory_hydrated",
             session_id=session_id,
             turns_loaded=turns_loaded,
+            history_turns_loaded=turns_loaded,
             rewind_turn_index=None,
         )
         if hydrated:
+            try:
+                request.messages = hydrated
+            except Exception:
+                pass
             return hydrated
         return getattr(request, "messages", None)
 
@@ -416,6 +428,11 @@ class WorkflowRunner:
             hydrated_messages = self._hydrate_memory_sync(request)
 
         effective_messages = hydrated_messages if hydrated_messages is not None else getattr(request, "messages", None)
+        if effective_messages is not None:
+            try:
+                request.messages = effective_messages
+            except Exception:
+                pass
         turn_count = (len(effective_messages) // 2) if effective_messages is not None else 0
         history_turns_loaded = turn_count if getattr(request, "session_id", None) else 0
 
@@ -634,6 +651,8 @@ class WorkflowRunner:
         tr_extractor = self.trace_extractor
 
         domain_output = wf_def.to_workflow_output(final_state, trace_id=trace_id)
+        if getattr(request, "session_id", None) and not domain_output.session_id:
+            domain_output.session_id = request.session_id
         resolved_tid = tr_extractor(handler) or trace_id or domain_output.trace_id
 
         if resolved_tid:
@@ -1125,6 +1144,7 @@ class WorkflowRunner:
                         citations=final_citations,
                         rewritten_query=final_rewritten_query,
                         trace_id=resolved_tid,
+                        session_id=getattr(request, "session_id", None),
                     )
                 try:
                     await self._apersist_turn(request, turn_output, resolved_tid)
@@ -1137,6 +1157,7 @@ class WorkflowRunner:
 
             metadata_dict = {
                 "trace_id": resolved_tid,
+                "session_id": getattr(request, "session_id", None),
                 "workflow": getattr(request, "workflow", None) or (wf_def.info.id if wf_def else "fix_single_jev"),
                 "source_used": final_source_used,
                 "citations": final_citations,

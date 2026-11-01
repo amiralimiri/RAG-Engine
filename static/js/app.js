@@ -1891,6 +1891,14 @@ function clearAllHistory() {
 
 async function initSessions() {
   let storedSessionId = storage.getItem(STORAGE_KEY_CURRENT_SESSION);
+  if (
+    storedSessionId === "undefined" ||
+    storedSessionId === "null" ||
+    (typeof storedSessionId === "string" && !storedSessionId.trim())
+  ) {
+    storedSessionId = null;
+    storage.removeItem(STORAGE_KEY_CURRENT_SESSION);
+  }
   const hadStoredId = Boolean(storedSessionId);
   if (!storedSessionId) {
     storedSessionId = generateUUID();
@@ -2128,6 +2136,28 @@ async function* streamChat(payload, options = {}) {
     (options && options.headers) || {},
   );
 
+  if (
+    payload &&
+    (!payload.session_id ||
+      typeof payload.session_id !== "string" ||
+      !payload.session_id.trim() ||
+      payload.session_id === "undefined" ||
+      payload.session_id === "null")
+  ) {
+    if (
+      typeof currentSessionId === "string" &&
+      currentSessionId.trim() &&
+      currentSessionId !== "undefined" &&
+      currentSessionId !== "null"
+    ) {
+      payload.session_id = currentSessionId.trim();
+    } else {
+      currentSessionId = generateUUID();
+      storage.setItem(STORAGE_KEY_CURRENT_SESSION, currentSessionId);
+      payload.session_id = currentSessionId;
+    }
+  }
+
   const response = await fetch(endpoint, {
     method: "POST",
     headers,
@@ -2271,7 +2301,13 @@ async function askAgent(q, options = {}) {
   removeTurnActionBanner();
 
   // Ensure an active session ID exists
-  if (!currentSessionId) {
+  if (
+    !currentSessionId ||
+    typeof currentSessionId !== "string" ||
+    !currentSessionId.trim() ||
+    currentSessionId === "undefined" ||
+    currentSessionId === "null"
+  ) {
     currentSessionId = generateUUID();
     storage.setItem(STORAGE_KEY_CURRENT_SESSION, currentSessionId);
   }
@@ -2368,6 +2404,17 @@ async function askAgent(q, options = {}) {
         accumulatedMarkdown += delta;
         scheduleProgressiveRender(contentEl, accumulatedMarkdown);
       } else if (event === "metadata") {
+        if (
+          data &&
+          data.session_id &&
+          typeof data.session_id === "string" &&
+          data.session_id.trim() &&
+          data.session_id !== "undefined" &&
+          data.session_id !== "null"
+        ) {
+          currentSessionId = data.session_id.trim();
+          storage.setItem(STORAGE_KEY_CURRENT_SESSION, currentSessionId);
+        }
         completed = true;
         hideThinking();
         if (!assistantBubble) {

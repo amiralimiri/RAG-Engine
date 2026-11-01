@@ -272,3 +272,205 @@ def test_turn_2_condense_query_empty_response_fallback(mock_kb_tool, mock_web_to
     assert result["current_query"] == "How do I install it on Mac?"
 
 
+@pytest.mark.asyncio
+async def test_end_to_end_2_turn_context_and_memory_hydration(fake_retriever):
+    """End-to-end 2-turn execution verifying memory hydration, condense_query, and downstream query usage."""
+    from app.rag.memory.in_memory import InMemoryConversationStore
+    from app.rag.tools import create_retriever_tool, create_web_search_tool
+    from app.rag.workflows.registry import WorkflowRegistry
+    from app.rag.workflows.runner import WorkflowRunner
+
+    kb_tool = create_retriever_tool(retriever=fake_retriever)
+    mock_search_client = MagicMock()
+    mock_search_client.invoke.return_value = {"answer": "Web answer", "results": []}
+    web_tool = create_web_search_tool(search_client=mock_search_client)
+
+    captured_prompts = []
+
+    mock_chat = MagicMock(spec=BaseChatModel)
+
+    async def mock_ainvoke(prompt, **kwargs):
+        p_str = str(prompt)
+        captured_prompts.append(p_str)
+        if "rephrase the follow up question" in p_str.lower() or "standalone search query" in p_str.lower():
+            return AIMessage(content="How do I install Tailscale VPN on Linux?")
+        return AIMessage(content="Here are the installation steps for Tailscale VPN on Linux.")
+
+    mock_chat.ainvoke = AsyncMock(side_effect=mock_ainvoke)
+    mock_chat.invoke = MagicMock(return_value=AIMessage(content="Response"))
+
+    classifier = FakeClassifierAdapter(route_decision="kb", kb_grade="good")
+
+    wf = SelfCorrectiveRagWorkflow(
+        id="test_sc_rag",
+        name="Test Self-Corrective RAG",
+        classifier=classifier,
+        model=mock_chat,
+        kb_tool=kb_tool,
+        web_tool=web_tool,
+    )
+
+    registry = WorkflowRegistry()
+    registry.register(wf)
+    memory = InMemoryConversationStore()
+    runner = WorkflowRunner(registry=registry, memory=memory)
+
+    session_id = "test-session-2-turn"
+
+    # --- Turn 1 ---
+    req1 = WorkflowInput(question="What VPN do we use?", session_id=session_id, workflow="test_sc_rag")
+    resp1 = await runner.aexecute(req1)
+    assert resp1.answer is not None
+
+    # Verify Turn 1 saved
+    turns = await memory.aget_turns(session_id)
+    assert len(turns) == 1
+    assert turns[0].user_query == "What VPN do we use?"
+
+    # --- Turn 2 ---
+    req2 = WorkflowInput(question="How do I install it on Linux?", session_id=session_id, workflow="test_sc_rag")
+    resp2 = await runner.aexecute(req2)
+
+    # Verify request.messages was assigned hydrated turns
+    assert req2.messages is not None
+    assert len(req2.messages) == 2  # 1 turn = HumanMessage + AIMessage
+    assert req2.messages[0].content == "What VPN do we use?"
+
+    # Verify 2 turns in memory
+    turns_after = await memory.aget_turns(session_id)
+    assert len(turns_after) == 2
+    assert turns_after[1].user_query == "How do I install it on Linux?"
+
+    # Verify condense_query was executed and produced contextualized query
+    assert any("rephrase the follow up question" in p.lower() or "chat history:" in p.lower() for p in captured_prompts)
+    # Verify generate_from_kb prompt received the chat history
+    kb_gen_prompts = [p for p in captured_prompts if "private company kb" in p.lower()]
+    assert len(kb_gen_prompts) > 0
+    assert any("What VPN do we use?" in p for p in kb_gen_prompts)
+
+    # Verify rewritten_query in response
+    assert resp2.rewritten_query == "How do I install Tailscale VPN on Linux?"
+
+
+@pytest.mark.asyncio
+async def test_downstream_nodes_use_current_query(fake_retriever):
+    """Verify retrieve_kb uses the contextualized query from condense_query."""
+    from app.rag.tools import create_retriever_tool, create_web_search_tool
+
+    mock_retriever = MagicMock()
+    mock_retriever.invoke.return_value = [Document(page_content="doc content", metadata={"source": "doc.md"})]
+    kb_tool = create_retriever_tool(retriever=mock_retriever)
+
+    mock_search = MagicMock()
+    mock_search.invoke.return_value = {"answer": "web answer", "results": []}
+    web_tool = create_web_search_tool(search_client=mock_search)
+
+    mock_classifier = MagicMock()
+    mock_classifier.route.return_value = MagicMock(route="kb")
+    mock_classifier.grade_kb.return_value = MagicMock(grade="good")
+    mock_classifier.grade_web.return_value = MagicMock(grade="good")
+
+    mock_llm = MagicMock(spec=BaseChatModel)
+    async def mock_ainvoke(prompt, **kwargs):
+        p_str = str(prompt)
+        if "rephrase" in p_str.lower() or "standalone" in p_str.lower():
+            return AIMessage(content="How do I install Tailscale on Ubuntu?")
+        return AIMessage(content="Generated answer")
+
+    mock_llm.ainvoke = AsyncMock(side_effect=mock_ainvoke)
+
+    graph = create_agentic_rag_graph(
+        mock_classifier,
+        model=mock_llm,
+        kb_tool=kb_tool,
+        web_tool=web_tool,
+    )
+
+    state = {
+        "question": "How do I install it?",
+        "current_query": "How do I install it?",
+        "messages": [
+            HumanMessage(content="What VPN?"),
+            AIMessage(content="Tailscale"),
+            HumanMessage(content="How do I install it?"),
+        ],
+        "retry_count": 0,
+        "kb_docs": [],
+        "web_results": "",
+        "kb_grade": "",
+        "web_grade": "",
+        "answer": "",
+        "source_used": "kb",
+        "trace": [],
+        "citations": [],
+        "retrieved_contexts": [],
+    }
+
+    # Test node_retrieve_kb directly through graph invocation
+    res = await graph.ainvoke(state)
+    # The retriever must have been called with the contextualized current_query
+    mock_retriever.invoke.assert_called()
+    called_query = mock_retriever.invoke.call_args[0][0]
+    assert called_query == "How do I install Tailscale on Ubuntu?"
+
+
+@pytest.mark.asyncio
+async def test_generation_nodes_pass_chat_history_with_default_prompts(fake_retriever):
+    """Verify generate_from_kb, generate_from_web, and direct_answer pass chat history even with default prompts."""
+    from app.rag.engine import direct_answer
+    from app.rag.tools import create_retriever_tool, create_web_search_tool
+
+    captured = []
+    mock_llm = MagicMock(spec=BaseChatModel)
+
+    async def mock_ainvoke(prompt, **kwargs):
+        captured.append(str(prompt))
+        return AIMessage(content="Answer")
+
+    mock_llm.ainvoke = AsyncMock(side_effect=mock_ainvoke)
+
+    # 1. Test direct_answer
+    state_direct = {
+        "question": "Thank you!",
+        "current_query": "Thank you!",
+        "messages": [
+            HumanMessage(content="What VPN do we use?"),
+            AIMessage(content="We use Tailscale."),
+            HumanMessage(content="Thank you!"),
+        ],
+        "retry_count": 0,
+    }
+    await direct_answer(state_direct, model=mock_llm)
+    assert len(captured) == 1
+    assert "Chat History:" in captured[0]
+    assert "What VPN do we use?" in captured[0]
+    assert "We use Tailscale." in captured[0]
+
+    # 2. Test generate_from_kb via graph
+    captured.clear()
+    kb_tool = create_retriever_tool(retriever=fake_retriever)
+    mock_search = MagicMock()
+    mock_search.invoke.return_value = {"answer": "web", "results": []}
+    web_tool = create_web_search_tool(search_client=mock_search)
+    classifier_kb = FakeClassifierAdapter(route_decision="kb", kb_grade="good")
+
+    graph_kb = create_agentic_rag_graph(classifier_kb, model=mock_llm, kb_tool=kb_tool, web_tool=web_tool)
+    state_kb = {
+        "question": "How do I configure it?",
+        "current_query": "How do I configure Tailscale?",
+        "messages": [
+            HumanMessage(content="What VPN?"),
+            AIMessage(content="Tailscale"),
+            HumanMessage(content="How do I configure it?"),
+        ],
+        "retry_count": 0,
+    }
+    await graph_kb.ainvoke(state_kb)
+    gen_kb_calls = [p for p in captured if "private company kb" in p.lower()]
+    assert len(gen_kb_calls) >= 1
+    assert "Chat History:" in gen_kb_calls[0]
+    assert "What VPN?" in gen_kb_calls[0]
+    assert "Tailscale" in gen_kb_calls[0]
+
+
+
