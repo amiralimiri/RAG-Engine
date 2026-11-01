@@ -509,3 +509,50 @@ async def test_runner_streaming_resilient_to_persistence_failure():
     assert any("event: metadata" in f for f in events)
     assert not any("event: error" in f for f in events)
 
+
+@pytest.mark.asyncio
+async def test_runner_safe_rewind_bounded_by_max_turns(monkeypatch: pytest.MonkeyPatch):
+    """Verify safe rewind slicing respects memory_max_turns when rewind_turn_index > max_turns."""
+    registry = WorkflowRegistry()
+    mock_wf = MockStatefulWorkflow()
+    registry.register(mock_wf)
+
+    memory = InMemoryConversationStore()
+    runner = WorkflowRunner(registry=registry, memory=memory)
+    session_id = "test-session-rewind-bounded"
+
+    # Populate 15 turns (indices 0..14)
+    for i in range(15):
+        t = ConversationTurn(
+            session_id=session_id,
+            turn_index=i,
+            user_query=f"Query {i}",
+            assistant_answer=f"Answer {i}",
+            source_used="direct",
+        )
+        await memory.asave_turn(t)
+
+    # Mock settings.memory_max_turns = 4
+    mock_settings = MagicMock()
+    mock_settings.memory_max_turns = 4
+    mock_settings.app_env = "testing"
+    monkeypatch.setattr(runner, "settings", mock_settings)
+
+    # Rewind to turn 10: turns 0..9 exist before rewind.
+    # With max_turns=4, sliced should be [10 - 4 : 10] = turns 6, 7, 8, 9 (4 turns).
+    req = WorkflowInput(
+        question="Query at turn 10",
+        session_id=session_id,
+        rewind_turn_index=10,
+        workflow=mock_wf.info.id,
+    )
+    await runner.aexecute(req)
+
+    assert mock_wf.last_initial_state is not None
+    initial_msgs = mock_wf.last_initial_state["messages"]
+    # 4 historical turns (8 messages) + 1 current question = 9 messages
+    assert len(initial_msgs) == 9
+    assert initial_msgs[0].content == "Query 6"
+    assert initial_msgs[1].content == "Answer 6"
+    assert initial_msgs[-2].content == "Answer 9"
+    assert initial_msgs[-1].content == "Query at turn 10"

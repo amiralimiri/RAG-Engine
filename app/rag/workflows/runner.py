@@ -117,6 +117,7 @@ class WorkflowRunner:
         self.registry = registry if registry is not None else get_workflow_registry()
         self._evaluator = evaluator
         self._memory = memory
+        self._settings: Any = None
         self._callback_factory = callback_factory
         self._trace_extractor = trace_extractor
         self._telemetry_flusher = telemetry_flusher
@@ -132,6 +133,16 @@ class WorkflowRunner:
     @memory.setter
     def memory(self, val: ConversationMemoryAdapter | None) -> None:
         self._memory = val
+
+    @property
+    def settings(self) -> Any:
+        if self._settings is None:
+            return get_settings()
+        return self._settings
+
+    @settings.setter
+    def settings(self, val: Any) -> None:
+        self._settings = val
 
     @property
     def eval_task_fn(self) -> Callable[..., Any] | None:
@@ -253,12 +264,12 @@ class WorkflowRunner:
             return None
 
         rewind_turn_index = getattr(request, "rewind_turn_index", None)
-        settings = get_settings()
+        settings = self.settings
         max_turns = getattr(settings, "memory_max_turns", 10)
 
         if rewind_turn_index is not None:
             all_turns = await self.memory.aget_turns(session_id)
-            sliced = all_turns[:rewind_turn_index]
+            sliced = all_turns[max(0, rewind_turn_index - max_turns) : rewind_turn_index]
             hydrated = [msg for t in sliced for msg in t.to_messages()]
             turns_loaded = len(hydrated) // 2
             logger.info(
@@ -404,14 +415,12 @@ class WorkflowRunner:
         if hydrated_messages is None and getattr(request, "session_id", None):
             hydrated_messages = self._hydrate_memory_sync(request)
 
-        effective_messages = (
-            hydrated_messages if hydrated_messages is not None else getattr(request, "messages", None)
-        )
+        effective_messages = hydrated_messages if hydrated_messages is not None else getattr(request, "messages", None)
         turn_count = (len(effective_messages) // 2) if effective_messages is not None else 0
         history_turns_loaded = turn_count if getattr(request, "session_id", None) else 0
 
         # 4. Multi-dimensional telemetry tags
-        settings = get_settings()
+        settings = self.settings
         app_env = getattr(settings, "app_env", "development")
 
         telemetry_tags: list[str] = [
