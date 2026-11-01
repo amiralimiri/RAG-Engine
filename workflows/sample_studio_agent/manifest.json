@@ -1,0 +1,48 @@
+{
+  "id": "sample_studio_agent",
+  "name": "Sample Studio Research Agent",
+  "description": "An externally authored LangGraph workflow demonstrating dynamic bundle mounting, state conformances, and profile parameterization.",
+  "entrypoint": "graph:get_graph",
+  "is_conversational": true,
+  "supports_streaming": true,
+  "step_labels": {
+    "analyze_intent": "Analyzing inquiry intent...",
+    "mock_search": "Querying domain knowledge base...",
+    "generate_response": "Synthesizing final findings..."
+  },
+  "generation_nodes": [
+    "generate_response"
+  ],
+  "profiles": [
+    {
+      "variant_id": "studio-concise",
+      "model_name": "mock-studio-concise",
+      "prompt_version": "concise",
+      "temperature": 0.2,
+      "parameters": {
+        "top_k": 2
+      },
+      "tags": [
+        "studio",
+        "concise"
+      ]
+    },
+    {
+      "variant_id": "studio-default",
+      "model_name": "mock-studio-default",
+      "prompt_version": "default",
+      "temperature": 0.7,
+      "parameters": {
+        "top_k": 3
+      },
+      "tags": [
+        "studio",
+        "default"
+      ]
+    }
+  ],
+  "metadata": {
+    "author": "External Studio v1.0",
+    "exported_at": "2026-11-01T00:00:00Z"
+  }
+}

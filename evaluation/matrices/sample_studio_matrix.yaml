@@ -1,0 +1,16 @@
+dataset_name: "gold_benchmarks"
+runs:
+  - workflow: "sample_studio_agent"
+    profile:
+      variant_id: "studio-default"
+      model_name: "gpt-4o"
+      prompt_version: "default"
+      parameters:
+        top_k: 2
+  - workflow: "sample_studio_agent"
+    profile:
+      variant_id: "studio-concise"
+      model_name: "claude-3-5-sonnet"
+      prompt_version: "concise"
+      parameters:
+        top_k: 1
