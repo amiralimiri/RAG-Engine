@@ -165,17 +165,20 @@ def test_html_shell_script_loading_order_before_body_close(client):
     marked_script = '<script src="/static/vendor/marked.min.js"></script>'
     purify_script = '<script src="/static/vendor/purify.min.js"></script>'
     highlight_script = '<script src="/static/vendor/highlight.min.js"></script>'
-    app_script = '<script src="/static/js/app.js"></script>'
 
     pos_marked = html.find(marked_script)
     pos_purify = html.find(purify_script)
     pos_highlight = html.find(highlight_script)
-    pos_app = html.find(app_script)
+
+    import re
+
+    app_match = re.search(r'<script src="/static/js/app\.js(?:\?[^"]*)?"></script>', html)
+    assert app_match is not None, "Missing app.js script tag in HTML response"
+    pos_app = app_match.start()
 
     assert pos_marked != -1, f"Missing script declaration: {marked_script}"
     assert pos_purify != -1, f"Missing script declaration: {purify_script}"
     assert pos_highlight != -1, f"Missing script declaration: {highlight_script}"
-    assert pos_app != -1, f"Missing script declaration: {app_script}"
 
     # Strict loading order check
     assert pos_marked < pos_purify, "marked.min.js must precede purify.min.js"

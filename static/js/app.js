@@ -302,6 +302,8 @@ const PURIFY_CONFIG = {
     "data-trace-id",
     "data-score",
     "data-session-id",
+    "data-turn-index",
+    "data-query",
     "viewBox",
     "fill",
     "stroke",
@@ -1353,7 +1355,14 @@ function hydrateSessionTurns(data) {
   clearMessageFeed();
   if (data && data.turns && Array.isArray(data.turns) && data.turns.length > 0) {
     if (welcomeCard) welcomeCard.classList.add("hidden");
-    for (const turn of data.turns) {
+    const messages = [];
+    const baseTime = Date.now() - data.turns.length * 60000;
+
+    for (let i = 0; i < data.turns.length; i++) {
+      const turn = data.turns[i];
+      const turnIndex =
+        typeof turn.turn_index === "number" ? turn.turn_index : i;
+
       addMessage(
         "user",
         turn.user_query,
@@ -1363,8 +1372,15 @@ function hydrateSessionTurns(data) {
         "",
         [],
         null,
-        turn.turn_index,
+        turnIndex,
       );
+      messages.push({
+        role: "user",
+        text: turn.user_query,
+        turn_index: turnIndex,
+        timestamp: baseTime + i * 2000,
+      });
+
       addMessage(
         "assistant",
         turn.assistant_answer,
@@ -1374,8 +1390,35 @@ function hydrateSessionTurns(data) {
         turn.trace_id || "",
         turn.trace || [],
         turn.feedback || null,
-        turn.turn_index,
+        turnIndex,
       );
+      messages.push({
+        role: "assistant",
+        text: turn.assistant_answer,
+        source_used: turn.source_used || "vectorstore",
+        trace_id: turn.trace_id || null,
+        trace: turn.trace || [],
+        workflow: data.workflow || "",
+        citations: turn.citations || [],
+        turn_index: turnIndex,
+        timestamp: baseTime + i * 2000 + 1000,
+        feedback: turn.feedback || { score: null, comment: null },
+      });
+    }
+
+    // Synchronize local storage sessionData cache with server turns
+    const sid = data.session_id || currentSessionId;
+    if (sid) {
+      const sessionData = {
+        id: sid,
+        title: data.title || (data.turns[0] && data.turns[0].user_query) || "Conversation",
+        createdAt: data.created_at ? new Date(data.created_at).getTime() : baseTime,
+        updatedAt: data.updated_at ? new Date(data.updated_at).getTime() : Date.now(),
+        workflow: data.workflow || (workflowSelect ? workflowSelect.value || "" : ""),
+        messages: messages,
+      };
+      saveSessionData(sid, sessionData);
+      updateSessionIndexMetadata(sid, sessionData);
     }
   } else {
     if (welcomeCard) welcomeCard.classList.remove("hidden");
@@ -1553,6 +1596,8 @@ function abortCurrentStream() {
 /* ==========================================================================
    Ticket 7: Turn Edit, Rewind & Session Fork Controls
    ========================================================================== */
+let isSubmittingTurnAction = false;
+
 function pruneDOMTurns(fromTurnIndex) {
   if (!chatMessages) return;
   const msgs = chatMessages.querySelectorAll
@@ -1609,7 +1654,11 @@ function renderTurnActionBanner(turnIndex) {
       `<button id="btnCancelEdit" class="btn-sm btn-ghost" type="button">Cancel</button>`,
   );
 
-  if (
+  const container = $("turnActionContainer");
+  if (container) {
+    container.innerHTML = "";
+    container.appendChild(banner);
+  } else if (
     form &&
     form.parentNode &&
     typeof form.parentNode.insertBefore === "function"
@@ -1619,27 +1668,6 @@ function renderTurnActionBanner(turnIndex) {
     form.insertBefore(banner, form.firstChild);
   } else if (chatMessages && typeof chatMessages.appendChild === "function") {
     chatMessages.appendChild(banner);
-  }
-
-  const btnCancel = banner.querySelector
-    ? banner.querySelector("#btnCancelEdit")
-    : null;
-  if (btnCancel && typeof btnCancel.addEventListener === "function") {
-    btnCancel.addEventListener("click", handleCancelEdit);
-  }
-
-  const btnRewind = banner.querySelector
-    ? banner.querySelector("#btnRewindSubmit")
-    : null;
-  if (btnRewind && typeof btnRewind.addEventListener === "function") {
-    btnRewind.addEventListener("click", handleSubmitRewind);
-  }
-
-  const btnFork = banner.querySelector
-    ? banner.querySelector("#btnForkSubmit")
-    : null;
-  if (btnFork && typeof btnFork.addEventListener === "function") {
-    btnFork.addEventListener("click", handleSubmitFork);
   }
 }
 
@@ -1682,45 +1710,59 @@ function handleEditTurnClick(btn) {
 }
 
 async function handleSubmitRewind() {
-  const turnIndex =
-    pendingRewindTurnIndex !== null ? pendingRewindTurnIndex : 0;
-  const text = question ? question.value.trim() : "";
-  if (!text) return;
+  if (isSubmittingTurnAction) return;
+  isSubmittingTurnAction = true;
 
-  pruneDOMTurns(turnIndex);
-  removeTurnActionBanner();
-  await askAgent(text, { rewindTurnIndex: turnIndex });
+  try {
+    const turnIndex =
+      pendingRewindTurnIndex !== null ? pendingRewindTurnIndex : 0;
+    const text = question ? question.value.trim() : "";
+    if (!text) return;
+
+    pruneDOMTurns(turnIndex);
+    removeTurnActionBanner();
+    await askAgent(text, { rewindTurnIndex: turnIndex });
+  } finally {
+    isSubmittingTurnAction = false;
+  }
 }
 
 async function handleSubmitFork() {
-  const turnIndex =
-    pendingRewindTurnIndex !== null ? pendingRewindTurnIndex : 0;
-  const text = question ? question.value.trim() : "";
-  if (!text) return;
+  if (isSubmittingTurnAction) return;
+  isSubmittingTurnAction = true;
 
   try {
-    const uptoTurn = turnIndex - 1;
-    const res = await fetch(`/api/chat/${currentSessionId}/fork`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ upto_turn_index: uptoTurn }),
-    });
-    const data = await readJsonSafe(res);
-    if (!res.ok) {
-      throw new Error(data.detail || `Fork failed with HTTP ${res.status}`);
+    const turnIndex =
+      pendingRewindTurnIndex !== null ? pendingRewindTurnIndex : 0;
+    const text = question ? question.value.trim() : "";
+    if (!text) return;
+
+    try {
+      const uptoTurn = turnIndex - 1;
+      const res = await fetch(`/api/chat/${currentSessionId}/fork`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ upto_turn_index: uptoTurn }),
+      });
+      const data = await readJsonSafe(res);
+      if (!res.ok) {
+        throw new Error(data.detail || `Fork failed with HTTP ${res.status}`);
+      }
+
+      currentSessionId = data.session_id;
+      storage.setItem(STORAGE_KEY_CURRENT_SESSION, currentSessionId);
+      pruneDOMTurns(turnIndex);
+      removeTurnActionBanner();
+
+      await askAgent(text);
+      await fetchSessionList();
+      showToast("Branched to a new conversation session", "success");
+    } catch (err) {
+      console.error("Fork session error:", err);
+      showToast(`Failed to branch conversation: ${err.message}`, "error");
     }
-
-    currentSessionId = data.session_id;
-    storage.setItem(STORAGE_KEY_CURRENT_SESSION, currentSessionId);
-    pruneDOMTurns(turnIndex);
-    removeTurnActionBanner();
-
-    await askAgent(text);
-    await fetchSessionList();
-    showToast("Branched to a new conversation session", "success");
-  } catch (err) {
-    console.error("Fork session error:", err);
-    showToast(`Failed to branch conversation: ${err.message}`, "error");
+  } finally {
+    isSubmittingTurnAction = false;
   }
 }
 
@@ -2659,6 +2701,7 @@ if (typeof document !== "undefined" && document.addEventListener) {
     const editBtn = findClosest(target, ".btn-edit-turn");
     if (editBtn) {
       if (typeof e.preventDefault === "function") e.preventDefault();
+      if (typeof e.stopPropagation === "function") e.stopPropagation();
       handleEditTurnClick(editBtn);
       return;
     }
@@ -2666,6 +2709,7 @@ if (typeof document !== "undefined" && document.addEventListener) {
     const rewindBtn = findClosest(target, "#btnRewindSubmit");
     if (rewindBtn) {
       if (typeof e.preventDefault === "function") e.preventDefault();
+      if (typeof e.stopPropagation === "function") e.stopPropagation();
       handleSubmitRewind();
       return;
     }
@@ -2673,6 +2717,7 @@ if (typeof document !== "undefined" && document.addEventListener) {
     const forkBtn = findClosest(target, "#btnForkSubmit");
     if (forkBtn) {
       if (typeof e.preventDefault === "function") e.preventDefault();
+      if (typeof e.stopPropagation === "function") e.stopPropagation();
       handleSubmitFork();
       return;
     }
@@ -2680,6 +2725,7 @@ if (typeof document !== "undefined" && document.addEventListener) {
     const cancelBtn = findClosest(target, "#btnCancelEdit");
     if (cancelBtn) {
       if (typeof e.preventDefault === "function") e.preventDefault();
+      if (typeof e.stopPropagation === "function") e.stopPropagation();
       handleCancelEdit();
       return;
     }
@@ -2708,11 +2754,28 @@ if (typeof document !== "undefined" && document.addEventListener) {
 /* ==========================================================================
    Initialization Bootstrap
    ========================================================================== */
-initTheme();
-initSessions().catch((err) => console.warn("initSessions bootstrap error:", err));
-initMobileSidebar();
-loadWorkflows();
-hideThinking();
+function bootstrapApp() {
+  initTheme();
+  initSessions().catch((err) => console.warn("initSessions bootstrap error:", err));
+  initMobileSidebar();
+  loadWorkflows();
+  hideThinking();
+}
+
+if (typeof document !== "undefined") {
+  if (
+    document.readyState === "complete" ||
+    document.readyState === "interactive"
+  ) {
+    bootstrapApp();
+  } else if (typeof document.addEventListener === "function") {
+    document.addEventListener("DOMContentLoaded", bootstrapApp);
+  } else {
+    bootstrapApp();
+  }
+} else {
+  bootstrapApp();
+}
 
 /* Export for Node/test environments if available */
 if (typeof module !== "undefined" && module.exports) {

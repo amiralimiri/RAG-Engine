@@ -1809,24 +1809,31 @@ details[open] summary .accordion-arrow {
    -------------------------------------------------------------------------- */
 
 .btn-edit-turn {
-  background: transparent;
-  border: none;
-  color: var(--text-muted);
+  background: var(--bg-surface-elevated, rgba(255, 255, 255, 0.08));
+  border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.1));
+  color: var(--text-secondary);
   cursor: pointer;
   font-size: 13px;
-  padding: 2px 6px;
+  line-height: 1;
+  padding: 3px 7px;
   margin-left: 8px;
-  opacity: 0.6;
+  opacity: 0.85;
   border-radius: var(--radius-sm);
-  transition: opacity var(--transition-fast), transform var(--transition-fast);
+  transition: opacity var(--transition-fast), transform var(--transition-fast), background-color var(--transition-fast);
   vertical-align: middle;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .message.user:hover .btn-edit-turn,
-.btn-edit-turn:hover {
+.btn-edit-turn:hover,
+.btn-edit-turn:focus {
   opacity: 1;
-  transform: scale(1.1);
+  transform: scale(1.08);
   color: var(--text-primary);
+  background: var(--bg-surface, rgba(255, 255, 255, 0.16));
+  border-color: var(--border-muted, rgba(255, 255, 255, 0.25));
 }
 
 .turn-action-banner {
