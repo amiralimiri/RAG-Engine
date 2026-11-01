@@ -18,7 +18,7 @@ from app.rag.workflows.base import (
     WorkflowOutput,
 )
 from app.rag.workflows.registry import WorkflowRegistry
-from app.rag.workflows.runner import WorkflowRunner, reset_workflow_runner
+from app.rag.workflows.runner import WorkflowRunner
 
 
 class MockStatefulWorkflow:
@@ -129,12 +129,11 @@ class MockStatefulWorkflow:
 
 
 @pytest.fixture(autouse=True)
-def clean_context():
+def clean_contextvars():
+    """Ensure structlog contextvars are pristine before and after each test."""
     structlog.contextvars.clear_contextvars()
-    reset_workflow_runner()
     yield
     structlog.contextvars.clear_contextvars()
-    reset_workflow_runner()
 
 
 @pytest.mark.asyncio
@@ -435,3 +434,78 @@ async def test_runner_sync_execute_memory_hydration_and_persistence():
     assert len(turns) == 2
     assert turns[1].turn_index == 1
     assert turns[1].user_query == "Sync Question 2"
+
+
+@pytest.mark.asyncio
+async def test_runner_rewind_to_zero_clears_history_and_stale_messages():
+    """Execute with rewind_turn_index = 0 and stale caller messages; verify history is wiped clean."""
+    registry = WorkflowRegistry()
+    mock_wf = MockStatefulWorkflow()
+    registry.register(mock_wf)
+
+    memory = InMemoryConversationStore()
+    runner = WorkflowRunner(registry=registry, memory=memory)
+    session_id = "test-session-rewind-zero"
+
+    # Populate 2 turns
+    for i in range(2):
+        t = ConversationTurn(
+            session_id=session_id,
+            turn_index=i,
+            user_query=f"Query {i}",
+            assistant_answer=f"Answer {i}",
+            source_used="direct",
+        )
+        await memory.asave_turn(t)
+
+    # Rewind to 0 with stale messages passed in request
+    stale_msg = HumanMessage(content="Stale client message that should be purged")
+    req = WorkflowInput(
+        question="Fresh Turn 0 Query",
+        session_id=session_id,
+        rewind_turn_index=0,
+        workflow=mock_wf.info.id,
+        messages=[stale_msg],
+    )
+    resp = await runner.aexecute(req)
+    assert "Fresh Turn 0 Query" in resp.answer
+
+    # Verify graph state only received the fresh query and no historical/stale messages
+    assert mock_wf.last_initial_state is not None
+    initial_msgs = mock_wf.last_initial_state["messages"]
+    assert len(initial_msgs) == 1
+    assert initial_msgs[0].content == "Fresh Turn 0 Query"
+
+    # Verify storage now contains exactly 1 turn at index 0
+    turns = await memory.aget_turns(session_id)
+    assert len(turns) == 1
+    assert turns[0].turn_index == 0
+    assert turns[0].user_query == "Fresh Turn 0 Query"
+
+
+@pytest.mark.asyncio
+async def test_runner_streaming_resilient_to_persistence_failure():
+    """Verify stream still yields tokens and metadata frame even if persistence throws."""
+    registry = WorkflowRegistry()
+    mock_wf = MockStatefulWorkflow()
+    registry.register(mock_wf)
+
+    memory = InMemoryConversationStore()
+    memory.asave_turn = AsyncMock(side_effect=RuntimeError("Storage disk full failure"))
+    runner = WorkflowRunner(registry=registry, memory=memory)
+    session_id = "test-session-stream-persist-fail"
+
+    req = WorkflowInput(
+        question="Stream persist fail question",
+        session_id=session_id,
+        workflow=mock_wf.info.id,
+    )
+
+    events: list[str] = []
+    async for frame in runner.stream(req):
+        events.append(frame)
+
+    assert any("event: token" in f for f in events)
+    assert any("event: metadata" in f for f in events)
+    assert not any("event: error" in f for f in events)
+

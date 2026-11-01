@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import uuid
-from collections.abc import AsyncGenerator, Awaitable, Callable
+from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
 from datetime import UTC, datetime
 from typing import Any, cast
 
@@ -199,21 +199,22 @@ class WorkflowRunner:
         trace_id: str | None = None,
         variant_id: str | None = None,
         parameters: dict[str, Any] | None = None,
+        messages: Sequence[BaseMessage | dict[str, Any]] | None = None,
     ) -> WorkflowInput:
-        """Ensure telemetry trace_id, variant_id, and parameters are bound to domain WorkflowInput."""
+        """Ensure telemetry trace_id, variant_id, parameters, and messages are bound to domain WorkflowInput."""
         converter = getattr(request, "to_workflow_input", None)
         if callable(converter):
             request = converter()
         elif not isinstance(request, WorkflowInput):
-            messages = getattr(request, "messages", None)
-            if messages:
-                messages = [
-                    m.model_dump() if hasattr(m, "model_dump") and not isinstance(m, BaseMessage) else m
-                    for m in messages
+            req_messages = messages if messages is not None else getattr(request, "messages", None)
+            if req_messages:
+                req_messages = [
+                    m.model_dump() if isinstance(m, BaseModel) and not isinstance(m, BaseMessage) else m
+                    for m in req_messages
                 ]
             attachments = getattr(request, "attachments", None)
             if attachments:
-                attachments = [a.model_dump() if hasattr(a, "model_dump") else a for a in attachments]
+                attachments = [a.model_dump() if isinstance(a, BaseModel) else a for a in attachments]
             request = WorkflowInput(
                 question=getattr(request, "question", ""),
                 workflow=getattr(request, "workflow", None),
@@ -222,7 +223,7 @@ class WorkflowRunner:
                 user_id=getattr(request, "user_id", None),
                 trace_id=getattr(request, "trace_id", None),
                 stream_steps=getattr(request, "stream_steps", True),
-                messages=messages,
+                messages=req_messages,
                 attachments=attachments,
                 variant_id=getattr(request, "variant_id", None),
                 parameters=getattr(request, "parameters", None) or {},
@@ -239,15 +240,17 @@ class WorkflowRunner:
             updates["variant_id"] = eff_variant_id
         if eff_parameters and request.parameters != eff_parameters:
             updates["parameters"] = eff_parameters
+        if messages is not None and request.messages != messages:
+            updates["messages"] = messages
         if updates:
             return request.model_copy(update=updates)
         return request
 
-    async def _ahydrate_memory(self, request: WorkflowInput) -> list[BaseMessage]:
+    async def _ahydrate_memory(self, request: WorkflowInput) -> list[BaseMessage] | None:
         """Hydrate bounded historical messages from conversation memory store."""
         session_id = getattr(request, "session_id", None)
         if not session_id:
-            return []
+            return None
 
         rewind_turn_index = getattr(request, "rewind_turn_index", None)
         settings = get_settings()
@@ -257,22 +260,28 @@ class WorkflowRunner:
             all_turns = await self.memory.aget_turns(session_id)
             sliced = all_turns[:rewind_turn_index]
             hydrated = [msg for t in sliced for msg in t.to_messages()]
-        else:
-            hydrated = await self.memory.aget_messages(session_id, limit=max_turns)
+            turns_loaded = len(hydrated) // 2
+            logger.info(
+                "conversation_memory_hydrated",
+                session_id=session_id,
+                turns_loaded=turns_loaded,
+                rewind_turn_index=rewind_turn_index,
+            )
+            return hydrated
 
-        if hydrated:
-            request.messages = hydrated
-
+        hydrated = await self.memory.aget_messages(session_id, limit=max_turns)
         turns_loaded = len(hydrated) // 2
         logger.info(
             "conversation_memory_hydrated",
             session_id=session_id,
             turns_loaded=turns_loaded,
-            rewind_turn_index=rewind_turn_index,
+            rewind_turn_index=None,
         )
-        return hydrated
+        if hydrated:
+            return hydrated
+        return getattr(request, "messages", None)
 
-    def _hydrate_memory_sync(self, request: WorkflowInput) -> list[BaseMessage]:
+    def _hydrate_memory_sync(self, request: WorkflowInput) -> list[BaseMessage] | None:
         """Synchronous wrapper for conversation memory hydration."""
         return run_async_safely(self._ahydrate_memory, request)
 
@@ -333,6 +342,7 @@ class WorkflowRunner:
         callback: Any | None = None,
         metadata: dict[str, Any] | None = None,
         config: dict[str, Any] | None = None,
+        hydrated_messages: list[BaseMessage] | None = None,
         **kwargs: Any,
     ) -> tuple[WorkflowDefinition, str | None, Any, dict[str, Any], dict[str, Any]]:
         """Resolve workflow definition, initialize telemetry contextvars, and prepare initial state."""
@@ -390,13 +400,14 @@ class WorkflowRunner:
         resolved_model_name = resolved_parameters.get("model_name") or resolved_parameters.get("model")
         resolved_prompt_version = resolved_parameters.get("prompt_version")
 
-        # Hydrate memory if session_id provided and not already hydrated
-        if getattr(request, "session_id", None) and not getattr(request, "_memory_hydrated", False):
-            self._hydrate_memory_sync(request)
-            setattr(request, "_memory_hydrated", True)
+        # Hydrate memory if session_id provided and not already supplied
+        if hydrated_messages is None and getattr(request, "session_id", None):
+            hydrated_messages = self._hydrate_memory_sync(request)
 
-        msgs = getattr(request, "messages", None)
-        turn_count = (len(msgs) // 2) if msgs is not None else 0
+        effective_messages = (
+            hydrated_messages if hydrated_messages is not None else getattr(request, "messages", None)
+        )
+        turn_count = (len(effective_messages) // 2) if effective_messages is not None else 0
         history_turns_loaded = turn_count if getattr(request, "session_id", None) else 0
 
         # 4. Multi-dimensional telemetry tags
@@ -523,6 +534,7 @@ class WorkflowRunner:
             trace_id=trace_id,
             variant_id=resolved_variant_id,
             parameters=resolved_parameters,
+            messages=effective_messages,
         )
         initial_state = wf_def.to_initial_state(wf_input, trace_id=trace_id)
         if resolved_variant_id and "variant_id" not in initial_state:
@@ -741,7 +753,14 @@ class WorkflowRunner:
         )
         resolved_tid = domain_output.trace_id or trace_id
         if getattr(request, "session_id", None) and domain_output.answer and domain_output.answer.strip():
-            await self._apersist_turn(request, domain_output, resolved_tid)
+            try:
+                await self._apersist_turn(request, domain_output, resolved_tid)
+            except Exception as exc:
+                logger.warning(
+                    "turn_persistence_failed",
+                    session_id=getattr(request, "session_id", None),
+                    error=str(exc),
+                )
         return domain_output
 
     def _execute_with_state(
@@ -859,10 +878,10 @@ class WorkflowRunner:
     ) -> tuple[WorkflowOutput, dict[str, Any]]:
         """Asynchronously execute workflow and return (WorkflowOutput, final_state) without model mutation."""
         try:
-            await self._ahydrate_memory(request)
-            setattr(request, "_memory_hydrated", True)
+            hydrated = await self._ahydrate_memory(request)
             wf_def, trace_id, handler, initial_state, run_config = self._prepare_execution(
                 request,
+                hydrated_messages=hydrated,
                 callback=callback,
                 metadata=metadata,
                 config=config,
@@ -962,10 +981,10 @@ class WorkflowRunner:
         answer_chunks: list[str] = []
 
         try:
-            await self._ahydrate_memory(request)
-            setattr(request, "_memory_hydrated", True)
+            hydrated = await self._ahydrate_memory(request)
             wf_def, trace_id, handler, initial_state, config = self._prepare_execution(
                 request,
+                hydrated_messages=hydrated,
                 streaming=True,
             )
             variant_id = initial_state.get("variant_id") or config.get("configurable", {}).get("variant_id")
@@ -1098,7 +1117,14 @@ class WorkflowRunner:
                         rewritten_query=final_rewritten_query,
                         trace_id=resolved_tid,
                     )
-                await self._apersist_turn(request, turn_output, resolved_tid)
+                try:
+                    await self._apersist_turn(request, turn_output, resolved_tid)
+                except Exception as exc:
+                    logger.warning(
+                        "turn_persistence_failed",
+                        session_id=getattr(request, "session_id", None),
+                        error=str(exc),
+                    )
 
             metadata_dict = {
                 "trace_id": resolved_tid,
