@@ -37,15 +37,14 @@ def capture_context(func: Callable[..., Any]) -> Callable[..., Any]:
     return lambda *args, **kwargs: ctx.run(func, *args, **kwargs)
 
 
-def _submit_feedback_task(
-    trace_id: str, score: float, name: str = "user_feedback", comment: str | None = None
-) -> None:
+def _submit_feedback_task(trace_id: str, score: float, name: str = "user_feedback", comment: str | None = None) -> None:
     get_evaluator().score_metric(
         trace_id=trace_id,
         metric_name=name,
         score=score,
         comment=comment,
     )
+
 
 @router.get("/health")
 def health():
@@ -80,7 +79,7 @@ async def chat_stream(payload: ChatRequest):
 
 
 @router.get("/chat/sessions", response_model=SessionListResponse)
-async def list_chat_sessions():
+async def list_chat_sessions() -> SessionListResponse:
     memory = get_conversation_memory()
     sessions = await memory.alist_sessions(limit=50)
     return SessionListResponse(
@@ -90,7 +89,7 @@ async def list_chat_sessions():
 
 
 @router.get("/chat/{session_id}", response_model=SessionDetailResponse)
-async def get_chat_session(session_id: str):
+async def get_chat_session(session_id: str) -> SessionDetailResponse:
     memory = get_conversation_memory()
     session = await memory.aget_session(session_id)
     if not session:
@@ -100,14 +99,14 @@ async def get_chat_session(session_id: str):
 
 
 @router.delete("/chat/{session_id}")
-async def delete_chat_session(session_id: str):
+async def delete_chat_session(session_id: str) -> dict[str, str]:
     memory = get_conversation_memory()
     await memory.aclear(session_id)
     return {"status": "deleted", "session_id": session_id}
 
 
 @router.post("/chat/{session_id}/rewind")
-async def rewind_chat_session(session_id: str, payload: RewindRequest):
+async def rewind_chat_session(session_id: str, payload: RewindRequest) -> dict[str, Any]:
     memory = get_conversation_memory()
     session = await memory.aget_session(session_id)
     if not session:
@@ -117,7 +116,7 @@ async def rewind_chat_session(session_id: str, payload: RewindRequest):
 
 
 @router.post("/chat/{session_id}/fork", response_model=SessionDetailResponse)
-async def fork_chat_session(session_id: str, payload: ForkRequest):
+async def fork_chat_session(session_id: str, payload: ForkRequest) -> SessionDetailResponse:
     memory = get_conversation_memory()
     session = await memory.aget_session(session_id)
     if not session:
@@ -143,7 +142,10 @@ def feedback(payload: FeedbackRequest, background_tasks: BackgroundTasks):
     structlog.contextvars.bind_contextvars(trace_id=payload.trace_id)
     background_tasks.add_task(
         capture_context(_submit_feedback_task),
-        trace_id=payload.trace_id, score=payload.score, name=payload.name, comment=payload.comment,
+        trace_id=payload.trace_id,
+        score=payload.score,
+        name=payload.name,
+        comment=payload.comment,
     )
     return {"status": "accepted", "trace_id": payload.trace_id}
 
@@ -174,9 +176,13 @@ async def upload_file(file: UploadFile = File(...), x_admin_key: str = Header(de
     if not result.success:
         raise HTTPException(status_code=500, detail=f"Ingestion failed: {result.error}")
     return {
-        "message": "Document indexed", "file": dest.name, "chunks": result.chunk_count,
-        "ids_created": len(result.ids_created), "document_count": result.document_count,
-        "ids": result.ids_created, "result": result.model_dump(),
+        "message": "Document indexed",
+        "file": dest.name,
+        "chunks": result.chunk_count,
+        "ids_created": len(result.ids_created),
+        "document_count": result.document_count,
+        "ids": result.ids_created,
+        "result": result.model_dump(),
     }
 
 

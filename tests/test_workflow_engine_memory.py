@@ -1,16 +1,42 @@
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from langchain_core.documents import Document
 from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 
 from app.rag.classifiers import FakeClassifierAdapter
 from app.rag.engine import create_agentic_rag_graph
+from app.rag.state import AgentState
 from app.rag.workflows.base import WorkflowInput
 from app.rag.workflows.react_agent import ReActAgentWorkflow
 from app.rag.workflows.self_corrective import SelfCorrectiveRagWorkflow
 from tests.rag.test_react_agent import MockChatModel
+
+
+def make_agent_state(
+    question: str = "",
+    current_query: str = "",
+    messages: list[BaseMessage] | None = None,
+    **kwargs: Any,
+) -> AgentState:
+    base: dict[str, Any] = {
+        "question": question,
+        "current_query": current_query or question,
+        "kb_docs": [],
+        "web_results": "",
+        "kb_grade": "",
+        "web_grade": "",
+        "answer": "",
+        "source_used": "",
+        "retry_count": 0,
+        "trace": [],
+        "citations": [],
+        "messages": messages if messages is not None else [],
+    }
+    base.update(kwargs)
+    return cast(AgentState, base)
 
 
 @pytest.fixture
@@ -45,12 +71,14 @@ def fake_retriever():
 @pytest.fixture
 def mock_kb_tool(fake_retriever):
     from app.rag.tools import create_retriever_tool
+
     return create_retriever_tool(retriever=fake_retriever)
 
 
 @pytest.fixture
 def mock_web_tool():
     from app.rag.tools import create_web_search_tool
+
     mock_client = MagicMock()
     mock_client.invoke.return_value = {
         "answer": "Web answer content",
@@ -192,19 +220,21 @@ def test_route_start_logic():
     from app.rag.engine import route_start
 
     # Empty messages
-    assert route_start({"question": "hi", "messages": []}) == "route_question"
+    assert route_start(make_agent_state(question="hi", messages=[])) == "route_question"
     # 1 message (Turn 1)
-    assert route_start({"question": "hi", "messages": [HumanMessage(content="hi")]}) == "route_question"
+    assert route_start(make_agent_state(question="hi", messages=[HumanMessage(content="hi")])) == "route_question"
     # Multiple messages (Turn 2+)
     assert (
-        route_start({
-            "question": "more",
-            "messages": [
-                HumanMessage(content="hi"),
-                AIMessage(content="hello"),
-                HumanMessage(content="more"),
-            ],
-        })
+        route_start(
+            make_agent_state(
+                question="more",
+                messages=[
+                    HumanMessage(content="hi"),
+                    AIMessage(content="hello"),
+                    HumanMessage(content="more"),
+                ],
+            )
+        )
         == "condense_query"
     )
 
@@ -220,16 +250,16 @@ async def test_generation_nodes_pass_history(mock_llm, mock_kb_tool, mock_web_to
         template="History:\n{{history}}\nQuestion: {{question}}",
     )
 
-    state = {
-        "question": "How are you?",
-        "current_query": "How are you?",
-        "messages": [
+    state = make_agent_state(
+        question="How are you?",
+        current_query="How are you?",
+        messages=[
             HumanMessage(content="Previous inquiry"),
             AIMessage(content="Previous answer"),
             HumanMessage(content="How are you?"),
         ],
-        "retry_count": 0,
-    }
+        retry_count=0,
+    )
 
     with patch("app.rag.engine.get_workflow_prompt", return_value=custom_prompt):
         res = await direct_answer(state, model=mock_llm)
@@ -334,7 +364,9 @@ async def test_end_to_end_2_turn_context_and_memory_hydration(fake_retriever):
     # Verify request.messages was assigned hydrated turns
     assert req2.messages is not None
     assert len(req2.messages) == 2  # 1 turn = HumanMessage + AIMessage
-    assert req2.messages[0].content == "What VPN do we use?"
+    first_msg = req2.messages[0]
+    assert isinstance(first_msg, BaseMessage)
+    assert first_msg.content == "What VPN do we use?"
 
     # Verify 2 turns in memory
     turns_after = await memory.aget_turns(session_id)
@@ -371,6 +403,7 @@ async def test_downstream_nodes_use_current_query(fake_retriever):
     mock_classifier.grade_web.return_value = MagicMock(grade="good")
 
     mock_llm = MagicMock(spec=BaseChatModel)
+
     async def mock_ainvoke(prompt, **kwargs):
         p_str = str(prompt)
         if "rephrase" in p_str.lower() or "standalone" in p_str.lower():
@@ -430,16 +463,16 @@ async def test_generation_nodes_pass_chat_history_with_default_prompts(fake_retr
     mock_llm.ainvoke = AsyncMock(side_effect=mock_ainvoke)
 
     # 1. Test direct_answer
-    state_direct = {
-        "question": "Thank you!",
-        "current_query": "Thank you!",
-        "messages": [
+    state_direct = make_agent_state(
+        question="Thank you!",
+        current_query="Thank you!",
+        messages=[
             HumanMessage(content="What VPN do we use?"),
             AIMessage(content="We use Tailscale."),
             HumanMessage(content="Thank you!"),
         ],
-        "retry_count": 0,
-    }
+        retry_count=0,
+    )
     await direct_answer(state_direct, model=mock_llm)
     assert len(captured) == 1
     assert "Chat History:" in captured[0]
@@ -471,6 +504,3 @@ async def test_generation_nodes_pass_chat_history_with_default_prompts(fake_retr
     assert "Chat History:" in gen_kb_calls[0]
     assert "What VPN?" in gen_kb_calls[0]
     assert "Tailscale" in gen_kb_calls[0]
-
-
-

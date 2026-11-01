@@ -318,7 +318,7 @@ class WorkflowRunner:
         session_id = getattr(request, "session_id", None)
         if not session_id or not domain_output.answer or not domain_output.answer.strip():
             return
-        if domain_output.source_used in ("error", "error_fallback"):
+        if domain_output.source_used == "error" and not domain_output.answer:
             return
 
         rewind_turn_index = getattr(request, "rewind_turn_index", None)
@@ -1200,7 +1200,7 @@ class WorkflowRunner:
                 variant_id=metadata_dict.get("variant_id"),
             )
 
-        except asyncio.CancelledError, GeneratorExit:
+        except (asyncio.CancelledError, GeneratorExit):  # fmt: skip
             disconnect_trace = (
                 accumulated_trace
                 or (final_output.get("trace") if isinstance(final_output.get("trace"), list) else [])

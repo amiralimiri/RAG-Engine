@@ -31,9 +31,9 @@ def parse_sse_lines(lines: list[str]) -> list[dict[str, Any]]:
 
     for line in lines:
         if line.startswith("event:"):
-            current_event = line[len("event:"):].strip()
+            current_event = line[len("event:") :].strip()
         elif line.startswith("data:"):
-            current_data.append(line[len("data:"):].strip())
+            current_data.append(line[len("data:") :].strip())
         elif line == "" and current_event is not None:
             raw = "\n".join(current_data)
             try:
@@ -97,7 +97,7 @@ class TestGetWorkflowsEndpoint:
 
         # Verify fixed DAG metadata
         jev_info = details_by_id["fix_single_jev"]
-        assert jev_info.is_conversational is False
+        assert jev_info.is_conversational is True
         assert "generate_from_kb" in jev_info.generation_nodes
         assert "retrieve_kb" in jev_info.step_labels
 
@@ -360,9 +360,7 @@ class TestPostChatStreamMultiWorkflow:
         mock_graph.astream_events = mock_events
         monkeypatch.setattr(workflow, "get_compiled_graph", lambda: mock_graph)
 
-        async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url="http://test"
-        ) as ac:
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as ac:
             async with ac.stream(
                 "POST",
                 "/api/chat/stream",
@@ -423,9 +421,7 @@ class TestPostChatStreamMultiWorkflow:
         handle_error_spy = MagicMock(wraps=workflow.handle_error)
         monkeypatch.setattr(workflow, "handle_error", handle_error_spy)
 
-        async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url="http://test"
-        ) as ac:
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as ac:
             async with ac.stream(
                 "POST",
                 "/api/chat/stream",

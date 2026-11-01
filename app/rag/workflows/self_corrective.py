@@ -73,7 +73,7 @@ class SelfCorrectiveRagWorkflow:
             id=id,
             name=name,
             description=desc,
-            is_conversational=False,
+            is_conversational=True,
             supports_streaming=True,
             step_labels=step_labels or dict(DEFAULT_STEP_LABELS),
             generation_nodes=generation_nodes or set(DEFAULT_GENERATION_NODES),

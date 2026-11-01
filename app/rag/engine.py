@@ -105,6 +105,40 @@ def after_web(state: AgentState) -> Literal["generate_from_web", "rewrite_query"
     return "insufficient"
 
 
+def _prepare_generation_prompt(
+    prompt_key: str,
+    state: AgentState,
+    **extra_kwargs: Any,
+) -> tuple[str, Any]:
+    """Extract conversation history, format context variables, and compile prompt with history fallback prep."""
+    prompt_obj = get_workflow_prompt(prompt_key)
+    raw_history = state.get("messages", [])[:-1] if state.get("messages") else []
+    history_str = _format_chat_history(raw_history) if raw_history else ""
+    current_q = state.get("current_query") or state["question"]
+
+    compile_kwargs = {
+        "question": state["question"],
+        **extra_kwargs,
+    }
+
+    if history_str:
+        try:
+            prompt = prompt_obj.compile(
+                current_query=current_q,
+                history=history_str,
+                chat_history=history_str,
+                **compile_kwargs,
+            )
+        except TypeError:
+            prompt = prompt_obj.compile(**compile_kwargs)
+        if history_str and history_str not in prompt:
+            prompt = f"Chat History:\n{history_str}\n\n{prompt}"
+    else:
+        prompt = prompt_obj.compile(**compile_kwargs)
+
+    return prompt, prompt_obj
+
+
 async def direct_answer(
     state: AgentState,
     config: RunnableConfig | None = None,
@@ -112,24 +146,7 @@ async def direct_answer(
     model: BaseChatModel | None = None,
 ) -> dict[str, Any]:
     structlog.contextvars.bind_contextvars(step="direct_answer")
-    prompt_obj = get_workflow_prompt("rag:direct_answer")
-    raw_history = state.get("messages", [])[:-1] if state.get("messages") else []
-    history_str = _format_chat_history(raw_history) if raw_history else ""
-    current_q = state.get("current_query") or state["question"]
-    if history_str:
-        try:
-            prompt = prompt_obj.compile(
-                question=state["question"],
-                current_query=current_q,
-                history=history_str,
-                chat_history=history_str,
-            )
-        except TypeError:
-            prompt = prompt_obj.compile(question=state["question"])
-        if history_str and history_str not in prompt:
-            prompt = f"Chat History:\n{history_str}\n\n{prompt}"
-    else:
-        prompt = prompt_obj.compile(question=state["question"])
+    prompt, prompt_obj = _prepare_generation_prompt("rag:direct_answer", state)
     run_cfg = _build_prompt_config(prompt_obj, config)
     active_model = model if model is not None else get_chat_model()
     response = await active_model.ainvoke(prompt, config=run_cfg)
@@ -299,32 +316,10 @@ def create_agentic_rag_graph(
 
     async def generate_from_kb(state: AgentState, config: RunnableConfig | None = None) -> dict[str, Any]:
         structlog.contextvars.bind_contextvars(step="generate_from_kb")
-        context = "\n\n".join(f"[Source: {d.metadata.get('source','unknown')}]\n{d.page_content}" for d in state["kb_docs"])
-        prompt_obj = get_workflow_prompt("rag:generate_kb")
-        raw_history = state.get("messages", [])[:-1] if state.get("messages") else []
-        history_str = _format_chat_history(raw_history) if raw_history else ""
-        current_q = state.get("current_query") or state["question"]
-        if history_str:
-            try:
-                prompt = prompt_obj.compile(
-                    question=state["question"],
-                    current_query=current_q,
-                    context=context,
-                    history=history_str,
-                    chat_history=history_str,
-                )
-            except TypeError:
-                prompt = prompt_obj.compile(
-                    question=state["question"],
-                    context=context,
-                )
-            if history_str and history_str not in prompt:
-                prompt = f"Chat History:\n{history_str}\n\n{prompt}"
-        else:
-            prompt = prompt_obj.compile(
-                question=state["question"],
-                context=context,
-            )
+        context = "\n\n".join(
+            f"[Source: {d.metadata.get('source', 'unknown')}]\n{d.page_content}" for d in state["kb_docs"]
+        )
+        prompt, prompt_obj = _prepare_generation_prompt("rag:generate_kb", state, context=context)
         run_cfg = _build_prompt_config(prompt_obj, config)
         response = await active_model.ainvoke(prompt, config=run_cfg)
         answer = response.content if hasattr(response, "content") else str(response)
@@ -350,31 +345,7 @@ def create_agentic_rag_graph(
 
     async def generate_from_web(state: AgentState, config: RunnableConfig | None = None) -> dict[str, Any]:
         structlog.contextvars.bind_contextvars(step="generate_from_web")
-        prompt_obj = get_workflow_prompt("rag:generate_web")
-        raw_history = state.get("messages", [])[:-1] if state.get("messages") else []
-        history_str = _format_chat_history(raw_history) if raw_history else ""
-        current_q = state.get("current_query") or state["question"]
-        if history_str:
-            try:
-                prompt = prompt_obj.compile(
-                    question=state["question"],
-                    current_query=current_q,
-                    web_results=state["web_results"],
-                    history=history_str,
-                    chat_history=history_str,
-                )
-            except TypeError:
-                prompt = prompt_obj.compile(
-                    question=state["question"],
-                    web_results=state["web_results"],
-                )
-            if history_str and history_str not in prompt:
-                prompt = f"Chat History:\n{history_str}\n\n{prompt}"
-        else:
-            prompt = prompt_obj.compile(
-                question=state["question"],
-                web_results=state["web_results"],
-            )
+        prompt, prompt_obj = _prepare_generation_prompt("rag:generate_web", state, web_results=state["web_results"])
         run_cfg = _build_prompt_config(prompt_obj, config)
         response = await active_model.ainvoke(prompt, config=run_cfg)
         answer = response.content if hasattr(response, "content") else str(response)
@@ -415,19 +386,23 @@ def create_agentic_rag_graph(
         },
     )
     graph.add_edge("condense_query", "route_question")
-    graph.add_conditional_edges("route_question", route_after_router, {
-        "retrieve_kb": "retrieve_kb", "direct_answer": "direct_answer"
-    })
+    graph.add_conditional_edges(
+        "route_question", route_after_router, {"retrieve_kb": "retrieve_kb", "direct_answer": "direct_answer"}
+    )
     graph.add_edge("retrieve_kb", "grade_kb")
-    graph.add_conditional_edges("grade_kb", after_kb, {
-        "generate_from_kb": "generate_from_kb", "search_web": "search_web"
-    })
+    graph.add_conditional_edges(
+        "grade_kb", after_kb, {"generate_from_kb": "generate_from_kb", "search_web": "search_web"}
+    )
     graph.add_edge("search_web", "grade_web")
-    graph.add_conditional_edges("grade_web", after_web, {
-        "generate_from_web": "generate_from_web",
-        "rewrite_query": "rewrite_query",
-        "insufficient": "insufficient",
-    })
+    graph.add_conditional_edges(
+        "grade_web",
+        after_web,
+        {
+            "generate_from_web": "generate_from_web",
+            "rewrite_query": "rewrite_query",
+            "insufficient": "insufficient",
+        },
+    )
     graph.add_edge("rewrite_query", "retrieve_kb")
     graph.add_edge("generate_from_kb", END)
     graph.add_edge("generate_from_web", END)

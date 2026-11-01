@@ -556,3 +556,31 @@ async def test_runner_safe_rewind_bounded_by_max_turns(monkeypatch: pytest.Monke
     assert initial_msgs[1].content == "Answer 6"
     assert initial_msgs[-2].content == "Answer 9"
     assert initial_msgs[-1].content == "Query at turn 10"
+
+
+@pytest.mark.asyncio
+async def test_runner_persists_graceful_error_fallback_turn():
+    """Verify graceful error fallback (source_used='error_fallback') with an answer is persisted to memory."""
+    registry = WorkflowRegistry()
+    mock_wf = MockStatefulWorkflow()
+    mock_wf.mock_graph.ainvoke.side_effect = RuntimeError("Temporary upstream error")
+    registry.register(mock_wf)
+
+    memory = InMemoryConversationStore()
+    runner = WorkflowRunner(registry=registry, memory=memory)
+    session_id = "test-error-fallback-persist"
+
+    req = WorkflowInput(
+        question="What happened to the service?",
+        session_id=session_id,
+        workflow=mock_wf.info.id,
+    )
+    resp = await runner.aexecute(req)
+    assert resp.source_used == "error_fallback"
+    assert resp.answer is not None
+
+    turns = await memory.aget_turns(session_id)
+    assert len(turns) == 1
+    assert turns[0].user_query == "What happened to the service?"
+    assert turns[0].source_used == "error_fallback"
+    assert "Fallback error response" in turns[0].assistant_answer

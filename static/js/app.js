@@ -2233,6 +2233,7 @@ function scheduleProgressiveRender(contentEl, markdownText) {
       ) {
         target.innerHTML = DOMPurify.sanitize(
           marked.parse(accumulatedMarkdown),
+          PURIFY_CONFIG,
         );
       } else {
         target.textContent = accumulatedMarkdown;
@@ -2267,6 +2268,7 @@ function flushProgressiveRender(contentEl) {
     ) {
       target.innerHTML = DOMPurify.sanitize(
         marked.parse(accumulatedMarkdown),
+        PURIFY_CONFIG,
       );
     } else {
       target.textContent = accumulatedMarkdown;
