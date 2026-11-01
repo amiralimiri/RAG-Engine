@@ -223,3 +223,8 @@ __marimo__/
 snippets.txt
 
 hybrid_workflow_llm.py
+data/*.db
+data/*.db-wal
+data/*.db-shm
+*.db
+

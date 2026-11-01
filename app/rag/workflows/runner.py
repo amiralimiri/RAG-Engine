@@ -11,9 +11,11 @@ from typing import Any, cast
 
 import structlog
 from fastapi import BackgroundTasks, HTTPException
+from langchain_core.messages import BaseMessage
 from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
+from app.core.concurrency import run_async_safely
 from app.core.config import get_settings
 from app.core.telemetry import (
     extract_trace_id,
@@ -21,6 +23,11 @@ from app.core.telemetry import (
     get_langfuse_callback,
 )
 from app.rag.evaluation import Evaluator, get_evaluator
+from app.rag.memory import (
+    ConversationMemoryAdapter,
+    ConversationTurn,
+    get_conversation_memory,
+)
 from app.rag.workflows.base import (
     EvalContext,
     ExecutionProfile,
@@ -101,6 +108,7 @@ class WorkflowRunner:
         registry: WorkflowRegistry | None = None,
         *,
         evaluator: Evaluator | None = None,
+        memory: ConversationMemoryAdapter | None = None,
         callback_factory: Callable[..., Any] | None = None,
         trace_extractor: Callable[[Any], str | None] | None = None,
         telemetry_flusher: Callable[[], None] | None = None,
@@ -108,11 +116,22 @@ class WorkflowRunner:
     ) -> None:
         self.registry = registry if registry is not None else get_workflow_registry()
         self._evaluator = evaluator
+        self._memory = memory
         self._callback_factory = callback_factory
         self._trace_extractor = trace_extractor
         self._telemetry_flusher = telemetry_flusher
         self._eval_task_fn = eval_task_fn
         self._background_tasks: set[asyncio.Task[Any]] = set()
+
+    @property
+    def memory(self) -> ConversationMemoryAdapter:
+        if self._memory is None:
+            return get_conversation_memory()
+        return self._memory
+
+    @memory.setter
+    def memory(self, val: ConversationMemoryAdapter | None) -> None:
+        self._memory = val
 
     @property
     def eval_task_fn(self) -> Callable[..., Any] | None:
@@ -188,7 +207,10 @@ class WorkflowRunner:
         elif not isinstance(request, WorkflowInput):
             messages = getattr(request, "messages", None)
             if messages:
-                messages = [m.model_dump() if hasattr(m, "model_dump") else m for m in messages]
+                messages = [
+                    m.model_dump() if hasattr(m, "model_dump") and not isinstance(m, BaseMessage) else m
+                    for m in messages
+                ]
             attachments = getattr(request, "attachments", None)
             if attachments:
                 attachments = [a.model_dump() if hasattr(a, "model_dump") else a for a in attachments]
@@ -196,6 +218,7 @@ class WorkflowRunner:
                 question=getattr(request, "question", ""),
                 workflow=getattr(request, "workflow", None),
                 session_id=getattr(request, "session_id", None),
+                rewind_turn_index=getattr(request, "rewind_turn_index", None),
                 user_id=getattr(request, "user_id", None),
                 trace_id=getattr(request, "trace_id", None),
                 stream_steps=getattr(request, "stream_steps", True),
@@ -206,11 +229,7 @@ class WorkflowRunner:
             )
 
         eff_variant_id = variant_id or request.variant_id
-        eff_parameters = (
-            parameters
-            if parameters is not None
-            else (request.parameters or {})
-        )
+        eff_parameters = parameters if parameters is not None else (request.parameters or {})
         eff_trace_id = trace_id or request.trace_id
 
         updates: dict[str, Any] = {}
@@ -224,6 +243,89 @@ class WorkflowRunner:
             return request.model_copy(update=updates)
         return request
 
+    async def _ahydrate_memory(self, request: WorkflowInput) -> list[BaseMessage]:
+        """Hydrate bounded historical messages from conversation memory store."""
+        session_id = getattr(request, "session_id", None)
+        if not session_id:
+            return []
+
+        rewind_turn_index = getattr(request, "rewind_turn_index", None)
+        settings = get_settings()
+        max_turns = getattr(settings, "memory_max_turns", 10)
+
+        if rewind_turn_index is not None:
+            all_turns = await self.memory.aget_turns(session_id)
+            sliced = all_turns[:rewind_turn_index]
+            hydrated = [msg for t in sliced for msg in t.to_messages()]
+        else:
+            hydrated = await self.memory.aget_messages(session_id, limit=max_turns)
+
+        if hydrated:
+            request.messages = hydrated
+
+        turns_loaded = len(hydrated) // 2
+        logger.info(
+            "conversation_memory_hydrated",
+            session_id=session_id,
+            turns_loaded=turns_loaded,
+            rewind_turn_index=rewind_turn_index,
+        )
+        return hydrated
+
+    def _hydrate_memory_sync(self, request: WorkflowInput) -> list[BaseMessage]:
+        """Synchronous wrapper for conversation memory hydration."""
+        return run_async_safely(self._ahydrate_memory, request)
+
+    async def _apersist_turn(
+        self,
+        request: WorkflowInput,
+        domain_output: WorkflowOutput,
+        resolved_tid: str | None = None,
+    ) -> None:
+        """Atomically truncate prior turns if rewinding and persist new completed semantic turn."""
+        session_id = getattr(request, "session_id", None)
+        if not session_id or not domain_output.answer or not domain_output.answer.strip():
+            return
+        if domain_output.source_used in ("error", "error_fallback"):
+            return
+
+        rewind_turn_index = getattr(request, "rewind_turn_index", None)
+        if rewind_turn_index is not None:
+            await self.memory.atruncate_from(session_id, rewind_turn_index)
+            turn_index = rewind_turn_index
+        else:
+            existing_turns = await self.memory.aget_turns(session_id)
+            turn_index = len(existing_turns)
+
+        tid = resolved_tid or domain_output.trace_id or getattr(request, "trace_id", None)
+        turn = ConversationTurn(
+            session_id=session_id,
+            turn_index=turn_index,
+            user_query=request.question,
+            assistant_answer=domain_output.answer,
+            attachments=getattr(request, "attachments", None) or [],
+            citations=domain_output.citations,
+            source_used=domain_output.source_used,
+            trace_id=tid,
+        )
+        await self.memory.asave_turn(turn)
+        logger.info(
+            "conversation_turn_persisted",
+            session_id=session_id,
+            turn_index=turn_index,
+            source_used=domain_output.source_used,
+            trace_id=tid,
+        )
+
+    def _persist_turn_sync(
+        self,
+        request: WorkflowInput,
+        domain_output: WorkflowOutput,
+        resolved_tid: str | None = None,
+    ) -> None:
+        """Synchronous wrapper for conversation turn persistence."""
+        run_async_safely(self._apersist_turn, request, domain_output, resolved_tid)
+
     def _prepare_execution(
         self,
         request: WorkflowInput,
@@ -234,7 +336,9 @@ class WorkflowRunner:
         **kwargs: Any,
     ) -> tuple[WorkflowDefinition, str | None, Any, dict[str, Any], dict[str, Any]]:
         """Resolve workflow definition, initialize telemetry contextvars, and prepare initial state."""
-        wf_name = (request.workflow if hasattr(request, "workflow") and request.workflow else None) or kwargs.get("workflow", "fix_single_jev")
+        wf_name = (request.workflow if hasattr(request, "workflow") and request.workflow else None) or kwargs.get(
+            "workflow", "fix_single_jev"
+        )
         wf_def = self._resolve_workflow(wf_name)
 
         cb_factory = self.callback_factory
@@ -286,6 +390,15 @@ class WorkflowRunner:
         resolved_model_name = resolved_parameters.get("model_name") or resolved_parameters.get("model")
         resolved_prompt_version = resolved_parameters.get("prompt_version")
 
+        # Hydrate memory if session_id provided and not already hydrated
+        if getattr(request, "session_id", None) and not getattr(request, "_memory_hydrated", False):
+            self._hydrate_memory_sync(request)
+            setattr(request, "_memory_hydrated", True)
+
+        msgs = getattr(request, "messages", None)
+        turn_count = (len(msgs) // 2) if msgs is not None else 0
+        history_turns_loaded = turn_count if getattr(request, "session_id", None) else 0
+
         # 4. Multi-dimensional telemetry tags
         settings = get_settings()
         app_env = getattr(settings, "app_env", "development")
@@ -300,6 +413,8 @@ class WorkflowRunner:
             telemetry_tags.append(f"model:{resolved_model_name}")
         if resolved_prompt_version:
             telemetry_tags.append(f"prompt:{resolved_prompt_version}")
+        if turn_count > 0:
+            telemetry_tags.append(f"turn_count:{turn_count}")
 
         # Additional tags from baseline, profile, explicit kwargs/config
         if isinstance(baseline_metadata.get("tags"), list):
@@ -342,13 +457,13 @@ class WorkflowRunner:
             telemetry_metadata["prompt_version"] = resolved_prompt_version
         if resolved_parameters:
             telemetry_metadata["parameters"] = resolved_parameters
+        telemetry_metadata["turn_count"] = turn_count
+        telemetry_metadata["history_turns_loaded"] = history_turns_loaded
         if streaming:
             telemetry_metadata["streaming"] = True
 
         raw_tid = getattr(request, "trace_id", None)
-        sanitized_tid = (
-            raw_tid.replace("-", "").lower() if raw_tid else (uuid.uuid4().hex if streaming else None)
-        )
+        sanitized_tid = raw_tid.replace("-", "").lower() if raw_tid else (uuid.uuid4().hex if streaming else None)
 
         if callback is not None:
             handler = callback
@@ -399,6 +514,8 @@ class WorkflowRunner:
             context_bindings["user_id"] = request.user_id
         if resolved_variant_id:
             context_bindings["variant_id"] = resolved_variant_id
+        context_bindings["turn_count"] = turn_count
+        context_bindings["history_turns_loaded"] = history_turns_loaded
         structlog.contextvars.bind_contextvars(**context_bindings)
 
         wf_input = self._to_workflow_input(
@@ -490,6 +607,7 @@ class WorkflowRunner:
         trace_id: str | None,
         handler: Any,
         background_tasks: BackgroundTasks | None = None,
+        persist_turn: bool = True,
     ) -> WorkflowOutput:
         """Convert final state to domain WorkflowOutput, bind resolved trace context, and schedule online evaluation."""
         tr_extractor = self.trace_extractor
@@ -585,6 +703,45 @@ class WorkflowRunner:
             except Exception:
                 pass
 
+        if (
+            persist_turn
+            and getattr(request, "session_id", None)
+            and domain_output.answer
+            and domain_output.answer.strip()
+        ):
+            try:
+                self._persist_turn_sync(request, domain_output, resolved_tid)
+            except Exception as exc:
+                logger.warning(
+                    "turn_persistence_failed",
+                    session_id=getattr(request, "session_id", None),
+                    error=str(exc),
+                )
+
+        return domain_output
+
+    async def _afinalize_execution(
+        self,
+        wf_def: WorkflowDefinition,
+        request: WorkflowInput,
+        final_state: dict[str, Any],
+        trace_id: str | None,
+        handler: Any,
+        background_tasks: BackgroundTasks | None = None,
+    ) -> WorkflowOutput:
+        """Asynchronously finalize execution and persist turn via direct coroutine await."""
+        domain_output = self._finalize_execution(
+            wf_def=wf_def,
+            request=request,
+            final_state=final_state,
+            trace_id=trace_id,
+            handler=handler,
+            background_tasks=background_tasks,
+            persist_turn=False,
+        )
+        resolved_tid = domain_output.trace_id or trace_id
+        if getattr(request, "session_id", None) and domain_output.answer and domain_output.answer.strip():
+            await self._apersist_turn(request, domain_output, resolved_tid)
         return domain_output
 
     def _execute_with_state(
@@ -607,7 +764,11 @@ class WorkflowRunner:
                 **kwargs,
             )
             variant_id = initial_state.get("variant_id") or run_config.get("configurable", {}).get("variant_id")
-            graph = wf_def.get_compiled_graph(variant_id=variant_id) if variant_id is not None else wf_def.get_compiled_graph()
+            graph = (
+                wf_def.get_compiled_graph(variant_id=variant_id)
+                if variant_id is not None
+                else wf_def.get_compiled_graph()
+            )
 
             try:
                 final_state = graph.invoke(initial_state, config=run_config if run_config else None)
@@ -677,7 +838,11 @@ class WorkflowRunner:
             config=config,
             **kwargs,
         )
-        wf_name = (request.workflow if hasattr(request, "workflow") and request.workflow else None) or kwargs.get("workflow") or response.workflow
+        wf_name = (
+            (request.workflow if hasattr(request, "workflow") and request.workflow else None)
+            or kwargs.get("workflow")
+            or response.workflow
+        )
         wf_def = self._resolve_workflow(wf_name)
         eval_context = wf_def.extract_eval_context(final_state)
         return ExecutionResult(response=response, eval_context=eval_context)
@@ -694,6 +859,8 @@ class WorkflowRunner:
     ) -> tuple[WorkflowOutput, dict[str, Any]]:
         """Asynchronously execute workflow and return (WorkflowOutput, final_state) without model mutation."""
         try:
+            await self._ahydrate_memory(request)
+            setattr(request, "_memory_hydrated", True)
             wf_def, trace_id, handler, initial_state, run_config = self._prepare_execution(
                 request,
                 callback=callback,
@@ -702,7 +869,11 @@ class WorkflowRunner:
                 **kwargs,
             )
             variant_id = initial_state.get("variant_id") or run_config.get("configurable", {}).get("variant_id")
-            graph = wf_def.get_compiled_graph(variant_id=variant_id) if variant_id is not None else wf_def.get_compiled_graph()
+            graph = (
+                wf_def.get_compiled_graph(variant_id=variant_id)
+                if variant_id is not None
+                else wf_def.get_compiled_graph()
+            )
 
             try:
                 if hasattr(graph, "ainvoke") and callable(graph.ainvoke):
@@ -720,7 +891,7 @@ class WorkflowRunner:
                 logger.exception("Error executing workflow %s: %s", getattr(request, "workflow", "unknown"), exc)
                 final_state = wf_def.handle_error(exc, initial_state)
 
-            response = self._finalize_execution(
+            response = await self._afinalize_execution(
                 wf_def=wf_def,
                 request=request,
                 final_state=final_state,
@@ -791,12 +962,18 @@ class WorkflowRunner:
         answer_chunks: list[str] = []
 
         try:
+            await self._ahydrate_memory(request)
+            setattr(request, "_memory_hydrated", True)
             wf_def, trace_id, handler, initial_state, config = self._prepare_execution(
                 request,
                 streaming=True,
             )
             variant_id = initial_state.get("variant_id") or config.get("configurable", {}).get("variant_id")
-            graph = wf_def.get_compiled_graph(variant_id=variant_id) if variant_id is not None else wf_def.get_compiled_graph()
+            graph = (
+                wf_def.get_compiled_graph(variant_id=variant_id)
+                if variant_id is not None
+                else wf_def.get_compiled_graph()
+            )
             step_labels = (wf_def.info.step_labels if wf_def and wf_def.info else None) or DEFAULT_STEP_LABELS
             generation_nodes = (
                 wf_def.info.generation_nodes if wf_def and wf_def.info else None
@@ -888,7 +1065,9 @@ class WorkflowRunner:
                     or "direct"
                 )
                 final_citations = domain_output.citations
-                final_rewritten_query = domain_output.rewritten_query or final_output.get("current_query", request.question)
+                final_rewritten_query = domain_output.rewritten_query or final_output.get(
+                    "current_query", request.question
+                )
                 final_answer = domain_output.answer or str(final_output.get("answer") or "".join(answer_chunks))
                 final_retrieved_contexts = (
                     getattr(eval_ctx, "retrieved_contexts", None)
@@ -902,6 +1081,24 @@ class WorkflowRunner:
                 final_rewritten_query = final_output.get("current_query", request.question)
                 final_answer = str(final_output.get("answer") or "".join(answer_chunks))
                 final_retrieved_contexts = final_output.get("retrieved_contexts") or []
+
+            # Persist turn before yielding terminal metadata frame
+            if getattr(request, "session_id", None) and final_answer and final_answer.strip():
+                if domain_output is not None:
+                    turn_output = domain_output
+                    if not turn_output.answer:
+                        turn_output = turn_output.model_copy(update={"answer": final_answer})
+                else:
+                    turn_output = WorkflowOutput(
+                        workflow=getattr(request, "workflow", None) or (wf_def.info.id if wf_def else "fix_single_jev"),
+                        answer=final_answer,
+                        source_used=final_source_used,
+                        trace=final_trace,
+                        citations=final_citations,
+                        rewritten_query=final_rewritten_query,
+                        trace_id=resolved_tid,
+                    )
+                await self._apersist_turn(request, turn_output, resolved_tid)
 
             metadata_dict = {
                 "trace_id": resolved_tid,
@@ -1017,6 +1214,7 @@ def get_workflow_runner(
     registry: WorkflowRegistry | None = None,
     *,
     evaluator: Evaluator | None = None,
+    memory: ConversationMemoryAdapter | None = None,
     callback_factory: Callable[..., Any] | None = None,
     trace_extractor: Callable[[Any], str | None] | None = None,
     telemetry_flusher: Callable[[], None] | None = None,
@@ -1026,11 +1224,12 @@ def get_workflow_runner(
     global _default_runner
     if any(
         arg is not None
-        for arg in (registry, evaluator, callback_factory, trace_extractor, telemetry_flusher, eval_task_fn)
+        for arg in (registry, evaluator, memory, callback_factory, trace_extractor, telemetry_flusher, eval_task_fn)
     ):
         return WorkflowRunner(
             registry=registry,
             evaluator=evaluator,
+            memory=memory,
             callback_factory=callback_factory,
             trace_extractor=trace_extractor,
             telemetry_flusher=telemetry_flusher,

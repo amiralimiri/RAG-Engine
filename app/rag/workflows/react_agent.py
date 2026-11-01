@@ -145,7 +145,10 @@ class ReActAgentWorkflow:
     def to_initial_state(self, input: WorkflowInput | Any, trace_id: str | None = None) -> dict[str, Any]:
         raw_messages = getattr(input, "messages", None)
         question = getattr(input, "question", "")
-        messages = parse_raw_messages(raw_messages, question)
+        if self.checkpointer is not None:
+            messages = [HumanMessage(content=question)] if question else []
+        else:
+            messages = parse_raw_messages(raw_messages, question)
         attachments = parse_raw_attachments(getattr(input, "attachments", None))
 
         return {

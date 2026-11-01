@@ -7,7 +7,7 @@ from collections.abc import Callable, Sequence
 from typing import Any, Protocol, TypedDict, runtime_checkable
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class WorkflowInfo(BaseModel):
@@ -18,7 +18,9 @@ class WorkflowInfo(BaseModel):
     description: str = Field(..., description="Short explanation of workflow purpose and behavior")
     entrypoint: str | None = Field(default=None, description="Dynamic entrypoint specifier module:function")
     is_conversational: bool = Field(default=False, description="Whether the workflow maintains conversational history")
-    supports_streaming: bool = Field(default=True, description="Whether the workflow supports real-time token streaming")
+    supports_streaming: bool = Field(
+        default=True, description="Whether the workflow supports real-time token streaming"
+    )
     step_labels: dict[str, str] = Field(
         default_factory=dict,
         description="Mapping from internal graph node identifiers to UI step labels",
@@ -46,9 +48,11 @@ class EvalContext(BaseModel):
 class WorkflowInput(BaseModel):
     """Normalized domain input contract for all workflow executions."""
 
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
     question: str = Field(..., description="User query or inquiry text")
     workflow: str | None = Field(default=None, description="Optional target LangGraph workflow name")
-    messages: list[dict[str, Any]] | None = Field(
+    messages: Sequence[BaseMessage | dict[str, Any]] | None = Field(
         default=None,
         description="Optional multi-turn conversation messages preceding this query",
     )
@@ -57,6 +61,11 @@ class WorkflowInput(BaseModel):
         description="Optional file, image, or media attachments",
     )
     session_id: str | None = Field(default=None, description="Optional conversational session identifier")
+    rewind_turn_index: int | None = Field(
+        default=None,
+        ge=0,
+        description="Optional turn index from which to rewind and re-execute atomically",
+    )
     user_id: str | None = Field(default=None, description="Optional authenticated user identifier")
     trace_id: str | None = Field(default=None, description="Optional telemetry trace identifier")
     variant_id: str | None = Field(default=None, description="Optional execution variant identifier")

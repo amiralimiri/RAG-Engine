@@ -1,7 +1,7 @@
 # Ticket 05: WorkflowRunner Execution Pipeline Memory Hydration, Safe Rewind & Persistence
 
 - **Milestone:** Unified Pluggable Conversation Memory (ADR-0016)
-- **Status:** Pending
+- **Status:** Complete
 - **Dependency:** Ticket 01, Ticket 02, Ticket 03, Ticket 04
 - **Estimated Scope:** Medium
 
