@@ -8,10 +8,21 @@ import structlog
 from fastapi import APIRouter, BackgroundTasks, File, Header, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 
-from app.api.schemas import ChatRequest, ChatResponse, FeedbackRequest, WorkflowListResponse
+from app.api.schemas import (
+    ChatRequest,
+    ChatResponse,
+    FeedbackRequest,
+    ForkRequest,
+    RewindRequest,
+    SessionDetailResponse,
+    SessionListResponse,
+    SessionSummaryResponse,
+    WorkflowListResponse,
+)
 from app.core.config import get_settings
 from app.rag.evaluation import get_evaluator
 from app.rag.knowledge import SUPPORTED_EXTENSIONS, get_document_indexer
+from app.rag.memory import get_conversation_memory
 from app.rag.workflows import get_workflow_registry
 from app.rag.workflows.runner import get_workflow_runner
 
@@ -66,6 +77,65 @@ async def chat_stream(payload: ChatRequest):
         media_type="text/event-stream; charset=utf-8",
         headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
     )
+
+
+@router.get("/chat/sessions", response_model=SessionListResponse)
+async def list_chat_sessions():
+    memory = get_conversation_memory()
+    sessions = await memory.alist_sessions(limit=50)
+    return SessionListResponse(
+        sessions=[SessionSummaryResponse.from_session_info(s) for s in sessions],
+        total=len(sessions),
+    )
+
+
+@router.get("/chat/{session_id}", response_model=SessionDetailResponse)
+async def get_chat_session(session_id: str):
+    memory = get_conversation_memory()
+    session = await memory.aget_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    turns = await memory.aget_turns(session_id)
+    return SessionDetailResponse.from_domain(session, turns)
+
+
+@router.delete("/chat/{session_id}")
+async def delete_chat_session(session_id: str):
+    memory = get_conversation_memory()
+    await memory.aclear(session_id)
+    return {"status": "deleted", "session_id": session_id}
+
+
+@router.post("/chat/{session_id}/rewind")
+async def rewind_chat_session(session_id: str, payload: RewindRequest):
+    memory = get_conversation_memory()
+    session = await memory.aget_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    await memory.atruncate_from(session_id, payload.turn_index)
+    return {"status": "rewound", "session_id": session_id, "turn_index": payload.turn_index}
+
+
+@router.post("/chat/{session_id}/fork", response_model=SessionDetailResponse)
+async def fork_chat_session(session_id: str, payload: ForkRequest):
+    memory = get_conversation_memory()
+    session = await memory.aget_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    try:
+        new_session_id = await memory.afork_session(
+            session_id,
+            payload.upto_turn_index,
+            payload.new_session_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    new_session = await memory.aget_session(new_session_id)
+    if not new_session:
+        raise HTTPException(status_code=500, detail="Failed to retrieve forked session")
+    new_turns = await memory.aget_turns(new_session_id)
+    return SessionDetailResponse.from_domain(new_session, new_turns)
 
 
 @router.post("/feedback")

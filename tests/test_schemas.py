@@ -118,7 +118,126 @@ def test_stream_token_event():
     assert parsed.delta == "Hello, "
 
     with pytest.raises(ValidationError):
-        StreamTokenEvent()  # delta is required
+        StreamTokenEvent()  # type: ignore[call-arg]  # delta is required
+
+
+def test_chat_turn_response():
+    from datetime import UTC, datetime
+
+    from app.api.schemas import ChatTurnResponse
+    from app.rag.memory.base import ConversationTurn
+
+    now = datetime.now(UTC)
+    turn = ConversationTurn(
+        session_id="s1",
+        turn_index=0,
+        user_query="hello",
+        assistant_answer="hi",
+        attachments=[{"filename": "doc.pdf", "content_type": "application/pdf"}],
+        citations=[{"title": "doc.pdf"}],
+        source_used="vectorstore",
+        trace_id="t-1",
+        created_at=now,
+    )
+    resp = ChatTurnResponse.from_domain(turn)
+    assert resp.turn_index == 0
+    assert resp.user_query == "hello"
+    assert resp.assistant_answer == "hi"
+    assert resp.attachments == [{"filename": "doc.pdf", "content_type": "application/pdf"}]
+    assert resp.citations == [{"title": "doc.pdf"}]
+    assert resp.source_used == "vectorstore"
+    assert resp.trace_id == "t-1"
+    assert resp.created_at == now
+
+
+def test_session_summary_and_detail_response():
+    from datetime import UTC, datetime
+
+    from app.api.schemas import SessionDetailResponse, SessionSummaryResponse
+    from app.rag.memory.base import ConversationTurn, SessionInfo
+
+    now = datetime.now(UTC)
+    info = SessionInfo(
+        session_id="s1",
+        title="Session 1",
+        parent_session_id=None,
+        forked_from_turn=None,
+        created_at=now,
+        updated_at=now,
+        turn_count=1,
+    )
+    summary = SessionSummaryResponse.from_session_info(info)
+    assert summary.session_id == "s1"
+    assert summary.title == "Session 1"
+    assert summary.turn_count == 1
+
+    turn = ConversationTurn(
+        session_id="s1",
+        turn_index=0,
+        user_query="q",
+        assistant_answer="a",
+        created_at=now,
+    )
+    detail = SessionDetailResponse.from_domain(info, [turn])
+    assert detail.session_id == "s1"
+    assert len(detail.turns) == 1
+    assert detail.turns[0].user_query == "q"
+
+
+def test_session_list_response():
+    from datetime import UTC, datetime
+
+    from app.api.schemas import SessionListResponse, SessionSummaryResponse
+
+    now = datetime.now(UTC)
+    summary = SessionSummaryResponse(
+        session_id="s1",
+        title="S1",
+        created_at=now,
+        updated_at=now,
+        turn_count=0,
+    )
+    resp = SessionListResponse(sessions=[summary], total=1)
+    assert resp.total == 1
+    assert len(resp.sessions) == 1
+
+
+def test_rewind_request_validation():
+    from app.api.schemas import RewindRequest
+
+    req = RewindRequest(turn_index=2)
+    assert req.turn_index == 2
+
+    with pytest.raises(ValidationError):
+        RewindRequest(turn_index=-1)
+
+
+def test_fork_request_validation():
+    from app.api.schemas import ForkRequest
+
+    req = ForkRequest(upto_turn_index=1, new_session_id="fork-1")
+    assert req.upto_turn_index == 1
+    assert req.new_session_id == "fork-1"
+
+    req_turn_zero = ForkRequest(upto_turn_index=-1)
+    assert req_turn_zero.upto_turn_index == -1
+    assert req_turn_zero.new_session_id is None
+
+    with pytest.raises(ValidationError):
+        ForkRequest(upto_turn_index=-2)
+
+
+def test_chat_request_with_rewind_turn_index():
+    from app.api.schemas import ChatRequest
+
+    req = ChatRequest(question="rewind question", session_id="s1", rewind_turn_index=2)
+    assert req.rewind_turn_index == 2
+    wf_input = req.to_workflow_input()
+    assert wf_input.rewind_turn_index == 2
+
+    with pytest.raises(ValidationError):
+        ChatRequest(question="bad rewind", rewind_turn_index=-1)
+
 
 
 def test_stream_metadata_event():

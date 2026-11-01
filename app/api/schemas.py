@@ -5,6 +5,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from app.rag.memory.base import ConversationTurn, SessionInfo
 from app.rag.workflows.base import WorkflowInfo, WorkflowInput, WorkflowOutput
 
 
@@ -29,6 +30,11 @@ class ChatRequest(BaseModel):
     question: str = Field(..., min_length=2, max_length=3000, description="User query or inquiry text")
     workflow: str = Field(default="fix_single_jev", description="Target LangGraph workflow name")
     session_id: str | None = Field(default=None, description="Optional conversational session identifier")
+    rewind_turn_index: int | None = Field(
+        default=None,
+        ge=0,
+        description="Optional turn index from which to rewind and re-execute atomically",
+    )
     user_id: str | None = Field(default=None, description="Optional authenticated user identifier")
     trace_id: str | None = Field(default=None, description="Optional Langfuse trace ID override")
     stream_steps: bool = Field(default=True, description="Whether to emit intermediate graph step events")
@@ -58,6 +64,7 @@ class ChatRequest(BaseModel):
             question=self.question,
             workflow=self.workflow,
             session_id=self.session_id,
+            rewind_turn_index=self.rewind_turn_index,
             user_id=self.user_id,
             trace_id=self.trace_id,
             stream_steps=self.stream_steps,
@@ -151,6 +158,107 @@ class StreamErrorEvent(BaseModel):
     code: int = Field(default=500, description="HTTP status code corresponding to the error")
 
 
+class ChatTurnResponse(BaseModel):
+    """Rich conversational turn response model."""
+
+    turn_index: int = Field(..., ge=0, description="Sequential index of the conversational turn")
+    user_query: str = Field(..., description="User query or question text")
+    assistant_answer: str = Field(..., description="Final assistant answer text")
+    attachments: list[dict[str, Any]] = Field(default_factory=list, description="Turn attachments")
+    citations: list[dict[str, Any]] = Field(default_factory=list, description="Source citations")
+    source_used: str = Field(default="direct", description="Information source utilized")
+    trace_id: str | None = Field(default=None, description="Optional Langfuse trace identifier")
+    created_at: datetime = Field(..., description="Turn creation timestamp")
+
+    @classmethod
+    def from_domain(cls, turn: ConversationTurn) -> ChatTurnResponse:
+        """Construct ChatTurnResponse from domain ConversationTurn."""
+        return cls(
+            turn_index=turn.turn_index,
+            user_query=turn.user_query,
+            assistant_answer=turn.assistant_answer,
+            attachments=turn.attachments,
+            citations=turn.citations,
+            source_used=turn.source_used,
+            trace_id=turn.trace_id,
+            created_at=turn.created_at,
+        )
+
+
+class SessionSummaryResponse(BaseModel):
+    """Metadata summary of a conversation session."""
+
+    session_id: str = Field(..., description="Unique conversational session identifier")
+    title: str = Field(..., description="Descriptive title or first query preview")
+    parent_session_id: str | None = Field(default=None, description="Lineage identifier if branched")
+    forked_from_turn: int | None = Field(default=None, description="Turn index where branched")
+    created_at: datetime = Field(..., description="Session creation timestamp")
+    updated_at: datetime = Field(..., description="Session last updated timestamp")
+    turn_count: int = Field(default=0, ge=0, description="Total count of turns in this session")
+
+    @classmethod
+    def from_session_info(cls, info: SessionInfo) -> SessionSummaryResponse:
+        """Construct SessionSummaryResponse from domain SessionInfo."""
+        return cls(
+            session_id=info.session_id,
+            title=info.title,
+            parent_session_id=info.parent_session_id,
+            forked_from_turn=info.forked_from_turn,
+            created_at=info.created_at,
+            updated_at=info.updated_at,
+            turn_count=info.turn_count,
+        )
+
+
+class SessionDetailResponse(BaseModel):
+    """Detailed conversation session representation including turn history."""
+
+    session_id: str = Field(..., description="Unique conversational session identifier")
+    title: str = Field(..., description="Descriptive title or first query preview")
+    parent_session_id: str | None = Field(default=None, description="Lineage identifier if branched")
+    forked_from_turn: int | None = Field(default=None, description="Turn index where branched")
+    created_at: datetime = Field(..., description="Session creation timestamp")
+    updated_at: datetime = Field(..., description="Session last updated timestamp")
+    turn_count: int = Field(default=0, ge=0, description="Total count of turns in this session")
+    turns: list[ChatTurnResponse] = Field(default_factory=list, description="Sequential conversational turns")
+
+    @classmethod
+    def from_domain(cls, info: SessionInfo, turns: list[ConversationTurn]) -> SessionDetailResponse:
+        """Construct SessionDetailResponse from domain SessionInfo and ConversationTurns."""
+        return cls(
+            session_id=info.session_id,
+            title=info.title,
+            parent_session_id=info.parent_session_id,
+            forked_from_turn=info.forked_from_turn,
+            created_at=info.created_at,
+            updated_at=info.updated_at,
+            turn_count=info.turn_count,
+            turns=[ChatTurnResponse.from_domain(t) for t in turns],
+        )
+
+
+class SessionListResponse(BaseModel):
+    """Collection response for enumerated conversation sessions."""
+
+    sessions: list[SessionSummaryResponse] = Field(..., description="List of session summaries")
+    total: int = Field(..., ge=0, description="Total number of sessions returned")
+
+
+class RewindRequest(BaseModel):
+    """Payload contract for rewinding/truncating conversation history."""
+
+    turn_index: int = Field(..., ge=0, description="Turn index from which to rewind and truncate")
+
+
+class ForkRequest(BaseModel):
+    """Payload contract for branching a conversation into a new session."""
+
+    upto_turn_index: int = Field(
+        ..., ge=-1, description="Upper bound turn index to copy into fork (-1 for empty branch)"
+    )
+    new_session_id: str | None = Field(default=None, description="Optional target session ID for the branch")
+
+
 __all__ = [
     "ChatMessage",
     "Attachment",
@@ -162,4 +270,10 @@ __all__ = [
     "StreamTokenEvent",
     "StreamMetadataEvent",
     "StreamErrorEvent",
+    "ChatTurnResponse",
+    "SessionSummaryResponse",
+    "SessionDetailResponse",
+    "SessionListResponse",
+    "RewindRequest",
+    "ForkRequest",
 ]

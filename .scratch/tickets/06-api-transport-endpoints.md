@@ -1,7 +1,7 @@
 # Ticket 06: REST API Schemas & Endpoints (Sessions List, History, Delete, Rewind, Fork)
 
 - **Milestone:** Unified Pluggable Conversation Memory (ADR-0016)
-- **Status:** Pending
+- **Status:** Completed
 - **Dependency:** Ticket 01, Ticket 02, Ticket 03, Ticket 05
 - **Estimated Scope:** Bite-sized
 
