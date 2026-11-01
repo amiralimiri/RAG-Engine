@@ -214,7 +214,7 @@ class TestChatMemoryRoutes:
         assert child_detail.forked_from_turn == 1
         assert child_detail.turn_count == 2
         assert len(child_detail.turns) == 2
-        assert child_detail.turns[0]["turn_index"] if isinstance(child_detail.turns[0], dict) else child_detail.turns[0].turn_index == 0
+        assert child_detail.turns[0].turn_index == 0
         assert child_detail.turns[1].turn_index == 1
 
         # Forking non-existent session returns 404
