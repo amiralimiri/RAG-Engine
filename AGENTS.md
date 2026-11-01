@@ -31,3 +31,7 @@ Zero-shim dependency injection standards, obsolete symbol pruning, and modern Py
 ### Evaluation engine & evaluator seam
 
 Unified Evaluator protocol seam, lazy judge lifecycles, execution context retrieval, and offline test doubles. See `docs/agents/evaluation-engine.md`.
+
+### Conversation memory & session branching
+
+ConversationMemoryAdapter protocol seam, SQLite persistent storage, atomic rewind/truncation, session branching, and offline test doubles. See `docs/agents/conversation-memory.md`.

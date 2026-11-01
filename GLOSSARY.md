@@ -91,3 +91,26 @@ A pluggable strategy protocol (`DocumentChunker`) partitioning parsed documents 
 ### Workflow Runner
 The deep execution and streaming runtime module (`app/rag/workflows/runner.py`) orchestrating workflow invocation, LangGraph `astream_events` polling, selective token delta filtering, SSE serialization, telemetry context binding, trace normalization, and online evaluation dispatch behind a compact execution interface (`execute`, `aexecute`, and `stream`).
 _Avoid_: Event generator, stream helper, route executor
+
+### Conversation Memory (Memory Seam)
+A strongly-typed protocol seam (`ConversationMemoryAdapter`) defining the storage, retrieval, truncation, and branching lifecycle for multi-turn conversational history. Decouples conversation persistence from graph checkpointer internals and concrete database engines.
+_Avoid_: Session dict, LangGraph checkpointer, global memory, chat cache
+
+### Conversation Memory Adapter
+A concrete adapter satisfying the `ConversationMemoryAdapter` storage seam:
+- `SQLiteConversationStore`: Production and development persistent store maintaining chat sessions and rich turn history across server restarts using standard library `sqlite3` in WAL mode.
+- `InMemoryConversationStore`: Fast, isolated in-memory store for deterministic unit testing (`pytest`) and ephemeral executions.
+- `NoOpMemoryStore`: Stateless pass-through store when conversation memory is explicitly disabled.
+
+### Conversation Turn
+A strongly-typed domain model (`ConversationTurn`) representing a single completed conversational exchange within a session, encapsulating `session_id`, 0-based `turn_index`, `user_query`, `assistant_answer`, `attachments`, `citations`, `source_used`, `trace_id`, and `created_at`. Strictly excludes intermediate tool scratchpads.
+
+### In-Place Turn Rewind (Truncation)
+The conversational capability (`atruncate_from`) allowing a user to edit past query $k$ and continue execution within the existing session, safely pruning all turns $\ge k$ from persistent storage atomically upon successful turn completion.
+
+### Conversation Branching (Forking)
+The capability (`afork_session`) to clone conversation turns $[0 \dots k]$ into a new child session (`new_session_id`) with lineage metadata (`parent_session_id`, `forked_from_turn`), enabling alternative exploration branches without modifying the original session.
+
+### Query Condensation (Contextualization)
+A fast pre-retrieval graph step (`condense_query`) in multi-turn workflows that resolves pronouns and ambiguous references against prior conversational turns (`messages[:-1]`) into a standalone retrieval query (`current_query`) before vector store or web search dispatch.
+_Avoid_: Query rewrite, prompt stuffing, raw query search
