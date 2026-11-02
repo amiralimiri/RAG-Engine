@@ -383,4 +383,3 @@ def test_jev_classifier_adapter_injected_prompt_store():
         assert grade_web.grade == "weak"
         obs_kwargs_web = mock_langfuse.start_observation.call_args[1]
         assert obs_kwargs_web["metadata"]["prompt_name"] == "rag:grade_web:jev"
-

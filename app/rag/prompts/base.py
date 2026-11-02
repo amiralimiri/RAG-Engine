@@ -123,12 +123,23 @@ class RenderedPrompt(BaseModel):
     config: dict[str, Any] = Field(default_factory=dict)
     raw_prompt: Any = None
 
+    def _clone_config(self) -> dict[str, Any]:
+        """Defensively clone config and nested metadata dictionary so mutations do not affect parent instance."""
+        cloned = dict(self.config)
+        if "metadata" in cloned and isinstance(cloned["metadata"], dict):
+            cloned["metadata"] = dict(cloned["metadata"])
+        if "tags" in cloned and isinstance(cloned["tags"], list):
+            cloned["tags"] = list(cloned["tags"])
+        if "callbacks" in cloned and isinstance(cloned["callbacks"], list):
+            cloned["callbacks"] = list(cloned["callbacks"])
+        return cloned
+
     def with_text(self, text: str) -> RenderedPrompt:
         """Return a new RenderedPrompt with updated text, preserving metadata and raw prompt."""
         return RenderedPrompt(
             name=self.name,
             text=text,
-            config=dict(self.config),
+            config=self._clone_config(),
             raw_prompt=self.raw_prompt,
         )
 

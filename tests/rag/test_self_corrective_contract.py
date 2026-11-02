@@ -4,6 +4,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from langchain_core.documents import Document
+from langchain_core.language_models.chat_models import BaseChatModel
+from langchain_core.messages import AIMessage
 from langchain_core.tools import BaseTool
 
 from app.rag.classifiers import FakeClassifierAdapter
@@ -151,6 +153,7 @@ def test_self_corrective_get_compiled_graph_forwards_tools():
             model=None,
             kb_tool=mock_kb_tool,
             web_tool=mock_web_tool,
+            prompt_store=None,
         )
         assert graph is mock_create_graph.return_value
 
@@ -177,6 +180,7 @@ def test_self_corrective_model_injection_parameters():
             model=mock_model,
             kb_tool=None,
             web_tool=None,
+            prompt_store=None,
         )
 
 
@@ -199,10 +203,13 @@ async def test_self_corrective_workflow_execution_with_injected_tools():
     mock_web_tool.ainvoke = AsyncMock(return_value=("web snippet", {}))
 
     classifier = FakeClassifierAdapter(route_decision="kb", kb_grade="good")
+    mock_model = MagicMock(spec=BaseChatModel)
+    mock_model.ainvoke = AsyncMock(return_value=AIMessage(content="VPN details"))
     wf = SelfCorrectiveRagWorkflow(
         id="test_exec",
         name="Test Exec",
         classifier=classifier,
+        model=mock_model,
         kb_tool=mock_kb_tool,
         web_tool=mock_web_tool,
     )
@@ -212,3 +219,29 @@ async def test_self_corrective_workflow_execution_with_injected_tools():
     mock_kb_tool.ainvoke.assert_awaited_once()
     assert result["kb_docs"] == [custom_doc]
     assert result["citations"] == [{"title": "kb.md", "url": "", "type": "private_kb"}]
+
+
+def test_self_corrective_workflow_accepts_injected_prompt_store():
+    """Verify SelfCorrectiveRagWorkflow accepts prompt_store and exposes prompt_store property."""
+    from app.rag.prompts import LocalPromptStore
+
+    store = LocalPromptStore()
+    classifier = FakeClassifierAdapter()
+    wf = SelfCorrectiveRagWorkflow(
+        id="test_store",
+        name="Test Store",
+        classifier=classifier,
+        prompt_store=store,
+    )
+    assert wf.prompt_store is store
+
+    with patch("app.rag.workflows.self_corrective.create_agentic_rag_graph") as mock_create_graph:
+        mock_create_graph.return_value = MagicMock()
+        wf.get_compiled_graph()
+        mock_create_graph.assert_called_once_with(
+            classifier=classifier,
+            model=None,
+            kb_tool=None,
+            web_tool=None,
+            prompt_store=store,
+        )

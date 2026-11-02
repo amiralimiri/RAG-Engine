@@ -1,4 +1,4 @@
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from langchain_core.callbacks import BaseCallbackHandler
@@ -10,8 +10,8 @@ from langchain_core.tools import tool
 from app.rag import engine
 from app.rag.classifiers import OpenAIClassifierAdapter
 from app.rag.engine import create_agentic_rag_graph
+from app.rag.prompts import LocalPromptStore, RenderedPrompt, get_prompt_store
 from app.rag.tools import create_retriever_tool, create_web_search_tool
-from app.services.prompts import FallbackPrompt, get_workflow_prompt
 
 
 class RecordingCallbackHandler(BaseCallbackHandler):
@@ -157,40 +157,33 @@ def test_fix_single_llm_search_web_triggers_tool_callbacks():
 # ==============================================================================
 
 
-def test_fix_single_llm_uses_workflow_prompt_service():
-    """Prompt nodes obtain prompts via get_workflow_prompt."""
-    assert hasattr(engine, "get_workflow_prompt"), "engine must expose/use get_workflow_prompt"
+def test_fix_single_llm_uses_workflow_prompt_service(fake_prompt_store: LocalPromptStore):
+    """Prompt nodes obtain prompts via PromptStore protocol seam."""
+    store = get_prompt_store()
+    assert store is not None
 
-    prompt = get_workflow_prompt("rag:router:llm")
-    assert prompt is not None
-    assert hasattr(prompt, "compile")
-    assert hasattr(prompt, "version")
-
-    rendered = prompt.compile(question="How to setup VPN?")
-    assert "Question: How to setup VPN?" in rendered
-    assert '{"route":"kb"}' in rendered
+    rendered = store.render("rag:router:llm", question="How to setup VPN?")
+    assert "Question: How to setup VPN?" in rendered.text
+    assert '{"route":"kb"}' in rendered.text
 
 
 def test_fix_single_llm_nodes_compile_prompts_from_cms():
     """Verify OpenAIClassifierAdapter compiles prompt templates from Prompt CMS."""
-    with patch("app.rag.classifiers.get_workflow_prompt") as mock_get_prompt:
-        mock_p = FallbackPrompt("rag:router:llm", "Test router prompt for: {{question}}")
-        mock_get_prompt.return_value = mock_p
+    custom_store = LocalPromptStore(templates={"rag:router:llm": "Test router prompt for: {{question}}"})
 
-        mock_router = MagicMock()
-        mock_router.invoke.return_value = MagicMock(route="kb")
-        mock_llm = MagicMock()
-        mock_llm.with_structured_output.return_value = mock_router
-        adapter = OpenAIClassifierAdapter(chat_model=mock_llm)
+    mock_router = MagicMock()
+    mock_router.invoke.return_value = MagicMock(route="kb")
+    mock_llm = MagicMock()
+    mock_llm.with_structured_output.return_value = mock_router
+    adapter = OpenAIClassifierAdapter(chat_model=mock_llm, prompt_store=custom_store)
 
-        res = adapter.route("MFA issue")
+    res = adapter.route("MFA issue")
 
-        mock_get_prompt.assert_called_with("rag:router:llm")
-        mock_router.invoke.assert_called_once_with(
-            "Test router prompt for: MFA issue",
-            config={"metadata": {"prompt_name": "rag:router:llm", "prompt_fallback": True}},
-        )
-        assert res.route == "kb"
+    mock_router.invoke.assert_called_once_with(
+        "Test router prompt for: MFA issue",
+        config={"metadata": {"prompt_name": "rag:router:llm", "prompt_fallback": True}},
+    )
+    assert res.route == "kb"
 
 
 class MockActivePrompt:
@@ -205,172 +198,216 @@ class MockActivePrompt:
         return f"compiled-{self.name}"
 
 
+class MockActivePromptStore:
+    """Mock PromptStore simulating active Langfuse prompt objects bound to observation configs."""
+
+    def __init__(self, prompt_map: dict[str, Any]):
+        self.prompt_map = prompt_map
+
+    def render(
+        self,
+        name: str,
+        config: RunnableConfig | None = None,
+        **variables: Any,
+    ) -> RenderedPrompt:
+        active_prompt = self.prompt_map[name]
+        cfg = dict(config) if config else {}
+        meta = dict(cfg.get("metadata") or {})
+        meta["langfuse_prompt"] = active_prompt
+        cfg["metadata"] = meta
+        return RenderedPrompt(
+            name=name,
+            text=f"compiled-{name}",
+            config=cfg,
+            raw_prompt=active_prompt,
+        )
+
+    def get_template(self, name: str) -> str:
+        return f"template-{name}"
+
+    def seed_prompts(self) -> dict[str, bool]:
+        return {}
+
+
 @pytest.mark.asyncio
 async def test_fix_single_llm_nodes_link_active_langfuse_prompt():
     """Verify active Langfuse prompt objects are linked in RunnableConfig metadata."""
-    active_prompt = MockActivePrompt("rag:router:llm")
+    prompts = {
+        "rag:router:llm": MockActivePrompt("rag:router:llm"),
+        "rag:grade_kb:llm": MockActivePrompt("rag:grade_kb:llm"),
+        "rag:grade_web:llm": MockActivePrompt("rag:grade_web:llm"),
+        "rag:rewrite_query": MockActivePrompt("rag:rewrite_query"),
+        "rag:generate_kb": MockActivePrompt("rag:generate_kb"),
+        "rag:generate_web": MockActivePrompt("rag:generate_web"),
+        "rag:direct_answer": MockActivePrompt("rag:direct_answer"),
+    }
+    mock_store = MockActivePromptStore(prompts)
 
     # 1. route
-    with patch("app.rag.classifiers.get_workflow_prompt", return_value=active_prompt):
-        mock_router = MagicMock()
-        mock_router.invoke.return_value = MagicMock(route="kb")
-        mock_llm = MagicMock()
-        mock_llm.with_structured_output.return_value = mock_router
-        adapter = OpenAIClassifierAdapter(chat_model=mock_llm)
+    mock_router = MagicMock()
+    mock_router.invoke.return_value = MagicMock(route="kb")
+    mock_llm = MagicMock()
+    mock_llm.with_structured_output.return_value = mock_router
+    adapter = OpenAIClassifierAdapter(chat_model=mock_llm, prompt_store=mock_store)
 
-        adapter.route("test")
-        mock_router.invoke.assert_called_once_with(
-            "compiled-rag:router:llm",
-            config={"metadata": {"langfuse_prompt": active_prompt}},
-        )
+    adapter.route("test")
+    mock_router.invoke.assert_called_once_with(
+        "compiled-rag:router:llm",
+        config={"metadata": {"langfuse_prompt": prompts["rag:router:llm"]}},
+    )
 
     # 2. grade_kb
-    kb_prompt = MockActivePrompt("rag:grade_kb:llm")
-    with patch("app.rag.classifiers.get_workflow_prompt", return_value=kb_prompt):
-        mock_grader = MagicMock()
-        mock_grader.invoke.return_value = MagicMock(grade="good")
-        mock_llm = MagicMock()
-        mock_llm.with_structured_output.return_value = mock_grader
-        adapter = OpenAIClassifierAdapter(chat_model=mock_llm)
+    mock_grader = MagicMock()
+    mock_grader.invoke.return_value = MagicMock(grade="good")
+    mock_llm = MagicMock()
+    mock_llm.with_structured_output.return_value = mock_grader
+    adapter = OpenAIClassifierAdapter(chat_model=mock_llm, prompt_store=mock_store)
 
-        adapter.grade_kb("q", "q", [])
-        mock_grader.invoke.assert_called_once_with(
-            "compiled-rag:grade_kb:llm",
-            config={"metadata": {"langfuse_prompt": kb_prompt}},
-        )
+    adapter.grade_kb("q", "q", [])
+    mock_grader.invoke.assert_called_once_with(
+        "compiled-rag:grade_kb:llm",
+        config={"metadata": {"langfuse_prompt": prompts["rag:grade_kb:llm"]}},
+    )
 
     # 3. grade_web
-    web_prompt = MockActivePrompt("rag:grade_web:llm")
-    with patch("app.rag.classifiers.get_workflow_prompt", return_value=web_prompt):
-        mock_grader = MagicMock()
-        mock_grader.invoke.return_value = MagicMock(grade="good")
-        mock_llm = MagicMock()
-        mock_llm.with_structured_output.return_value = mock_grader
-        adapter = OpenAIClassifierAdapter(chat_model=mock_llm)
+    mock_grader = MagicMock()
+    mock_grader.invoke.return_value = MagicMock(grade="good")
+    mock_llm = MagicMock()
+    mock_llm.with_structured_output.return_value = mock_grader
+    adapter = OpenAIClassifierAdapter(chat_model=mock_llm, prompt_store=mock_store)
 
-        adapter.grade_web("q", "q", "res")
-        mock_grader.invoke.assert_called_once_with(
-            "compiled-rag:grade_web:llm",
-            config={"metadata": {"langfuse_prompt": web_prompt}},
-        )
+    adapter.grade_web("q", "q", "res")
+    mock_grader.invoke.assert_called_once_with(
+        "compiled-rag:grade_web:llm",
+        config={"metadata": {"langfuse_prompt": prompts["rag:grade_web:llm"]}},
+    )
 
     # 4. rewrite_query
-    rewrite_prompt = MockActivePrompt("rag:rewrite_query")
-    with patch("app.rag.engine.get_workflow_prompt", return_value=rewrite_prompt):
-        mock_llm = MagicMock()
-        mock_llm.ainvoke = AsyncMock(return_value=MagicMock(content="new query"))
-        mock_classifier = MagicMock()
-        mock_classifier.route.return_value = MagicMock(route="kb")
-        mock_classifier.grade_kb.side_effect = [MagicMock(grade="weak"), MagicMock(grade="good")]
-        mock_classifier.grade_web.return_value = MagicMock(grade="weak")
+    mock_llm = MagicMock()
+    mock_llm.ainvoke = AsyncMock(return_value=MagicMock(content="new query"))
+    mock_classifier = MagicMock()
+    mock_classifier.route.return_value = MagicMock(route="kb")
+    mock_classifier.grade_kb.side_effect = [MagicMock(grade="weak"), MagicMock(grade="good")]
+    mock_classifier.grade_web.return_value = MagicMock(grade="weak")
 
-        kb_tool = MagicMock()
-        kb_tool.ainvoke = AsyncMock(return_value=("kb content", {"documents": [], "citations": []}))
-        web_tool = MagicMock()
-        web_tool.ainvoke = AsyncMock(return_value=("web content", {"retrieved_contexts": [], "citations": []}))
+    kb_tool = MagicMock()
+    kb_tool.ainvoke = AsyncMock(return_value=("kb content", {"documents": [], "citations": []}))
+    web_tool = MagicMock()
+    web_tool.ainvoke = AsyncMock(return_value=("web content", {"retrieved_contexts": [], "citations": []}))
 
-        graph = create_agentic_rag_graph(mock_classifier, model=mock_llm, kb_tool=kb_tool, web_tool=web_tool)
-        await graph.ainvoke(
-            {
-                "question": "q",
-                "current_query": "",
-                "kb_docs": [],
-                "web_results": "",
-                "kb_grade": "",
-                "web_grade": "",
-                "answer": "",
-                "source_used": "",
-                "retry_count": 0,
-                "trace": [],
-                "citations": [],
-                "retrieved_contexts": [],
-            }
-        )
-        rewrite_call = [
-            c
-            for c in mock_llm.ainvoke.call_args_list
-            if c[1].get("config", {}).get("metadata", {}).get("langfuse_prompt") == rewrite_prompt
-        ]
-        assert len(rewrite_call) >= 1
+    graph = create_agentic_rag_graph(
+        mock_classifier,
+        model=mock_llm,
+        kb_tool=kb_tool,
+        web_tool=web_tool,
+        prompt_store=mock_store,
+    )
+    await graph.ainvoke(
+        {
+            "question": "q",
+            "current_query": "",
+            "kb_docs": [],
+            "web_results": "",
+            "kb_grade": "",
+            "web_grade": "",
+            "answer": "",
+            "source_used": "",
+            "retry_count": 0,
+            "trace": [],
+            "citations": [],
+            "retrieved_contexts": [],
+        }
+    )
+    rewrite_call = [
+        c
+        for c in mock_llm.ainvoke.call_args_list
+        if c[1].get("config", {}).get("metadata", {}).get("langfuse_prompt") == prompts["rag:rewrite_query"]
+    ]
+    assert len(rewrite_call) >= 1
 
     # 5. generate_from_kb
-    gen_kb_prompt = MockActivePrompt("rag:generate_kb")
-    with patch("app.rag.engine.get_workflow_prompt", return_value=gen_kb_prompt):
-        mock_llm = MagicMock()
-        mock_llm.ainvoke = AsyncMock(return_value=MagicMock(content="answer"))
-        mock_classifier = MagicMock()
-        mock_classifier.route.return_value = MagicMock(route="kb")
-        mock_classifier.grade_kb.return_value = MagicMock(grade="good")
+    mock_llm = MagicMock()
+    mock_llm.ainvoke = AsyncMock(return_value=MagicMock(content="answer"))
+    mock_classifier = MagicMock()
+    mock_classifier.route.return_value = MagicMock(route="kb")
+    mock_classifier.grade_kb.return_value = MagicMock(grade="good")
 
-        kb_tool = MagicMock()
-        kb_tool.ainvoke = AsyncMock(return_value=("kb content", {"documents": [], "citations": []}))
+    kb_tool = MagicMock()
+    kb_tool.ainvoke = AsyncMock(return_value=("kb content", {"documents": [], "citations": []}))
 
-        graph = create_agentic_rag_graph(mock_classifier, model=mock_llm, kb_tool=kb_tool)
-        await graph.ainvoke(
-            {
-                "question": "q",
-                "current_query": "",
-                "kb_docs": [],
-                "web_results": "",
-                "kb_grade": "",
-                "web_grade": "",
-                "answer": "",
-                "source_used": "",
-                "retry_count": 0,
-                "trace": [],
-                "citations": [],
-                "retrieved_contexts": [],
-            }
-        )
-        assert mock_llm.ainvoke.call_count == 1
-        args, kwargs = mock_llm.ainvoke.call_args
-        assert args[0] == "compiled-rag:generate_kb"
-        assert kwargs["config"]["metadata"]["langfuse_prompt"] == gen_kb_prompt
+    graph = create_agentic_rag_graph(
+        mock_classifier,
+        model=mock_llm,
+        kb_tool=kb_tool,
+        prompt_store=mock_store,
+    )
+    await graph.ainvoke(
+        {
+            "question": "q",
+            "current_query": "",
+            "kb_docs": [],
+            "web_results": "",
+            "kb_grade": "",
+            "web_grade": "",
+            "answer": "",
+            "source_used": "",
+            "retry_count": 0,
+            "trace": [],
+            "citations": [],
+            "retrieved_contexts": [],
+        }
+    )
+    assert mock_llm.ainvoke.call_count == 1
+    args, kwargs = mock_llm.ainvoke.call_args
+    assert args[0] == "compiled-rag:generate_kb"
+    assert kwargs["config"]["metadata"]["langfuse_prompt"] == prompts["rag:generate_kb"]
 
     # 6. generate_from_web
-    gen_web_prompt = MockActivePrompt("rag:generate_web")
-    with patch("app.rag.engine.get_workflow_prompt", return_value=gen_web_prompt):
-        mock_llm = MagicMock()
-        mock_llm.ainvoke = AsyncMock(return_value=MagicMock(content="answer"))
-        mock_classifier = MagicMock()
-        mock_classifier.route.return_value = MagicMock(route="kb")
-        mock_classifier.grade_kb.return_value = MagicMock(grade="weak")
-        mock_classifier.grade_web.return_value = MagicMock(grade="good")
+    mock_llm = MagicMock()
+    mock_llm.ainvoke = AsyncMock(return_value=MagicMock(content="answer"))
+    mock_classifier = MagicMock()
+    mock_classifier.route.return_value = MagicMock(route="kb")
+    mock_classifier.grade_kb.return_value = MagicMock(grade="weak")
+    mock_classifier.grade_web.return_value = MagicMock(grade="good")
 
-        kb_tool = MagicMock()
-        kb_tool.ainvoke = AsyncMock(return_value=("kb content", {"documents": [], "citations": []}))
-        web_tool = MagicMock()
-        web_tool.ainvoke = AsyncMock(return_value=("web content", {"retrieved_contexts": [], "citations": []}))
+    kb_tool = MagicMock()
+    kb_tool.ainvoke = AsyncMock(return_value=("kb content", {"documents": [], "citations": []}))
+    web_tool = MagicMock()
+    web_tool.ainvoke = AsyncMock(return_value=("web content", {"retrieved_contexts": [], "citations": []}))
 
-        graph = create_agentic_rag_graph(mock_classifier, model=mock_llm, kb_tool=kb_tool, web_tool=web_tool)
-        await graph.ainvoke(
-            {
-                "question": "q",
-                "current_query": "",
-                "kb_docs": [],
-                "web_results": "res",
-                "kb_grade": "",
-                "web_grade": "",
-                "answer": "",
-                "source_used": "",
-                "retry_count": 0,
-                "trace": [],
-                "citations": [],
-                "retrieved_contexts": [],
-            }
-        )
-        assert mock_llm.ainvoke.call_count == 1
-        args, kwargs = mock_llm.ainvoke.call_args
-        assert args[0] == "compiled-rag:generate_web"
-        assert kwargs["config"]["metadata"]["langfuse_prompt"] == gen_web_prompt
+    graph = create_agentic_rag_graph(
+        mock_classifier,
+        model=mock_llm,
+        kb_tool=kb_tool,
+        web_tool=web_tool,
+        prompt_store=mock_store,
+    )
+    await graph.ainvoke(
+        {
+            "question": "q",
+            "current_query": "",
+            "kb_docs": [],
+            "web_results": "res",
+            "kb_grade": "",
+            "web_grade": "",
+            "answer": "",
+            "source_used": "",
+            "retry_count": 0,
+            "trace": [],
+            "citations": [],
+            "retrieved_contexts": [],
+        }
+    )
+    assert mock_llm.ainvoke.call_count == 1
+    args, kwargs = mock_llm.ainvoke.call_args
+    assert args[0] == "compiled-rag:generate_web"
+    assert kwargs["config"]["metadata"]["langfuse_prompt"] == prompts["rag:generate_web"]
 
     # 7. direct_answer
-    direct_prompt = MockActivePrompt("rag:direct_answer")
-    with patch("app.rag.engine.get_workflow_prompt", return_value=direct_prompt):
-        mock_llm = MagicMock()
-        mock_llm.ainvoke = AsyncMock(return_value=MagicMock(content="answer"))
-        await engine.direct_answer({"question": "q"}, model=mock_llm)
-        mock_llm.ainvoke.assert_called_once_with(
-            "compiled-rag:direct_answer",
-            config={"metadata": {"langfuse_prompt": direct_prompt}},
-        )
+    mock_llm = MagicMock()
+    mock_llm.ainvoke = AsyncMock(return_value=MagicMock(content="answer"))
+    await engine.direct_answer({"question": "q"}, model=mock_llm, prompt_store=mock_store)
+    mock_llm.ainvoke.assert_called_once_with(
+        "compiled-rag:direct_answer",
+        config={"metadata": {"langfuse_prompt": prompts["rag:direct_answer"]}},
+    )

@@ -10,6 +10,7 @@ from langchain_core.tools import BaseTool
 
 from app.rag.classifiers import WorkflowClassifier
 from app.rag.engine import create_agentic_rag_graph
+from app.rag.prompts import PromptStore, get_prompt_store
 from app.rag.workflows.base import (
     EvalContext,
     WorkflowInfo,
@@ -52,6 +53,7 @@ class SelfCorrectiveRagWorkflow:
         model: BaseChatModel | None = None,
         kb_tool: BaseTool | None = None,
         web_tool: BaseTool | None = None,
+        prompt_store: PromptStore | None = None,
         description: str | None = None,
         step_labels: dict[str, str] | None = None,
         generation_nodes: set[str] | None = None,
@@ -61,6 +63,7 @@ class SelfCorrectiveRagWorkflow:
         self.model = model
         self.kb_tool = kb_tool
         self.web_tool = web_tool
+        self._prompt_store = prompt_store
         desc = description or f"Self-corrective RAG workflow powered by {classifier.__class__.__name__}."
         classifier_meta = "openai_json" if "OpenAI" in classifier.__class__.__name__ else "typesafe_jev"
         default_metadata = {
@@ -82,6 +85,12 @@ class SelfCorrectiveRagWorkflow:
         self._lock = threading.RLock()
         self._compiled_graph = None
 
+    @property
+    def prompt_store(self) -> PromptStore:
+        if self._prompt_store is None:
+            self._prompt_store = get_prompt_store()
+        return self._prompt_store
+
     def get_compiled_graph(self, variant_id: str | None = None) -> Any:
         with self._lock:
             if self._compiled_graph is None:
@@ -90,6 +99,7 @@ class SelfCorrectiveRagWorkflow:
                     model=self.model,
                     kb_tool=self.kb_tool,
                     web_tool=self.web_tool,
+                    prompt_store=self._prompt_store,
                 )
             return self._compiled_graph
 

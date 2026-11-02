@@ -380,9 +380,7 @@ def test_unpack_tool_output_handles_empty_dict_artifact():
 
 @pytest.mark.asyncio
 async def test_direct_answer_accepts_injected_prompt_store(mock_llm):
-    custom_store = LocalPromptStore(
-        templates={"rag:direct_answer": "INJECTED DIRECT: {{question}}"}
-    )
+    custom_store = LocalPromptStore(templates={"rag:direct_answer": "INJECTED DIRECT: {{question}}"})
     result = await direct_answer(
         cast(Any, {"question": "How are you?"}),
         config=cast(Any, {"tags": ["custom-test"]}),
@@ -494,4 +492,3 @@ async def test_create_agentic_rag_graph_injected_prompt_store_rewrite_and_web(mo
     await graph_rewrite.ainvoke({"question": "Tough question", "retry_count": 0})
     all_prompts_rewrite = [call[0][0] for call in mock_llm.ainvoke.call_args_list]
     assert any("INJECTED REWRITE: Tough question" in p for p in all_prompts_rewrite)
-

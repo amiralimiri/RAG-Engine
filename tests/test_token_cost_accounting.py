@@ -6,7 +6,7 @@ from langfuse.model import TextPromptClient
 from app.core.config import get_settings
 from app.rag import classifiers, engine
 from app.rag.classifiers import JevClassifierAdapter, _record_jev_generation
-from app.services.prompts import FallbackPrompt
+from app.rag.prompts import RenderedPrompt
 
 
 class TestJEVCostAccounting:
@@ -126,19 +126,22 @@ class TestPromptObservationLinking:
         assert kwargs.get("prompt") is mock_prompt
 
     def test_record_jev_generation_handles_fallback_prompt_safely(self, monkeypatch):
-        """When a FallbackPrompt (is_fallback=True) is supplied, prompt is omitted from observation args."""
+        """When a fallback RenderedPrompt (prompt_fallback=True) is supplied, prompt is omitted from observation args."""
         mock_client = MagicMock()
         mock_client.start_observation.return_value = MagicMock()
         monkeypatch.setattr(classifiers, "get_langfuse_client", lambda: mock_client)
 
-        fallback_prompt = FallbackPrompt(name="rag:router:jev", template="prompt text", version=0)
-        assert fallback_prompt.is_fallback is True
+        rendered = RenderedPrompt(
+            name="rag:router:jev",
+            text="prompt text",
+            config={"metadata": {"prompt_name": "rag:router:jev", "prompt_fallback": True}},
+        )
 
         _record_jev_generation(
             "jev_router",
             "question",
             "kb",
-            prompt_client=fallback_prompt,
+            rendered=rendered,
         )
 
         _, kwargs = mock_client.start_observation.call_args
@@ -150,36 +153,48 @@ class TestPromptObservationLinking:
 
 
 class TestPromptCMSWiringAcrossJEVNodes:
-    """Verifies get_workflow_prompt is wired across JEV adapter and generation nodes."""
+    """Verifies PromptStore is wired across JEV adapter and generation nodes."""
 
-    def test_route_question_jev_wires_prompt(self, monkeypatch):
+    def test_route_question_jev_wires_prompt(self):
         """route fetches 'rag:router:jev' and passes it to _record_jev_generation."""
-        mock_prompt = FallbackPrompt("rag:router:jev", "template", version=1, is_fallback=False)
-        mock_get_prompt = MagicMock(return_value=mock_prompt)
-        monkeypatch.setattr(classifiers, "get_workflow_prompt", mock_get_prompt)
+        mock_prompt = MagicMock(name="rag:router:jev", is_fallback=False)
+        mock_store = MagicMock()
+        mock_rendered = RenderedPrompt(
+            name="rag:router:jev",
+            text="template",
+            config={"metadata": {"langfuse_prompt": mock_prompt}},
+            raw_prompt=mock_prompt,
+        )
+        mock_store.render.return_value = mock_rendered
 
         mock_jev = MagicMock()
         mock_jev.invoke.return_value.choices = {"route": MagicMock(choice="kb")}
-        adapter = JevClassifierAdapter(classifier=mock_jev)
+        adapter = JevClassifierAdapter(classifier=mock_jev, prompt_store=mock_store)
 
         with patch("app.rag.classifiers._record_jev_generation") as mock_record:
             res = adapter.route("How to connect to VPN?")
             assert res.route == "kb"
 
-            mock_get_prompt.assert_called_with("rag:router:jev")
+            mock_store.render.assert_called_with("rag:router:jev", config=None, question="How to connect to VPN?")
             mock_record.assert_called_once()
             _, kwargs = mock_record.call_args
-            assert kwargs.get("prompt_client") is mock_prompt
+            assert kwargs.get("rendered") is mock_rendered
 
-    def test_grade_kb_jev_wires_prompt(self, monkeypatch):
+    def test_grade_kb_jev_wires_prompt(self):
         """grade_kb fetches 'rag:grade_kb:jev' and passes it to _record_jev_generation."""
-        mock_prompt = FallbackPrompt("rag:grade_kb:jev", "template", version=1, is_fallback=False)
-        mock_get_prompt = MagicMock(return_value=mock_prompt)
-        monkeypatch.setattr(classifiers, "get_workflow_prompt", mock_get_prompt)
+        mock_prompt = MagicMock(name="rag:grade_kb:jev", is_fallback=False)
+        mock_store = MagicMock()
+        mock_rendered = RenderedPrompt(
+            name="rag:grade_kb:jev",
+            text="template",
+            config={"metadata": {"langfuse_prompt": mock_prompt}},
+            raw_prompt=mock_prompt,
+        )
+        mock_store.render.return_value = mock_rendered
 
         mock_jev = MagicMock()
         mock_jev.invoke.return_value.choices = {"grade": MagicMock(choice="good")}
-        adapter = JevClassifierAdapter(classifier=mock_jev)
+        adapter = JevClassifierAdapter(classifier=mock_jev, prompt_store=mock_store)
 
         doc = MagicMock()
         doc.metadata = {"source": "vpn.md"}
@@ -188,39 +203,56 @@ class TestPromptCMSWiringAcrossJEVNodes:
         with patch("app.rag.classifiers._record_jev_generation") as mock_record:
             res = adapter.grade_kb("How to connect to VPN?", "VPN guide", [doc])
             assert res.grade == "good"
-            mock_get_prompt.assert_called_with("rag:grade_kb:jev")
-            assert mock_record.call_args[1].get("prompt_client") is mock_prompt
+            mock_store.render.assert_called_once()
+            assert mock_record.call_args[1].get("rendered") is mock_rendered
 
-    def test_grade_web_jev_wires_prompt(self, monkeypatch):
+    def test_grade_web_jev_wires_prompt(self):
         """grade_web fetches 'rag:grade_web:jev' and passes it to _record_jev_generation."""
-        mock_prompt = FallbackPrompt("rag:grade_web:jev", "template", version=1, is_fallback=False)
-        mock_get_prompt = MagicMock(return_value=mock_prompt)
-        monkeypatch.setattr(classifiers, "get_workflow_prompt", mock_get_prompt)
+        mock_prompt = MagicMock(name="rag:grade_web:jev", is_fallback=False)
+        mock_store = MagicMock()
+        mock_rendered = RenderedPrompt(
+            name="rag:grade_web:jev",
+            text="template",
+            config={"metadata": {"langfuse_prompt": mock_prompt}},
+            raw_prompt=mock_prompt,
+        )
+        mock_store.render.return_value = mock_rendered
 
         mock_jev = MagicMock()
         mock_jev.invoke.return_value.choices = {"grade": MagicMock(choice="good")}
-        adapter = JevClassifierAdapter(classifier=mock_jev)
+        adapter = JevClassifierAdapter(classifier=mock_jev, prompt_store=mock_store)
 
         with patch("app.rag.classifiers._record_jev_generation") as mock_record:
             res = adapter.grade_web("How to connect to VPN?", "VPN guide", "Web content about VPN")
             assert res.grade == "good"
-            mock_get_prompt.assert_called_with("rag:grade_web:jev")
-            assert mock_record.call_args[1].get("prompt_client") is mock_prompt
+            mock_store.render.assert_called_once()
+            assert mock_record.call_args[1].get("rendered") is mock_rendered
 
     @pytest.mark.asyncio
-    async def test_rewrite_query_wires_prompt(self, monkeypatch):
+    async def test_rewrite_query_wires_prompt(self):
         """rewrite_query compiles 'rag:rewrite_query'."""
-        mock_rewrite_prompt = MagicMock()
-        mock_rewrite_prompt.compile.return_value = "Compiled rewrite prompt"
-        mock_gen_prompt = MagicMock()
-        mock_gen_prompt.compile.return_value = "Compiled gen prompt"
+        mock_rewrite_prompt = MagicMock(is_fallback=False)
+        mock_gen_prompt = MagicMock(is_fallback=False)
+        mock_store = MagicMock()
+        mock_rewrite_rendered = RenderedPrompt(
+            name="rag:rewrite_query",
+            text="Compiled rewrite prompt",
+            config={"metadata": {"langfuse_prompt": mock_rewrite_prompt}},
+            raw_prompt=mock_rewrite_prompt,
+        )
+        mock_gen_rendered = RenderedPrompt(
+            name="rag:generate_kb",
+            text="Compiled gen prompt",
+            config={"metadata": {"langfuse_prompt": mock_gen_prompt}},
+            raw_prompt=mock_gen_prompt,
+        )
 
-        def fake_get_prompt(name):
+        def fake_render(name, **kwargs):
             if name == "rag:rewrite_query":
-                return mock_rewrite_prompt
-            return mock_gen_prompt
+                return mock_rewrite_rendered
+            return mock_gen_rendered
 
-        monkeypatch.setattr(engine, "get_workflow_prompt", fake_get_prompt)
+        mock_store.render.side_effect = fake_render
 
         mock_llm = MagicMock()
         mock_llm.ainvoke = AsyncMock(return_value=MagicMock(content="improved search query"))
@@ -235,7 +267,13 @@ class TestPromptCMSWiringAcrossJEVNodes:
         web_tool = MagicMock()
         web_tool.ainvoke = AsyncMock(return_value=("web content", {"retrieved_contexts": [], "citations": []}))
 
-        graph = engine.create_agentic_rag_graph(mock_classifier, model=mock_llm, kb_tool=kb_tool, web_tool=web_tool)
+        graph = engine.create_agentic_rag_graph(
+            mock_classifier,
+            model=mock_llm,
+            kb_tool=kb_tool,
+            web_tool=web_tool,
+            prompt_store=mock_store,
+        )
         state = {
             "question": "VPN broken",
             "current_query": "vpn help",
@@ -252,10 +290,6 @@ class TestPromptCMSWiringAcrossJEVNodes:
         }
         await graph.ainvoke(state)
 
-        mock_rewrite_prompt.compile.assert_called_once_with(
-            question="VPN broken",
-            current_query="VPN broken",
-        )
         rewrite_calls = [
             c
             for c in mock_llm.ainvoke.call_args_list
@@ -265,12 +299,17 @@ class TestPromptCMSWiringAcrossJEVNodes:
         assert rewrite_calls[0][0][0] == "Compiled rewrite prompt"
 
     @pytest.mark.asyncio
-    async def test_generate_from_kb_wires_prompt(self, monkeypatch):
+    async def test_generate_from_kb_wires_prompt(self):
         """generate_from_kb compiles 'rag:generate_kb'."""
-        mock_prompt = MagicMock()
-        mock_prompt.compile.return_value = "Compiled KB prompt"
-        mock_get_prompt = MagicMock(return_value=mock_prompt)
-        monkeypatch.setattr(engine, "get_workflow_prompt", mock_get_prompt)
+        mock_prompt = MagicMock(is_fallback=False)
+        mock_store = MagicMock()
+        mock_rendered = RenderedPrompt(
+            name="rag:generate_kb",
+            text="Compiled KB prompt",
+            config={"metadata": {"langfuse_prompt": mock_prompt}},
+            raw_prompt=mock_prompt,
+        )
+        mock_store.render.return_value = mock_rendered
 
         mock_llm = MagicMock()
         mock_llm.ainvoke = AsyncMock(return_value=MagicMock(content="KB Answer"))
@@ -286,7 +325,12 @@ class TestPromptCMSWiringAcrossJEVNodes:
         kb_tool = MagicMock()
         kb_tool.ainvoke = AsyncMock(return_value=("kb content", {"documents": [doc], "citations": []}))
 
-        graph = engine.create_agentic_rag_graph(mock_classifier, model=mock_llm, kb_tool=kb_tool)
+        graph = engine.create_agentic_rag_graph(
+            mock_classifier,
+            model=mock_llm,
+            kb_tool=kb_tool,
+            prompt_store=mock_store,
+        )
         state = {
             "question": "Setup VPN",
             "current_query": "Setup VPN",
@@ -304,19 +348,23 @@ class TestPromptCMSWiringAcrossJEVNodes:
         res = await graph.ainvoke(state)
 
         assert res["answer"] == "KB Answer"
-        mock_get_prompt.assert_any_call("rag:generate_kb")
-        mock_prompt.compile.assert_called_once()
+        mock_store.render.assert_called_once()
         args, kwargs = mock_llm.ainvoke.call_args
         assert args[0] == "Compiled KB prompt"
         assert kwargs["config"]["metadata"]["langfuse_prompt"] == mock_prompt
 
     @pytest.mark.asyncio
-    async def test_generate_from_web_wires_prompt(self, monkeypatch):
+    async def test_generate_from_web_wires_prompt(self):
         """generate_from_web compiles 'rag:generate_web'."""
-        mock_prompt = MagicMock()
-        mock_prompt.compile.return_value = "Compiled Web prompt"
-        mock_get_prompt = MagicMock(return_value=mock_prompt)
-        monkeypatch.setattr(engine, "get_workflow_prompt", mock_get_prompt)
+        mock_prompt = MagicMock(is_fallback=False)
+        mock_store = MagicMock()
+        mock_rendered = RenderedPrompt(
+            name="rag:generate_web",
+            text="Compiled Web prompt",
+            config={"metadata": {"langfuse_prompt": mock_prompt}},
+            raw_prompt=mock_prompt,
+        )
+        mock_store.render.return_value = mock_rendered
 
         mock_llm = MagicMock()
         mock_llm.ainvoke = AsyncMock(return_value=MagicMock(content="Web Answer"))
@@ -331,7 +379,13 @@ class TestPromptCMSWiringAcrossJEVNodes:
         web_tool = MagicMock()
         web_tool.ainvoke = AsyncMock(return_value=("External web info", {"retrieved_contexts": [], "citations": []}))
 
-        graph = engine.create_agentic_rag_graph(mock_classifier, model=mock_llm, kb_tool=kb_tool, web_tool=web_tool)
+        graph = engine.create_agentic_rag_graph(
+            mock_classifier,
+            model=mock_llm,
+            kb_tool=kb_tool,
+            web_tool=web_tool,
+            prompt_store=mock_store,
+        )
         state = {
             "question": "Setup VPN",
             "current_query": "Setup VPN",
@@ -349,22 +403,23 @@ class TestPromptCMSWiringAcrossJEVNodes:
         res = await graph.ainvoke(state)
 
         assert res["answer"] == "Web Answer"
-        mock_get_prompt.assert_any_call("rag:generate_web")
-        mock_prompt.compile.assert_called_once_with(
-            question="Setup VPN",
-            web_results="External web info",
-        )
+        mock_store.render.assert_called_once()
         args, kwargs = mock_llm.ainvoke.call_args
         assert args[0] == "Compiled Web prompt"
         assert kwargs["config"]["metadata"]["langfuse_prompt"] == mock_prompt
 
     @pytest.mark.asyncio
-    async def test_direct_answer_wires_prompt(self, monkeypatch):
+    async def test_direct_answer_wires_prompt(self):
         """direct_answer compiles 'rag:direct_answer'."""
-        mock_prompt = MagicMock()
-        mock_prompt.compile.return_value = "Compiled Direct prompt"
-        mock_get_prompt = MagicMock(return_value=mock_prompt)
-        monkeypatch.setattr(engine, "get_workflow_prompt", mock_get_prompt)
+        mock_prompt = MagicMock(is_fallback=False)
+        mock_store = MagicMock()
+        mock_rendered = RenderedPrompt(
+            name="rag:direct_answer",
+            text="Compiled Direct prompt",
+            config={"metadata": {"langfuse_prompt": mock_prompt}},
+            raw_prompt=mock_prompt,
+        )
+        mock_store.render.return_value = mock_rendered
 
         mock_llm = MagicMock()
         mock_llm.ainvoke = AsyncMock(return_value=MagicMock(content="Direct Answer"))
@@ -372,11 +427,10 @@ class TestPromptCMSWiringAcrossJEVNodes:
         state = {
             "question": "Hi",
         }
-        res = await engine.direct_answer(state, model=mock_llm)
+        res = await engine.direct_answer(state, model=mock_llm, prompt_store=mock_store)
 
         assert res["answer"] == "Direct Answer"
-        mock_get_prompt.assert_called_with("rag:direct_answer")
-        mock_prompt.compile.assert_called_once_with(question="Hi")
+        mock_store.render.assert_called_once()
         mock_llm.ainvoke.assert_called_once_with(
             "Compiled Direct prompt",
             config={"metadata": {"langfuse_prompt": mock_prompt}},

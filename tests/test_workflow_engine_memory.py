@@ -1,5 +1,5 @@
 from typing import Any, cast
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from langchain_core.documents import Document
@@ -243,12 +243,9 @@ def test_route_start_logic():
 async def test_generation_nodes_pass_history(mock_llm, mock_kb_tool, mock_web_tool):
     """Verify that generation nodes pass history to prompts and fallback smoothly."""
     from app.rag.engine import direct_answer
-    from app.services.prompts import FallbackPrompt
+    from app.rag.prompts import LocalPromptStore
 
-    custom_prompt = FallbackPrompt(
-        name="rag:direct_answer",
-        template="History:\n{{history}}\nQuestion: {{question}}",
-    )
+    custom_store = LocalPromptStore(templates={"rag:direct_answer": "History:\n{{history}}\nQuestion: {{question}}"})
 
     state = make_agent_state(
         question="How are you?",
@@ -261,14 +258,13 @@ async def test_generation_nodes_pass_history(mock_llm, mock_kb_tool, mock_web_to
         retry_count=0,
     )
 
-    with patch("app.rag.engine.get_workflow_prompt", return_value=custom_prompt):
-        res = await direct_answer(state, model=mock_llm)
-        assert res["source_used"] == "direct"
-        # Verify the prompt compiled with history
-        call_args = mock_llm.ainvoke.call_args[0][0]
-        assert "Previous inquiry" in call_args
-        assert "Previous answer" in call_args
-        assert "How are you?" in call_args
+    res = await direct_answer(state, model=mock_llm, prompt_store=custom_store)
+    assert res["source_used"] == "direct"
+    # Verify the prompt compiled with history
+    call_args = mock_llm.ainvoke.call_args[0][0]
+    assert "Previous inquiry" in call_args
+    assert "Previous answer" in call_args
+    assert "How are you?" in call_args
 
 
 def test_turn_2_condense_query_empty_response_fallback(mock_kb_tool, mock_web_tool):

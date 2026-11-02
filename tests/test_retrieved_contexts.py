@@ -1,5 +1,5 @@
 from typing import NotRequired, get_args, get_origin
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from langchain_core.documents import Document
@@ -7,18 +7,16 @@ from langchain_core.documents import Document
 from app.api.schemas import ChatRequest
 from app.rag import engine
 from app.rag.engine import create_agentic_rag_graph
+from app.rag.prompts import LocalPromptStore
 from app.rag.state import AgentState
 from app.rag.workflows.registry import get_workflow_registry
 from app.rag.workflows.runner import WorkflowRunner
-from app.services.prompts import FallbackPrompt
 
 
 @pytest.fixture(autouse=True)
-def mock_workflow_prompts():
+def mock_workflow_prompts(fake_prompt_store: LocalPromptStore):
     """Ensure all prompt lookups return local fallback prompts offline without Langfuse calls."""
-    with patch("app.rag.engine.get_workflow_prompt") as mock_get:
-        mock_get.side_effect = lambda name: FallbackPrompt(name, f"Prompt template for {name}: {{{{question}}}}")
-        yield mock_get
+    yield fake_prompt_store
 
 
 # ==============================================================================

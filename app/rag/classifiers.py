@@ -129,11 +129,12 @@ def _record_jev_generation(
             if isinstance(cfg_meta, dict):
                 meta_dict.update(cfg_meta)
 
-        prompt_target = (
-            rendered.raw_prompt
-            if (rendered is not None and rendered.raw_prompt is not None and not getattr(rendered.raw_prompt, "is_fallback", False))
-            else (prompt_client if (prompt_client is not None and not getattr(prompt_client, "is_fallback", False)) else None)
-        )
+        prompt_target = None
+        if rendered is not None and rendered.raw_prompt is not None:
+            if not getattr(rendered.raw_prompt, "is_fallback", False):
+                prompt_target = rendered.raw_prompt
+        elif prompt_client is not None and not getattr(prompt_client, "is_fallback", False):
+            prompt_target = prompt_client
         if prompt_target is None and prompt_client is not None:
             prompt_name = getattr(prompt_client, "name", None)
             if prompt_name:
