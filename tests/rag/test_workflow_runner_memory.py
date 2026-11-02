@@ -491,7 +491,7 @@ async def test_runner_streaming_resilient_to_persistence_failure():
     registry.register(mock_wf)
 
     memory = InMemoryConversationStore()
-    memory.asave_turn = AsyncMock(side_effect=RuntimeError("Storage disk full failure"))
+    memory.aappend_turn = AsyncMock(side_effect=RuntimeError("Storage disk full failure"))
     runner = WorkflowRunner(registry=registry, memory=memory)
     session_id = "test-session-stream-persist-fail"
 
@@ -584,3 +584,143 @@ async def test_runner_persists_graceful_error_fallback_turn():
     assert turns[0].user_query == "What happened to the service?"
     assert turns[0].source_used == "error_fallback"
     assert "Fallback error response" in turns[0].assistant_answer
+
+
+@pytest.mark.asyncio
+async def test_runner_persist_turn_delegates_to_aappend_turn():
+    """Verify _apersist_turn delegates strictly to aappend_turn with scalar params and returns persisted turn."""
+    memory = MagicMock()
+    expected_turn = ConversationTurn(
+        session_id="test-session-delegate",
+        turn_index=2,
+        user_query="How does auth work?",
+        assistant_answer="Auth uses JWT tokens.",
+        attachments=[{"name": "token.json", "size": 128}],
+        citations=[{"title": "auth.md", "url": "http://docs/auth", "type": "private_kb"}],
+        source_used="vectorstore",
+        trace_id="tid-persist-123",
+    )
+    memory.aappend_turn = AsyncMock(return_value=expected_turn)
+    memory.atruncate_from = AsyncMock()
+    memory.aget_turns = AsyncMock()
+    memory.asave_turn = AsyncMock()
+
+    runner = WorkflowRunner(memory=memory)
+
+    req = WorkflowInput(
+        question="How does auth work?",
+        session_id="test-session-delegate",
+        rewind_turn_index=2,
+        attachments=[{"name": "token.json", "size": 128}],
+    )
+    output = WorkflowOutput(
+        workflow="mock_wf",
+        answer="Auth uses JWT tokens.",
+        source_used="vectorstore",
+        citations=[{"title": "auth.md", "url": "http://docs/auth", "type": "private_kb"}],
+        trace_id="tid-persist-123",
+    )
+
+    persisted = await runner._apersist_turn(req, output, resolved_tid="tid-persist-123")
+
+    assert persisted == expected_turn
+    memory.aappend_turn.assert_awaited_once_with(
+        session_id="test-session-delegate",
+        user_query="How does auth work?",
+        assistant_answer="Auth uses JWT tokens.",
+        rewind_turn_index=2,
+        attachments=[{"name": "token.json", "size": 128}],
+        citations=[{"title": "auth.md", "url": "http://docs/auth", "type": "private_kb"}],
+        source_used="vectorstore",
+        trace_id="tid-persist-123",
+    )
+    memory.atruncate_from.assert_not_called()
+    memory.aget_turns.assert_not_called()
+    memory.asave_turn.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_runner_hydrate_memory_uses_single_aget_messages(monkeypatch: pytest.MonkeyPatch):
+    """Verify _ahydrate_memory collapses hydration into a single aget_messages call with before_turn_index."""
+    memory = MagicMock()
+    fake_messages = [HumanMessage(content="Prior q"), AIMessage(content="Prior a")]
+    memory.aget_messages = AsyncMock(return_value=fake_messages)
+    memory.aget_turns = AsyncMock()
+
+    runner = WorkflowRunner(memory=memory)
+    mock_settings = MagicMock()
+    mock_settings.memory_max_turns = 6
+    mock_settings.app_env = "testing"
+    monkeypatch.setattr(runner, "settings", mock_settings)
+
+    # 1. Hydration with rewind_turn_index
+    req_rewind = WorkflowInput(
+        question="New question",
+        session_id="test-session-hydrate",
+        rewind_turn_index=3,
+    )
+    hydrated = await runner._ahydrate_memory(req_rewind)
+    assert hydrated == fake_messages
+    memory.aget_messages.assert_awaited_once_with(
+        "test-session-hydrate",
+        limit=6,
+        before_turn_index=3,
+    )
+    memory.aget_turns.assert_not_called()
+
+    # 2. Hydration without rewind_turn_index
+    memory.aget_messages.reset_mock()
+    req_normal = WorkflowInput(
+        question="Normal question",
+        session_id="test-session-hydrate",
+    )
+    hydrated_normal = await runner._ahydrate_memory(req_normal)
+    assert hydrated_normal == fake_messages
+    memory.aget_messages.assert_awaited_once_with(
+        "test-session-hydrate",
+        limit=6,
+        before_turn_index=None,
+    )
+    memory.aget_turns.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_runner_execution_never_calls_atruncate_from_or_aget_turns():
+    """Verify that WorkflowRunner never calls atruncate_from or aget_turns during normal or rewind execution."""
+    registry = WorkflowRegistry()
+    mock_wf = MockStatefulWorkflow()
+    registry.register(mock_wf)
+
+    mock_memory = MagicMock()
+    mock_memory.aget_messages = AsyncMock(return_value=[])
+    mock_memory.aappend_turn = AsyncMock(
+        return_value=ConversationTurn(
+            session_id="test-session-never-call-obsolete",
+            turn_index=0,
+            user_query="q",
+            assistant_answer="a",
+        )
+    )
+    mock_memory.aget_turns = AsyncMock()
+    mock_memory.atruncate_from = AsyncMock()
+
+    runner = WorkflowRunner(registry=registry, memory=mock_memory)
+    session_id = "test-session-never-call-obsolete"
+
+    # Normal execution
+    req0 = WorkflowInput(question="Turn 0", session_id=session_id, workflow=mock_wf.info.id)
+    await runner.aexecute(req0)
+
+    # Rewind execution
+    req_rewind = WorkflowInput(
+        question="Rewound Turn 1",
+        session_id=session_id,
+        rewind_turn_index=1,
+        workflow=mock_wf.info.id,
+    )
+    await runner.aexecute(req_rewind)
+
+    # Crucial assertion: WorkflowRunner itself must NEVER call aget_turns or atruncate_from!
+    mock_memory.aget_turns.assert_not_called()
+    mock_memory.atruncate_from.assert_not_called()
+

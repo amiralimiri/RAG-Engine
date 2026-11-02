@@ -1,7 +1,7 @@
 # Ticket 04: WorkflowRunner Caller Streamlining & Memory Hydration Unification
 
 - **Milestone:** Deepen Conversation Memory Seam (ADR-0017)
-- **Status:** ready-for-agent
+- **Status:** completed
 - **Blocked by:** Ticket 02 (In-Memory Adapter), Ticket 03 (SQLite Adapter)
 - **Estimated Scope:** Small
 
@@ -74,7 +74,7 @@ Refactor `WorkflowRunner` (`app/rag/workflows/runner.py`) to consume the deepene
 ---
 
 ## Acceptance Criteria
-- [ ] `WorkflowRunner._apersist_turn` delegates strictly to `await self.memory.aappend_turn(...)`.
-- [ ] `WorkflowRunner._ahydrate_memory` uses a single `aget_messages` call with `before_turn_index`.
-- [ ] Direct calls to `atruncate_from` and `aget_turns` are eliminated from `WorkflowRunner`.
-- [ ] All tests in `tests/rag/test_workflow_runner_memory.py` pass cleanly.
+- [x] `WorkflowRunner._apersist_turn` delegates strictly to `await self.memory.aappend_turn(...)`.
+- [x] `WorkflowRunner._ahydrate_memory` uses a single `aget_messages` call with `before_turn_index`.
+- [x] Direct calls to `atruncate_from` and `aget_turns` are eliminated from `WorkflowRunner`.
+- [x] All tests in `tests/rag/test_workflow_runner_memory.py` pass cleanly.

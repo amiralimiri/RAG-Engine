@@ -268,35 +268,20 @@ class WorkflowRunner:
         settings = self.settings
         max_turns = getattr(settings, "memory_max_turns", 10)
 
-        if rewind_turn_index is not None:
-            all_turns = await self.memory.aget_turns(session_id)
-            sliced = all_turns[max(0, rewind_turn_index - max_turns) : rewind_turn_index]
-            hydrated = [msg for t in sliced for msg in t.to_messages()]
-            turns_loaded = len(hydrated) // 2
-            logger.info(
-                "conversation_memory_hydrated",
-                session_id=session_id,
-                turns_loaded=turns_loaded,
-                history_turns_loaded=turns_loaded,
-                rewind_turn_index=rewind_turn_index,
-            )
-            if hydrated:
-                try:
-                    request.messages = hydrated
-                except Exception:
-                    pass
-            return hydrated
-
-        hydrated = await self.memory.aget_messages(session_id, limit=max_turns)
+        hydrated = await self.memory.aget_messages(
+            session_id,
+            limit=max_turns,
+            before_turn_index=rewind_turn_index,
+        )
         turns_loaded = len(hydrated) // 2
         logger.info(
             "conversation_memory_hydrated",
             session_id=session_id,
             turns_loaded=turns_loaded,
             history_turns_loaded=turns_loaded,
-            rewind_turn_index=None,
+            rewind_turn_index=rewind_turn_index,
         )
-        if hydrated:
+        if hydrated or rewind_turn_index is not None:
             try:
                 request.messages = hydrated
             except Exception:
@@ -313,50 +298,42 @@ class WorkflowRunner:
         request: WorkflowInput,
         domain_output: WorkflowOutput,
         resolved_tid: str | None = None,
-    ) -> None:
+    ) -> ConversationTurn | None:
         """Atomically truncate prior turns if rewinding and persist new completed semantic turn."""
         session_id = getattr(request, "session_id", None)
         if not session_id or not domain_output.answer or not domain_output.answer.strip():
-            return
+            return None
         if domain_output.source_used == "error" and not domain_output.answer:
-            return
-
-        rewind_turn_index = getattr(request, "rewind_turn_index", None)
-        if rewind_turn_index is not None:
-            await self.memory.atruncate_from(session_id, rewind_turn_index)
-            turn_index = rewind_turn_index
-        else:
-            existing_turns = await self.memory.aget_turns(session_id)
-            turn_index = len(existing_turns)
+            return None
 
         tid = resolved_tid or domain_output.trace_id or getattr(request, "trace_id", None)
-        turn = ConversationTurn(
+        turn = await self.memory.aappend_turn(
             session_id=session_id,
-            turn_index=turn_index,
             user_query=request.question,
             assistant_answer=domain_output.answer,
+            rewind_turn_index=getattr(request, "rewind_turn_index", None),
             attachments=getattr(request, "attachments", None) or [],
             citations=domain_output.citations,
             source_used=domain_output.source_used,
             trace_id=tid,
         )
-        await self.memory.asave_turn(turn)
         logger.info(
             "conversation_turn_persisted",
             session_id=session_id,
-            turn_index=turn_index,
+            turn_index=turn.turn_index,
             source_used=domain_output.source_used,
             trace_id=tid,
         )
+        return turn
 
     def _persist_turn_sync(
         self,
         request: WorkflowInput,
         domain_output: WorkflowOutput,
         resolved_tid: str | None = None,
-    ) -> None:
+    ) -> ConversationTurn | None:
         """Synchronous wrapper for conversation turn persistence."""
-        run_async_safely(self._apersist_turn, request, domain_output, resolved_tid)
+        return run_async_safely(self._apersist_turn, request, domain_output, resolved_tid)
 
     def _prepare_execution(
         self,
