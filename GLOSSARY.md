@@ -89,8 +89,20 @@ A pluggable strategy protocol (`DocumentParser`) responsible for reading a raw f
 A pluggable strategy protocol (`DocumentChunker`) partitioning parsed documents into retrieval-optimized text segments with preserved metadata and configurable overlap.
 
 ### Workflow Runner
-The deep execution and streaming runtime module (`app/rag/workflows/runner.py`) orchestrating workflow invocation, LangGraph `astream_events` polling, selective token delta filtering, SSE serialization, telemetry context binding, trace normalization, and online evaluation dispatch behind a compact execution interface (`execute`, `aexecute`, and `stream`).
+The deep execution and streaming runtime module (`app/rag/workflows/runner.py`) orchestrating workflow invocation, LangGraph `astream_events` polling, selective token delta filtering, telemetry context binding, and trace normalization behind a compact execution interface (`execute`, `aexecute`, and `stream`), completely decoupled from wire transport protocols and lifecycle side-effects.
 _Avoid_: Event generator, stream helper, route executor
+
+### Workflow Execution Event
+A strongly-typed domain model (`WorkflowExecutionEvent`) emitted during workflow streaming, encapsulating discrete execution milestones (`StepTransitionEvent`, `TokenDeltaEvent`, `ExecutionCompletedEvent`) independent of transport wire serialization or client communication protocols.
+_Avoid_: SSE chunk, stream string, raw delta dictionary
+
+### Stream Transport Adapter
+A presentation adapter (`SseStreamAdapter`) translating domain execution event streams into transport-specific wire protocols (such as Server-Sent Events or WebSockets) for network delivery.
+_Avoid_: Stream serializer, SSE helper, socket bridge
+
+### Execution Lifecycle Listener
+A pluggable event-driven listener protocol (`ExecutionLifecycleListener`) decoupling post-execution side-effects (such as conversation memory persistence and online evaluation scoring) from the core workflow execution engine.
+_Avoid_: Post-execution hook, background task helper, runner callback
 
 ### Conversation Memory (Memory Seam)
 A strongly-typed protocol seam (`ConversationMemoryAdapter`) defining the storage, retrieval, truncation, and branching lifecycle for multi-turn conversational history. Decouples conversation persistence from graph checkpointer internals and concrete database engines.

@@ -1,175 +1,288 @@
-# Technical Specification: Unified Prompt Store Protocol Seam and Zero-Shim Migration
+# Technical Specification: Decouple Workflow Execution from Transport Wire Protocol and Lifecycle Side-Effects
 
-- **ADR Reference:** `docs/adr/0018-unified-prompt-store-protocol-seam.md`
-- **Target Subsystem:** `app/rag/prompts/`, `app/rag/engine.py`, `app/rag/classifiers.py`, `app/main.py`
-- **Specification Document:** `docs/spec.md` & `docs/specs/0018-unified-prompt-store-protocol-seam-spec.md`
+- **ADR Reference:** `docs/adr/0019-decouple-workflow-execution-from-transport-wire-protocol.md`
+- **Target Subsystems:** `app/rag/workflows/`, `app/api/`, `tests/rag/`, `tests/test_chat_stream.py`
+- **Specification Document:** `docs/spec.md` & `docs/specs/0019-decouple-workflow-execution-from-transport-wire-protocol-spec.md`
 - **Status:** Draft / Ready for Implementation
 
 ---
 
 ## Problem Statement
 
-Following the introduction of the pluggable knowledge store (ADR-0009), evaluation engine (ADR-0013), and conversation memory subsystem (ADR-0016 / ADR-0017), the prompt management subsystem remains the last unseamed legacy area in the repository.
+As the Enterprise Agentic RAG system expanded to support multiple execution backends, dynamic execution profiles, in-place turn rewind, and offline matrix benchmarking, `WorkflowRunner` in `app/rag/workflows/runner.py` became a 1,140-line catch-all module burdened with conflicting domain, transport, and infrastructure concerns:
 
-Currently, prompt retrieval and interpolation are implemented through procedural functions in `app/services/prompts.py` (`get_workflow_prompt`, `seed_prompt`, `seed_all_prompts`) and rely on mutable module-level dictionaries and sets (`LOCAL_PROMPTS`, `_seeded_prompts`). This architecture produces significant friction:
-
-1. **Leaky Fallback and SDK Types**: Callers in `app/rag/engine.py` and `app/rag/classifiers.py` receive either a Langfuse `TextPromptClient` or a local `FallbackPrompt`. Callers must defensively check `getattr(prompt_obj, "is_fallback", False)` and manually assemble `RunnableConfig` metadata dictionaries (`_build_prompt_config`) to link observations in Langfuse traces.
-2. **Pervasive Test Monkeypatching**: Because there is no protocol seam or test double for prompts, unit and integration tests must monkeypatch module globals (`app.services.prompts.get_langfuse_client`, `app.services.prompts.get_settings`, `_seeded_prompts`) rather than injecting a fast, in-memory double.
-3. **Procedural Startup Seeding**: `app/main.py` imports and executes procedural prompt seeding, entangling the application lifespan with Langfuse SDK network checks and mutable process state.
-4. **Architectural Asymmetry**: Unlike knowledge (`app/rag/knowledge/`), memory (`app/rag/memory/`), and evaluation (`app/rag/evaluation/`), prompts are isolated in `app/services/prompts.py`, violating domain cohesion and zero-shim architectural guidelines (ADR-0011).
+1. **Coupled Transport Serialization**: The streaming entrypoint `WorkflowRunner.stream()` directly imports and invokes `format_sse()`, emitting raw HTTP Server-Sent Event strings (`"event: token\ndata: ...\n\n"`). This tightly couples the graph execution runtime with HTTP/1.1 transport semantics, preventing reuse across non-HTTP callers (such as CLI tools, headless benchmarks, or future WebSocket interfaces) and forcing test suites to use regex parsing on text strings to verify execution behavior.
+2. **Entangled Post-Execution Side-Effects**: `WorkflowRunner` directly interacts with SQLite turn persistence transactions (`_apersist_turn`), manages background task collections (`_background_tasks`), and manipulates asyncio event loops. These side-effects cannot be cleanly decoupled during headless evaluation runs or matrix benchmarking, causing unwanted SQLite I/O or necessitating complex mock patching.
+3. **Implicit Memory Fallback**: When instantiated without an explicit `memory` store, `WorkflowRunner` defaults to `get_conversation_memory()`, opening the global `data/conversations.db` database connection even during unit testing and stateless benchmark executions.
+4. **Fragile Error Handling in Streaming**: Uncaught exceptions during graph execution cause abrupt socket disconnections without emitting application-level failure frames or invoking cleanup hooks.
+5. **Violated Architectural Dependency Rules**: The execution engine should be purely in-process and transport-agnostic, with strict unidirectional dependencies flowing from `app/api/` into `app/rag/`, and never the reverse.
 
 ---
 
 ## Solution
 
-Consolidate prompt resolution, template interpolation, observation metadata binding, and startup seeding behind a unified, deep `PromptStore` protocol seam in `app/rag/prompts/`:
+Decouple `WorkflowRunner` into a pure, transport-agnostic execution engine that yields strongly-typed domain events, delegates post-execution side-effects to an event-driven lifecycle listener protocol, and moves all SSE wire serialization to a presentation adapter in `app/api/`:
 
-1. **Protocol Seam (`PromptStore`)**:
-   Expose a high-leverage method `render(name, config=None, **variables) -> RenderedPrompt` that resolves the prompt template, performs fail-open mustache interpolation, and merges Langfuse observation metadata directly into `RunnableConfig`.
-2. **Domain Value Object (`RenderedPrompt`)**:
-   Return a strongly-typed model encapsulating `name: str`, `text: str`, `config: dict[str, Any]`, and `raw_prompt: Any`, implementing `__str__` returning `self.text` for seamless coercion when passed into chat models or LLMs.
-3. **Pluggable Concrete Adapters**:
-   - `LangfusePromptStore`: Production adapter with in-memory TTL caching, remote Langfuse Prompt CMS retrieval, automatic fail-open local fallback, and Langfuse observation linking.
-   - `LocalPromptStore`: In-memory offline adapter backed by canonical template strings for deterministic unit testing without network or third-party credentials.
-4. **Deterministic Template Engine**:
-   Provide a shared, fail-open mustache interpolation engine handling variable whitespace, backslash escapes, and missing variable preservation identically across adapters.
-5. **Dependency Injection**:
-   Inject `prompt_store: PromptStore | None = None` into `create_agentic_rag_graph`, `OpenAIClassifierAdapter`, and `JevClassifierAdapter`, defaulting to `get_prompt_store()`.
-6. **Zero-Shim Migration**:
-   Update all callers (`engine.py`, `classifiers.py`, `main.py`) directly to `app/rag/prompts/` and prune `app/services/prompts.py` completely per ADR-0011.
+1. **Domain Event Stream (`app/rag/workflows/events.py`)**:
+   Define a discriminated union `WorkflowExecutionEvent` (`StepTransitionEvent`, `TokenDeltaEvent`, `ExecutionCompletedEvent`, `ExecutionFailedEvent`). `WorkflowRunner.stream()` yields this typed generator, completely ignorant of HTTP or SSE.
+2. **Pluggable Lifecycle Listeners (`app/rag/workflows/listeners.py`)**:
+   Establish an `ExecutionLifecycleListener` protocol with hooks for `on_completed` (awaited for immediate turn persistence), `on_background_task` (detached background tasks for online evaluation), `on_error` (failure handling), and `on_cancelled` (clean resource flushing on client disconnect). Provide a `BaseExecutionLifecycleListener` with default no-op methods and concrete adapters `MemoryPersistenceListener` and `OnlineEvaluationListener`.
+3. **Transport Wire Adapter (`app/api/streaming.py`)**:
+   Implement `SseStreamAdapter` in `app/api/` that translates `AsyncGenerator[WorkflowExecutionEvent, None]` into SSE text frames formatted identically to current client expectations (`step`, `token`, `metadata`, and `error`).
+4. **Explicit Memory Pluggability**:
+   Require memory to be explicit. If `memory is None` or `isinstance(memory, NoOpMemoryStore)`, completely bypass pre-execution history hydration and post-execution turn persistence, executing with zero SQLite or disk overhead.
+5. **Strict Unidirectional Seam**:
+   `app/rag/workflows/runner.py` retains **zero imports** from `app/api/` and zero awareness of HTTP or SSE wire protocols.
 
 ---
 
 ## User Stories
 
-1. As a workflow engine developer, I want to call `prompt_store.render("rag:direct_answer", config=run_cfg, question=q)`, so that I receive compiled prompt text and pre-merged observation configuration in a single call without manual `RunnableConfig` assembly.
-2. As a decision classifier adapter, I want `prompt_store.render(...)` to automatically attach the appropriate observation metadata (`langfuse_prompt` or `prompt_fallback: True`), so that my routing and grading methods do not branch on internal SDK fallback flags.
-3. As an engineer writing unit tests, I want `LocalPromptStore` to execute completely offline in memory, so that test suites run deterministically in milliseconds without network dependencies or monkeypatching.
-4. As a test author, I want `tests/conftest.py` to automatically reset the prompt store singleton between tests via an autouse fixture, so that test cases never suffer from cross-test state leakage.
-5. As a developer building custom workflow variants or test scenarios, I want `LocalPromptStore.register_prompt(name, template)` to register custom prompts dynamically, so that tests can supply specialized prompts without mutating global dictionary state.
-6. As an LLM caller passing prompts into LangChain chat models, I want `str(rendered_prompt)` to yield `rendered_prompt.text`, so that models can accept rendered prompts directly without unpack ceremony.
-7. As an IT support user submitting questions containing backslashes (e.g. Windows file paths like `C:\Users\foo`), I want the mustache template compiler to preserve backslashes safely, so that path references are never corrupted during prompt interpolation.
-8. As a developer extending prompts with variable spacing (e.g. `{{  current_query  }}`), I want the template compiler to trim whitespace inside mustache brackets, so that template whitespace variations do not cause compile failures.
-9. As a developer omitting optional context variables during prompt compilation, I want the compiler to preserve unprovided mustache tags fail-open, so that partial formatting does not raise runtime KeyError or regex exceptions.
-10. As an ops engineer launching the application, I want `app/main.py` to call `prompt_store.seed_prompts()` during startup lifespan, so that canonical prompts are verified in Langfuse once at boot and live inference runs remain read-only.
-11. As a maintainer inspecting the codebase, I want all prompt-related code to reside in `app/rag/prompts/` rather than `app/services/prompts.py`, so that repository navigation conforms to standard domain packaging.
-12. As a developer verifying zero-shim standards (ADR-0011), I want `app/services/prompts.py` deleted rather than left behind as a permanent redirect shim, so that the codebase remains free of dead facade layers.
+1. As a platform developer, I want `WorkflowRunner.stream()` to yield strongly-typed `WorkflowExecutionEvent` objects, so that I can consume streaming graph execution in non-HTTP environments (CLI benchmarks, WebSockets, offline test harnesses) without parsing SSE text strings.
+2. As a test author, I want to assert on `StepTransitionEvent(step="grade_evidence")` and `TokenDeltaEvent(delta="...")` directly, so that my unit tests do not break when whitespace or JSON formatting changes in the transport layer.
+3. As a developer running offline matrix benchmarks, I want to instantiate `WorkflowRunner` with `memory=None` and empty listeners, so that benchmark iterations execute with zero database I/O, no background judge tasks, and maximum speed.
+4. As an API client receiving streaming responses, I want `SseStreamAdapter` to serialize `ExecutionCompletedEvent` into a `metadata` event frame containing `trace_id`, `session_id`, `workflow`, `source_used`, `citations`, `trace`, `rewritten_query`, and `variant_id`, so that the frontend UI continues to render citations and accordions without modification.
+5. As an API client encountering a runtime graph error during streaming, I want `SseStreamAdapter` to emit an `error` frame before the connection closes, so that my UI displays an informative error toast instead of an unexplained broken stream.
+6. As a conversational user submitting rapid follow-up queries, I want `MemoryPersistenceListener.on_completed` to be awaited before `ExecutionCompletedEvent` is emitted, so that prior conversation turns are guaranteed to be in SQLite before my next query begins.
+7. As an end user streaming a long response who closes the browser tab, I want `WorkflowRunner` to invoke `on_cancelled` on listeners, so that incomplete half-sentence assistant responses are discarded and never persisted to my session history.
+8. As an operations engineer monitoring production performance, I want `OnlineEvaluationListener` to run as a detached background task, so that judge model evaluations never add latency to the user's streaming response.
+9. As an architect enforcing domain cleanliness, I want `app/rag/workflows/runner.py` to contain zero references to `format_sse`, `text/event-stream`, or `app/api/`, so that the execution core remains strictly decoupled from presentation logic.
+10. As a developer adding an audit logging plugin, I want to register a custom `ExecutionLifecycleListener`, so that I can observe completed workflow outputs without modifying the runner's execution logic.
+11. As a developer configuring execution parameters, I want `WorkflowRunner.execute()` and `WorkflowRunner.aexecute()` to trigger lifecycle listeners identically to streaming execution, so that turn persistence and online evaluation behave consistently across sync, async, and streaming routes.
+12. As a developer testing edge cases, I want `BaseExecutionLifecycleListener` to provide default no-op implementations for all hooks, so that I only need to implement the specific lifecycle methods relevant to my adapter.
+13. As a maintainer inspecting the codebase, I want `app/api/routes.py` to clearly route `POST /api/chat/stream` through `SseStreamAdapter.format(runner.stream(request))`, so that the transport seam is visible and readable.
+14. As a test author writing integration tests in `tests/test_chat_stream.py`, I want `SseStreamAdapter` to be verified for correct SSE formatting (event names, JSON escaping, multi-line data), so that wire regressions are caught at the presentation seam.
+15. As a developer inspecting dependency boundaries, I want `app/rag/workflows/__init__.py` to export the public events (`WorkflowExecutionEvent`, etc.) and listeners (`ExecutionLifecycleListener`, etc.), so that external packages import canonical domain symbols cleanly.
 
 ---
 
 ## Implementation Decisions
 
-### 1. Subsystem Architecture (`app/rag/prompts/`)
-Organize prompt management into a dedicated domain package:
-- `app/rag/prompts/base.py`: Declares `PromptStore` protocol seam, `RenderedPrompt` model, and canonical prompt keys constant `CANONICAL_PROMPTS: dict[str, str]`.
-- `app/rag/prompts/local.py`: Implements `LocalPromptStore` satisfying `PromptStore`.
-- `app/rag/prompts/langfuse.py`: Implements `LangfusePromptStore` satisfying `PromptStore`.
-- `app/rag/prompts/__init__.py`: Exports public symbols, `get_prompt_store()`, and `reset_prompt_store()`.
+### 1. Domain Event Subsystem (`app/rag/workflows/events.py`)
 
-### 2. Seam Interface Contract
-The `PromptStore` protocol seam is defined as:
+Create `app/rag/workflows/events.py` defining the discriminated domain event union:
+
 ```python
+from typing import Literal, Union
+from pydantic import BaseModel, Field
+from app.api.schemas import WorkflowOutput
+
+
+class StepTransitionEvent(BaseModel):
+    """Emitted when the execution graph transitions between discrete nodes."""
+
+    type: Literal["step"] = "step"
+    step: str = Field(description="Name of the node entered (e.g. 'retrieve', 'grade_evidence')")
+
+
+class TokenDeltaEvent(BaseModel):
+    """Emitted when a generation node produces an LLM token chunk."""
+
+    type: Literal["token"] = "token"
+    delta: str = Field(description="Generated textual token content")
+
+
+class ExecutionCompletedEvent(BaseModel):
+    """Emitted upon successful completion of workflow execution."""
+
+    type: Literal["completed"] = "completed"
+    output: WorkflowOutput = Field(description="Canonical workflow domain output")
+
+
+class ExecutionFailedEvent(BaseModel):
+    """Emitted when workflow execution fails with an uncaught exception."""
+
+    type: Literal["failed"] = "failed"
+    error: str = Field(description="Human-readable error description")
+    code: str = Field(default="EXECUTION_ERROR", description="Machine-readable error code")
+
+
+WorkflowExecutionEvent = Union[
+    StepTransitionEvent,
+    TokenDeltaEvent,
+    ExecutionCompletedEvent,
+    ExecutionFailedEvent,
+]
+```
+
+### 2. Execution Lifecycle Listener Protocol (`app/rag/workflows/listeners.py`)
+
+Create `app/rag/workflows/listeners.py` defining the lifecycle listener interface and concrete implementations:
+
+```python
+from typing import Any, Protocol, runtime_checkable
+from app.api.schemas import WorkflowInput, WorkflowOutput
+
+
 @runtime_checkable
-class PromptStore(Protocol):
-    def render(
-        self,
-        name: str,
-        config: RunnableConfig | None = None,
-        **variables: Any,
-    ) -> RenderedPrompt: ...
+class ExecutionLifecycleListener(Protocol):
+    """Protocol for receiving execution lifecycle notifications and executing side-effects."""
 
-    def get_template(self, name: str) -> str: ...
+    async def on_completed(self, request: WorkflowInput, output: WorkflowOutput) -> None:
+        """Awaited immediately upon successful execution before terminal event emission."""
+        ...
 
-    def seed_prompts(self) -> dict[str, bool]: ...
+    async def on_background_task(self, request: WorkflowInput, output: WorkflowOutput) -> None:
+        """Executed concurrently in a detached background task without delaying response."""
+        ...
+
+    async def on_error(self, request: WorkflowInput, error: Exception) -> None:
+        """Invoked when execution fails with an exception."""
+        ...
+
+    async def on_cancelled(self, request: WorkflowInput, partial_output: WorkflowOutput | None) -> None:
+        """Invoked when execution is cancelled by client disconnect."""
+        ...
+
+
+class BaseExecutionLifecycleListener:
+    """Default no-op implementation of ExecutionLifecycleListener."""
+
+    async def on_completed(self, request: WorkflowInput, output: WorkflowOutput) -> None:
+        pass
+
+    async def on_background_task(self, request: WorkflowInput, output: WorkflowOutput) -> None:
+        pass
+
+    async def on_error(self, request: WorkflowInput, error: Exception) -> None:
+        pass
+
+    async def on_cancelled(self, request: WorkflowInput, partial_output: WorkflowOutput | None) -> None:
+        pass
 ```
 
-### 3. Value Object Contract (`RenderedPrompt`)
+#### Concrete Adapters in `app/rag/workflows/listeners.py`:
+- **`MemoryPersistenceListener`**:
+  - Implements `on_completed`: Awaits `memory.aappend_turn(...)` when `request.session_id` and `output.answer` are present.
+  - Implements `on_cancelled`: Discards partial state; does NOT persist incomplete turns to SQLite.
+- **`OnlineEvaluationListener`**:
+  - Implements `on_background_task`: Schedules `eval_task_fn(...)` safely, catching and logging any judge evaluation exceptions without affecting the caller.
+
+### 3. Transport Wire Adapter (`app/api/streaming.py`)
+
+Create `app/api/streaming.py` isolating all Server-Sent Events serialization logic:
+
 ```python
-class RenderedPrompt(BaseModel):
-    name: str
-    text: str
-    config: dict[str, Any] = Field(default_factory=dict)
-    raw_prompt: Any = None
+from typing import AsyncGenerator
+from app.rag.workflows.events import (
+    ExecutionCompletedEvent,
+    ExecutionFailedEvent,
+    StepTransitionEvent,
+    TokenDeltaEvent,
+    WorkflowExecutionEvent,
+)
+from app.rag.workflows.runner import format_sse  # Wire helper moved or imported
 
-    def __str__(self) -> str:
-        return self.text
+
+class SseStreamAdapter:
+    """Presentation adapter translating domain WorkflowExecutionEvent streams into HTTP SSE text frames."""
+
+    @classmethod
+    async def format(
+        cls,
+        events: AsyncGenerator[WorkflowExecutionEvent, None],
+    ) -> AsyncGenerator[str, None]:
+        async for event in events:
+            if isinstance(event, StepTransitionEvent):
+                yield format_sse("step", {"step": event.step})
+            elif isinstance(event, TokenDeltaEvent):
+                yield format_sse("token", {"delta": event.delta})
+            elif isinstance(event, ExecutionCompletedEvent):
+                output = event.output
+                metadata_payload = {
+                    "trace_id": output.trace_id,
+                    "session_id": output.session_id,
+                    "workflow": output.workflow,
+                    "source_used": output.source_used,
+                    "citations": [c.model_dump() if hasattr(c, "model_dump") else c for c in output.citations],
+                    "trace": output.trace,
+                    "rewritten_query": output.rewritten_query,
+                    "variant_id": output.variant_id,
+                }
+                yield format_sse("metadata", metadata_payload)
+            elif isinstance(event, ExecutionFailedEvent):
+                yield format_sse("error", {"error": event.error, "code": event.code})
 ```
-The `config` dictionary is pre-merged with inbound `RunnableConfig` (if provided) and populated with observation metadata:
-- If backed by Langfuse `TextPromptClient`: `config["metadata"]["langfuse_prompt"] = raw_prompt`
-- If backed by local fallback template: `config["metadata"]["prompt_name"] = name` and `config["metadata"]["prompt_fallback"] = True`
 
-### 4. Template Interpolation Rules
-Deterministic mustache compilation:
-- Replace `r"\{\{\s*" + re.escape(key) + r"\s*\}\}"` with `str(value)` using a callable replacer to prevent backslash escaping pitfalls.
-- Leave unprovided placeholders untouched.
-- Maintain identical behavior across `LocalPromptStore` and `LangfusePromptStore`.
+### 4. Refactoring `WorkflowRunner` (`app/rag/workflows/runner.py`)
 
-### 5. Concrete Adapters
-- **`LocalPromptStore`**:
-  - Initialized with `templates: dict[str, str] | None = None`, defaulting to a copy of `CANONICAL_PROMPTS`.
-  - Exposes `register_prompt(name: str, template: str)` for dynamic runtime and test registration.
-  - `seed_prompts()` returns `{name: True for name in self._templates}` without network operations.
-- **`LangfusePromptStore`**:
-  - Parameterized with `settings: Settings | None = None` and `client: Any | None = None`.
-  - Retrieves remote prompt with `client.get_prompt(name=name, label="production", cache_ttl_seconds=ttl)`.
-  - Falls back gracefully to `LocalPromptStore` logic when `langfuse_enabled` is False, client is unavailable, or remote call raises an exception.
-  - `seed_prompts()` iterates over `CANONICAL_PROMPTS`, checks existing prompts on server with `cache_ttl_seconds=0`, and creates missing prompts with label `"production"`.
+1. **Remove Wire Coupling**:
+   - Delete all `yield self.format_sse(...)` calls from `stream()`.
+   - Instead, `yield StepTransitionEvent(step=node_name)`, `yield TokenDeltaEvent(delta=delta_content)`, and `yield ExecutionCompletedEvent(output=domain_output)`.
+   - Wrap graph iteration in `try...except Exception as exc:` to catch uncaught stream errors, invoke `listener.on_error(...)`, and `yield ExecutionFailedEvent(error=str(exc))`.
+   - In `except (asyncio.CancelledError, GeneratorExit):`, invoke `listener.on_cancelled(...)` and cleanly flush telemetry.
+2. **Pluggable Listeners**:
+   - `WorkflowRunner.__init__` accepts `listeners: list[ExecutionLifecycleListener] | None = None`.
+   - If `listeners is None`, configure default listeners:
+     - `MemoryPersistenceListener(memory=self._memory)` (only if `self._memory` is active and not `NoOpMemoryStore`).
+     - `OnlineEvaluationListener(eval_task_fn=self.eval_task_fn or self._safe_evaluate)`.
+3. **Explicit Memory**:
+   - `_memory: ConversationMemoryAdapter | None = None`.
+   - If `self._memory is None`, do NOT fall back to `get_conversation_memory()`. Memory hydration and persistence are completely skipped.
+4. **Lifecycle Hooks in Execution**:
+   - In `_finalize_execution` (sync/async) and `stream()`, trigger:
+     - Await all `listener.on_completed(request, domain_output)` for immediate listeners.
+     - Dispatch `listener.on_background_task(request, domain_output)` for background tasks.
+5. **Zero API Imports**:
+   - Verify `runner.py` contains zero imports from `app/api/`.
 
-### 6. Dependency Injection & Caller Updates
-- `create_agentic_rag_graph` in `app/rag/engine.py` accepts `prompt_store: PromptStore | None = None` defaulting to `get_prompt_store()`.
-- `OpenAIClassifierAdapter` and `JevClassifierAdapter` in `app/rag/classifiers.py` accept `prompt_store: PromptStore | None = None` defaulting to `get_prompt_store()`.
-- Remove `_build_prompt_config` from `app/rag/classifiers.py` and delete `FallbackPrompt` from `app/services/prompts.py`.
-- Callers replace `get_workflow_prompt` + `_build_prompt_config` with a single `prompt_store.render(name, config=config, **variables)`.
-- `app/main.py` updates startup lifespan to call `get_prompt_store().seed_prompts()`.
-- Delete `app/services/prompts.py` completely.
+### 5. HTTP Routes Simplification (`app/api/routes.py`)
 
-### 7. Test Suite Infrastructure
-- `tests/conftest.py` adds `reset_prompt_store()` inside the autouse fixture.
-- Expose `fake_prompt_store` fixture providing an isolated `LocalPromptStore` instance.
-- Update `tests/test_prompts_cms.py` to test `LocalPromptStore`, `LangfusePromptStore`, and the `PromptStore` protocol.
+Update `POST /api/chat/stream`:
+```python
+@router.post("/chat/stream")
+async def chat_stream(request: ChatRequest) -> StreamingResponse:
+    wf_input = request.to_workflow_input()
+    event_stream = get_workflow_runner().stream(wf_input)
+    return StreamingResponse(
+        SseStreamAdapter.format(event_stream),
+        media_type="text/event-stream; charset=utf-8",
+    )
+```
 
 ---
 
 ## Testing Decisions
 
 ### What Makes a Good Test
-- **Behavior-Driven Over Implementation**: Tests assert against public protocol methods (`render`, `get_template`, `seed_prompts`), verifying compiled string output, metadata propagation in `RunnableConfig`, and fallback handling.
-- **Offline Speed**: Unit tests must not require Langfuse API keys or network access; `LocalPromptStore` must execute in under 1ms.
-- **Integration Seam Tests**: Tests in `tests/test_workflow_engine.py` and `tests/test_workflow_classifiers.py` must verify that injecting a custom `PromptStore` correctly influences node behavior and classifier output.
+- Tests must assert external behavior across documented seams, never inspecting private runner variables or internal call counts.
+- Domain tests verify structured `WorkflowExecutionEvent` types and properties.
+- Wire tests verify SSE framing semantics and HTTP streaming compatibility.
+- Offline tests verify that passing `memory=None` performs zero disk or SQLite operations.
 
-### Target Test Modules
-1. `tests/rag/test_prompt_store.py`: Protocol verification, template interpolation edge cases (whitespace, backslashes, missing variables), dynamic prompt registration, and singleton lifecycle.
-2. `tests/rag/test_langfuse_prompt_store.py`: Remote caching, TTL behavior, fail-open fallback when Langfuse is disabled or errors, observation metadata synthesis, and seeding idempotency.
-3. `tests/test_workflow_engine.py`: Graph execution with custom injected `PromptStore`.
-4. `tests/test_workflow_classifiers.py`: Classifiers (`OpenAIClassifierAdapter`, `JevClassifierAdapter`) routing and grading with injected `PromptStore`.
+### Modules to Test
+1. **`tests/rag/test_workflow_events.py`**:
+   - Unit test serialization and validation of `WorkflowExecutionEvent` models.
+2. **`tests/rag/test_workflow_listeners.py`**:
+   - Verify `MemoryPersistenceListener` awaits turn persistence and discards turns on cancellation.
+   - Verify `OnlineEvaluationListener` safely schedules detached evaluation.
+3. **`tests/rag/test_workflow_execution.py`**:
+   - Verify `WorkflowRunner.stream()` yields typed events in order: `StepTransitionEvent` -> `TokenDeltaEvent`* -> `ExecutionCompletedEvent`.
+   - Verify error during streaming yields `ExecutionFailedEvent`.
+   - Verify client disconnect triggers `on_cancelled`.
+   - Verify `memory=None` executes cleanly with zero memory interactions.
+4. **`tests/api/test_sse_stream_adapter.py`**:
+   - Unit test `SseStreamAdapter.format()` converting typed events into valid SSE text frames.
+5. **`tests/test_chat_stream.py`**:
+   - End-to-end HTTP streaming regression tests ensuring the existing client/UI contract remains 100% backward-compatible.
 
 ### Prior Art
-- `tests/rag/test_knowledge_store.py` (offline `InMemoryVectorStoreAdapter` tests)
-- `tests/rag/test_evaluation_engine.py` (offline `FakeEvaluator` tests)
-- `tests/rag/test_conversation_memory_in_memory.py` (offline `InMemoryConversationStore` tests)
+- `tests/rag/test_workflow_runner.py`: Existing tests for parameter precedence and graph compilation.
+- `tests/test_chat_stream.py`: Existing SSE streaming route tests.
+- `tests/rag/test_conversation_memory.py`: Existing memory adapter seam testing patterns.
 
 ---
 
 ## Out of Scope
 
-- Migrating prompts to external template files (Jinja2 / disk files); templates remain canonical Python dictionary constants in `base.py`.
-- Modifying prompt texts or system instructions; all 11 existing canonical prompt strings remain unaltered.
-- Changing `WorkflowRunner` execution pipeline or streaming event semantics.
-- Introducing multi-lingual or localized prompt variants.
+- Modifying LangGraph node definitions (`retrieve_kb`, `grade_evidence`, etc.) in `app/rag/engine.py`.
+- Changing the schema of SQLite `conversations.db` or `ConversationTurn`.
+- Introducing external distributed task workers (Celery, RQ, RabbitMQ).
+- Modifying frontend DOM construction logic in `static/js/app.js` (client consumes the identical SSE frames).
 
 ---
 
 ## Further Notes
 
-- All 11 canonical prompt keys must be preserved identically:
-  - `rag:router:llm`
-  - `rag:router:jev`
-  - `rag:grade_kb:llm`
-  - `rag:grade_kb:jev`
-  - `rag:grade_web:llm`
-  - `rag:grade_web:jev`
-  - `rag:rewrite_query`
-  - `rag:generate_kb`
-  - `rag:generate_web`
-  - `rag:direct_answer`
-  - `rag:condense_query`
+- By decoupling wire formatting into `SseStreamAdapter`, the codebase is now prepared for future presentation adapters (such as WebSocket streaming or gRPC) without touching the RAG execution engine.
+- This refactoring reduces `WorkflowRunner` by ~300 lines of wire serialization and ad-hoc background task code, significantly improving maintainability and test execution speed.
