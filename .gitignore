@@ -227,4 +227,6 @@ data/*.db
 data/*.db-wal
 data/*.db-shm
 *.db
+uploads/*
+!uploads/novacore_company_information.pdf
 

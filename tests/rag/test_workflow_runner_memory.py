@@ -724,3 +724,49 @@ async def test_runner_execution_never_calls_atruncate_from_or_aget_turns():
     mock_memory.aget_turns.assert_not_called()
     mock_memory.atruncate_from.assert_not_called()
 
+
+@pytest.mark.asyncio
+async def test_runner_hydrate_memory_does_not_mutate_request_messages(monkeypatch: pytest.MonkeyPatch):
+    """Verify _ahydrate_memory leaves caller WorkflowInput.messages untouched (immutable domain DTO)."""
+    memory = MagicMock()
+    fake_messages = [HumanMessage(content="Prior q"), AIMessage(content="Prior a")]
+    memory.aget_messages = AsyncMock(return_value=fake_messages)
+
+    runner = WorkflowRunner(memory=memory)
+    mock_settings = MagicMock()
+    mock_settings.memory_max_turns = 10
+    mock_settings.app_env = "testing"
+    monkeypatch.setattr(runner, "settings", mock_settings)
+
+    req = WorkflowInput(
+        question="What is the policy?",
+        session_id="test-session-immutable",
+        messages=None,
+    )
+    hydrated = await runner._ahydrate_memory(req)
+    assert hydrated == fake_messages
+    assert req.messages is None  # Must NOT be mutated in-place
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("sentinel_id", [None, "", "   ", "undefined", "UNDEFINED", "null", "Null"])
+async def test_runner_persist_turn_rejects_sentinel_session_ids(sentinel_id: str | None):
+    """Verify _apersist_turn mirrors sentinel session validation and aborts persistence without calling aappend_turn."""
+    memory = MagicMock()
+    memory.aappend_turn = AsyncMock()
+
+    runner = WorkflowRunner(memory=memory)
+    req = WorkflowInput(
+        question="How does auth work?",
+        session_id=sentinel_id,
+    )
+    output = WorkflowOutput(
+        workflow="mock_wf",
+        answer="Auth uses JWT tokens.",
+        source_used="vectorstore",
+    )
+
+    result = await runner._apersist_turn(req, output)
+    assert result is None
+    memory.aappend_turn.assert_not_called()
+

@@ -282,10 +282,6 @@ class WorkflowRunner:
             rewind_turn_index=rewind_turn_index,
         )
         if hydrated or rewind_turn_index is not None:
-            try:
-                request.messages = hydrated
-            except Exception:
-                pass
             return hydrated
         return getattr(request, "messages", None)
 
@@ -301,9 +297,11 @@ class WorkflowRunner:
     ) -> ConversationTurn | None:
         """Atomically truncate prior turns if rewinding and persist new completed semantic turn."""
         session_id = getattr(request, "session_id", None)
-        if not session_id or not domain_output.answer or not domain_output.answer.strip():
+        if not session_id or not str(session_id).strip() or str(session_id).strip().lower() in ("undefined", "null"):
             return None
-        if domain_output.source_used == "error" and not domain_output.answer:
+        session_id = str(session_id).strip()
+
+        if not domain_output.answer or not domain_output.answer.strip():
             return None
 
         tid = resolved_tid or domain_output.trace_id or getattr(request, "trace_id", None)
