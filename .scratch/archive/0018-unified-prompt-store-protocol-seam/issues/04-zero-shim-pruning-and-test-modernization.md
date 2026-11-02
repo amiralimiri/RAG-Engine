@@ -5,7 +5,7 @@ Complete the zero-shim architectural migration per ADR-0011 by modernizing `test
 
 **Blocked by:** 03: Dependency Injection in Workflow Engine, Classifiers & Main Startup
 
-**Status:** done
+**Status:** completed
 
 - [x] Modernize `tests/test_prompts_cms.py` to test `PromptStore`, `LocalPromptStore`, and `LangfusePromptStore` public interfaces without monkeypatching module globals.
 - [x] Search the repository for any lingering references to `app.services.prompts` and update them to `app.rag.prompts`.

@@ -26,6 +26,10 @@ Guidelines and patterns established in ADR-0011 (Comprehensive Codebase Unificat
    - All file parsing and supported format definitions live in `app.rag.knowledge`.
    - `SUPPORTED_EXTENSIONS` is exported directly from `app.rag.knowledge`. Facade modules like `app/services/ingestion.py` and `app/rag/vectorstore.py` are permanently retired.
 
+6. **Canonical Prompt Management Exports**:
+   - All prompt resolution, templating, and observation configuration live in `app.rag.prompts`.
+   - `PromptStore` protocol seam and `RenderedPrompt` model replace procedural prompt fetching. Legacy `app/services/prompts.py` is permanently retired with zero backward-compatibility shims.
+
 ---
 
 ## 2. Test Suite Standards & Fixture Architecture

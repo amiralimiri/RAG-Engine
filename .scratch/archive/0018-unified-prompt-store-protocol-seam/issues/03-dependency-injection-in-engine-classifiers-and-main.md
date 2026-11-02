@@ -5,7 +5,7 @@ Refactor `app/rag/engine.py`, `app/rag/classifiers.py`, and `app/main.py` to con
 
 **Blocked by:** 02: Langfuse CMS Production Adapter, Factory & Test Fixtures
 
-**Status:** closed
+**Status:** completed
 
 - [x] Parameterize `create_agentic_rag_graph` in `app/rag/engine.py` with `prompt_store: PromptStore | None = None` defaulting to `get_prompt_store()`.
 - [x] Refactor `node_condense_query`, `direct_answer`, and `_prepare_generation_prompt` in `engine.py` to call `prompt_store.render(...)`.

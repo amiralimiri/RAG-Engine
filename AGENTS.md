@@ -35,3 +35,8 @@ Unified Evaluator protocol seam, lazy judge lifecycles, execution context retrie
 ### Conversation memory & session branching
 
 ConversationMemoryAdapter protocol seam, SQLite persistent storage, atomic rewind/truncation, session branching, and offline test doubles. See `docs/agents/conversation-memory.md`.
+
+### Prompt store & management
+
+PromptStore protocol seam, RenderedPrompt observation binding, defensive config cloning, and offline test doubles. See `docs/agents/prompt-store.md`.
+
