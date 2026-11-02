@@ -1,7 +1,7 @@
 # Ticket 05: End-to-End Integration & Regression Verification
 
 - **Milestone:** Deepen Conversation Memory Seam (ADR-0017)
-- **Status:** ready-for-agent
+- **Status:** completed
 - **Blocked by:** Ticket 04 (WorkflowRunner Caller Streamlining)
 - **Estimated Scope:** Small
 
@@ -33,7 +33,7 @@ Perform comprehensive end-to-end integration and regression testing across HTTP 
 ---
 
 ## Acceptance Criteria
-- [ ] End-to-end multi-turn conversation and rewind flows pass via HTTP routes.
-- [ ] Explicit REST rewind endpoint (`/api/chat/{session_id}/rewind`) functions properly.
-- [ ] Entire test suite (`uv run pytest tests`) passes 100% green (651+ tests).
-- [ ] No regressions in streaming or synchronous execution pipelines.
+- [x] End-to-end multi-turn conversation and rewind flows pass via HTTP routes.
+- [x] Explicit REST rewind endpoint (`/api/chat/{session_id}/rewind`) functions properly.
+- [x] Entire test suite (`uv run pytest tests`) passes 100% green (651+ tests).
+- [x] No regressions in streaming or synchronous execution pipelines.

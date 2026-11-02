@@ -25,7 +25,7 @@ def memory_store(monkeypatch) -> InMemoryConversationStore:
     """Fixture providing an isolated in-memory conversation memory adapter."""
     store = InMemoryConversationStore()
     monkeypatch.setattr("app.rag.memory._memory_instance", store)
-    runner = WorkflowRunner(registry=get_workflow_registry(), memory=store)
+    runner = WorkflowRunner(registry=get_workflow_registry(), memory=store, eval_task_fn=lambda **kwargs: None)
     monkeypatch.setattr("app.rag.workflows.runner._default_runner", runner)
     return store
 
@@ -307,3 +307,203 @@ class TestChatMemoryRoutes:
         assert detail.turns[1].turn_index == 1
         assert detail.turns[1].user_query == "Rewritten query for turn 1"
         assert detail.turns[1].assistant_answer == "Replaced answer for turn 1"
+
+    def test_sequential_turns_monotonic_indices(
+        self,
+        client: TestClient,
+        memory_store: InMemoryConversationStore,
+        register_mock_workflow: Callable[..., MockWorkflowDefinition],
+    ):
+        """POST /api/chat sequential turns persist monotonically incrementing turn indices."""
+        session_id = "sess-monotonic-test"
+        queries = ["First question", "Second question", "Third question"]
+        answers = ["First answer", "Second answer", "Third answer"]
+
+        for i, (q, a) in enumerate(zip(queries, answers)):
+            register_mock_workflow("fix_single_jev", answer=a)
+            resp = client.post(
+                "/api/chat",
+                json={"question": q, "session_id": session_id, "workflow": "fix_single_jev"},
+            )
+            assert resp.status_code == 200
+            assert resp.json()["answer"] == a
+
+        # Verify session detail reflects 3 monotonic turns
+        get_resp = client.get(f"/api/chat/{session_id}")
+        assert get_resp.status_code == 200
+        detail = SessionDetailResponse(**get_resp.json())
+        assert detail.turn_count == 3
+        assert len(detail.turns) == 3
+        for idx, turn in enumerate(detail.turns):
+            assert turn.turn_index == idx
+            assert turn.user_query == queries[idx]
+            assert turn.assistant_answer == answers[idx]
+
+    def test_standalone_rewind_with_subsequent_chat_append(
+        self,
+        client: TestClient,
+        memory_store: InMemoryConversationStore,
+        register_mock_workflow: Callable[..., MockWorkflowDefinition],
+    ):
+        """Standalone POST /api/chat/{session_id}/rewind truncates turns via atruncate_from,
+        and subsequent POST /api/chat correctly appends at the truncated index.
+        """
+        session_id = "sess-standalone-rewind-append"
+        for i in range(3):
+            register_mock_workflow("fix_single_jev", answer=f"Answer {i}")
+            client.post(
+                "/api/chat",
+                json={"question": f"Question {i}", "session_id": session_id, "workflow": "fix_single_jev"},
+            )
+
+        # Truncate turns from index 1 (removes turn 1 and 2, keeps turn 0)
+        rewind_resp = client.post(f"/api/chat/{session_id}/rewind", json={"turn_index": 1})
+        assert rewind_resp.status_code == 200
+
+        detail_resp = client.get(f"/api/chat/{session_id}")
+        assert detail_resp.json()["turn_count"] == 1
+
+        # Post new turn, should be assigned turn_index = 1
+        register_mock_workflow("fix_single_jev", answer="New replacement answer")
+        resp = client.post(
+            "/api/chat",
+            json={"question": "New question at index 1", "session_id": session_id, "workflow": "fix_single_jev"},
+        )
+        assert resp.status_code == 200
+
+        detail_after = client.get(f"/api/chat/{session_id}").json()
+        assert detail_after["turn_count"] == 2
+        assert len(detail_after["turns"]) == 2
+        assert detail_after["turns"][0]["turn_index"] == 0
+        assert detail_after["turns"][1]["turn_index"] == 1
+        assert detail_after["turns"][1]["user_query"] == "New question at index 1"
+        assert detail_after["turns"][1]["assistant_answer"] == "New replacement answer"
+
+    def test_streaming_sequential_turns_and_rewind(
+        self,
+        client: TestClient,
+        memory_store: InMemoryConversationStore,
+        register_mock_workflow: Callable[..., MockWorkflowDefinition],
+    ):
+        """POST /api/chat/stream persists sequential turns and handles rewind_turn_index correctly."""
+        session_id = "sess-stream-seq"
+        register_mock_workflow("fix_single_jev", answer="Stream answer 0")
+        resp0 = client.post(
+            "/api/chat/stream",
+            json={"question": "Stream question 0", "session_id": session_id, "workflow": "fix_single_jev"},
+        )
+        assert resp0.status_code == 200
+        assert "Stream answer 0" in resp0.text
+
+        register_mock_workflow("fix_single_jev", answer="Stream answer 1")
+        resp1 = client.post(
+            "/api/chat/stream",
+            json={"question": "Stream question 1", "session_id": session_id, "workflow": "fix_single_jev"},
+        )
+        assert resp1.status_code == 200
+        assert "Stream answer 1" in resp1.text
+
+        # Verify 2 turns exist
+        detail = client.get(f"/api/chat/{session_id}").json()
+        assert detail["turn_count"] == 2
+        assert detail["turns"][0]["turn_index"] == 0
+        assert detail["turns"][1]["turn_index"] == 1
+
+        # Stream rewind at turn 1
+        register_mock_workflow("fix_single_jev", answer="Rewound stream answer 1")
+        rewind_resp = client.post(
+            "/api/chat/stream",
+            json={
+                "question": "Rewound stream question 1",
+                "session_id": session_id,
+                "workflow": "fix_single_jev",
+                "rewind_turn_index": 1,
+            },
+        )
+        assert rewind_resp.status_code == 200
+        assert "Rewound stream answer 1" in rewind_resp.text
+
+        # Verify turns after stream rewind
+        detail_after = client.get(f"/api/chat/{session_id}").json()
+        assert detail_after["turn_count"] == 2
+        assert detail_after["turns"][0]["turn_index"] == 0
+        assert detail_after["turns"][0]["user_query"] == "Stream question 0"
+        assert detail_after["turns"][1]["turn_index"] == 1
+        assert detail_after["turns"][1]["user_query"] == "Rewound stream question 1"
+        assert detail_after["turns"][1]["assistant_answer"] == "Rewound stream answer 1"
+
+    def test_sqlite_e2e_sequential_turns_and_rewind(
+        self,
+        tmp_path,
+        monkeypatch,
+        client: TestClient,
+        register_mock_workflow: Callable[..., MockWorkflowDefinition],
+    ):
+        """End-to-end verification of sequential chat turns and atomic rewind using SQLiteConversationStore."""
+        from app.rag.memory.sqlite import SQLiteConversationStore
+
+        db_path = tmp_path / "test_sqlite_e2e.db"
+        sqlite_store = SQLiteConversationStore(db_path=db_path)
+        monkeypatch.setattr("app.rag.memory._memory_instance", sqlite_store)
+        runner = WorkflowRunner(registry=get_workflow_registry(), memory=sqlite_store, eval_task_fn=lambda **kwargs: None)
+        monkeypatch.setattr("app.rag.workflows.runner._default_runner", runner)
+
+        session_id = "sess-sqlite-e2e"
+
+        # 1. Turn 0
+        register_mock_workflow("fix_single_jev", answer="SQLite answer 0")
+        r0 = client.post(
+            "/api/chat",
+            json={"question": "SQLite question 0", "session_id": session_id, "workflow": "fix_single_jev"},
+        )
+        assert r0.status_code == 200
+
+        # 2. Turn 1
+        register_mock_workflow("fix_single_jev", answer="SQLite answer 1")
+        r1 = client.post(
+            "/api/chat",
+            json={"question": "SQLite question 1", "session_id": session_id, "workflow": "fix_single_jev"},
+        )
+        assert r1.status_code == 200
+
+        # 3. Turn 2 via streaming
+        register_mock_workflow("fix_single_jev", answer="SQLite answer 2")
+        r2 = client.post(
+            "/api/chat/stream",
+            json={"question": "SQLite question 2", "session_id": session_id, "workflow": "fix_single_jev"},
+        )
+        assert r2.status_code == 200
+
+        # Verify 3 turns in SQLite
+        detail = client.get(f"/api/chat/{session_id}").json()
+        assert detail["turn_count"] == 3
+        assert [t["turn_index"] for t in detail["turns"]] == [0, 1, 2]
+
+        # 4. Rewind at turn 1 via chat POST
+        register_mock_workflow("fix_single_jev", answer="SQLite replaced answer 1")
+        r_rewind = client.post(
+            "/api/chat",
+            json={
+                "question": "SQLite replaced question 1",
+                "session_id": session_id,
+                "workflow": "fix_single_jev",
+                "rewind_turn_index": 1,
+            },
+        )
+        assert r_rewind.status_code == 200
+
+        detail_after = client.get(f"/api/chat/{session_id}").json()
+        assert detail_after["turn_count"] == 2
+        assert len(detail_after["turns"]) == 2
+        assert detail_after["turns"][0]["turn_index"] == 0
+        assert detail_after["turns"][1]["turn_index"] == 1
+        assert detail_after["turns"][1]["user_query"] == "SQLite replaced question 1"
+        assert detail_after["turns"][1]["assistant_answer"] == "SQLite replaced answer 1"
+
+        # 5. Standalone rewind to 0 (keeps only turn 0)
+        del_resp = client.post(f"/api/chat/{session_id}/rewind", json={"turn_index": 1})
+        assert del_resp.status_code == 200
+
+        detail_standalone = client.get(f"/api/chat/{session_id}").json()
+        assert detail_standalone["turn_count"] == 1
+        assert detail_standalone["turns"][0]["turn_index"] == 0
