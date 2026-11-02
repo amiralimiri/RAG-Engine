@@ -100,17 +100,19 @@ Standalone question:""",
 
 
 def interpolate_mustache(template: str, **variables: Any) -> str:
-    """Compile template by replacing {{ variable }} placeholders with values.
+    """Compile template by replacing {{ variable }} placeholders with values in a single pass.
 
     Trims whitespace inside brackets, safely handles backslashes in variable values
     via callable replacer, and preserves unprovided placeholders fail-open.
     """
-    text = template
-    for key, value in variables.items():
-        pattern = re.compile(r"\{\{\s*" + re.escape(key) + r"\s*\}\}")
-        str_val = str(value)
-        text = pattern.sub(lambda _: str_val, text)
-    return text
+    if not variables:
+        return template
+
+    pattern = re.compile(
+        r"\{\{\s*(" + "|".join(re.escape(k) for k in sorted(variables.keys(), key=len, reverse=True)) + r")\s*\}\}"
+    )
+    str_vars = {k: str(v) for k, v in variables.items()}
+    return pattern.sub(lambda m: str_vars[m.group(1)], template)
 
 
 class RenderedPrompt(BaseModel):

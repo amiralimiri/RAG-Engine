@@ -195,12 +195,31 @@ def test_local_prompt_store_render_basic_and_metadata():
     assert str(rendered) == rendered.text
 
 
+def test_interpolate_mustache_single_pass_order_independence():
+    """Verify single-pass interpolation prevents recursive replacement of tags in values."""
+    from app.rag.prompts.base import interpolate_mustache
+
+    tpl = "{{a}} and {{b}}"
+    res = interpolate_mustache(tpl, a="{{b}}", b="world")
+    assert res == "{{b}} and world"
+
+
+def test_interpolate_mustache_empty_variables():
+    """Verify interpolation without variables leaves template untouched."""
+    from app.rag.prompts.base import interpolate_mustache
+
+    tpl = "Template with {{tag}}"
+    assert interpolate_mustache(tpl) == tpl
+
+
 def test_local_prompt_store_render_merges_inbound_config():
     """Verify LocalPromptStore.render merges inbound RunnableConfig with fallback metadata."""
+    from langchain_core.runnables import RunnableConfig
+
     from app.rag.prompts.local import LocalPromptStore
 
     store = LocalPromptStore()
-    inbound_config = {
+    inbound_config: RunnableConfig = {
         "metadata": {"session_id": "ses-123", "user": "alice"},
         "tags": ["prod", "agent"],
         "run_name": "test_run",
