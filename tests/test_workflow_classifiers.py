@@ -1,6 +1,7 @@
 from unittest.mock import MagicMock, patch
 
 from langchain_core.documents import Document
+from langchain_core.runnables import RunnableConfig
 
 from app.rag.classifiers import (
     FakeClassifierAdapter,
@@ -9,6 +10,7 @@ from app.rag.classifiers import (
     WorkflowClassifier,
     _estimate_jev_tokens,
 )
+from app.rag.prompts import LocalPromptStore
 from app.rag.state import EvidenceGrade, RouteDecision
 
 
@@ -129,7 +131,7 @@ def test_openai_classifier_adapter_route():
     mock_chat_model.with_structured_output.return_value = mock_structured
 
     adapter = OpenAIClassifierAdapter(chat_model=mock_chat_model)
-    config = {"metadata": {"trace_id": "test-trace"}}
+    config: RunnableConfig = {"metadata": {"trace_id": "test-trace"}}
     decision = adapter.route("How do I connect to VPN?", config=config)
 
     assert isinstance(decision, RouteDecision)
@@ -184,6 +186,50 @@ def test_openai_classifier_adapter_grade_web():
     assert "Driver issue" in prompt_used
     assert "download driver" in prompt_used
     assert "Search results text" in prompt_used
+
+
+def test_openai_classifier_adapter_injected_prompt_store():
+    custom_store = LocalPromptStore(
+        templates={
+            "rag:router:llm": "CUSTOM ROUTE: {{question}}",
+            "rag:grade_kb:llm": "CUSTOM GRADE KB: {{question}} | {{current_query}} | {{context}}",
+            "rag:grade_web:llm": "CUSTOM GRADE WEB: {{question}} | {{current_query}} | {{web_results}}",
+        }
+    )
+    mock_chat_model = MagicMock()
+    mock_structured = MagicMock()
+    mock_structured.invoke.side_effect = [
+        RouteDecision(route="direct"),
+        EvidenceGrade(grade="good"),
+        EvidenceGrade(grade="weak"),
+    ]
+    mock_chat_model.with_structured_output.return_value = mock_structured
+
+    adapter = OpenAIClassifierAdapter(chat_model=mock_chat_model, prompt_store=custom_store)
+    assert adapter.prompt_store is custom_store
+
+    # Test route with injected store
+    route_dec = adapter.route("my question", config={"tags": ["injected"]})
+    assert route_dec.route == "direct"
+    prompt_used, kwargs = mock_structured.invoke.call_args_list[0]
+    assert prompt_used[0] == "CUSTOM ROUTE: my question"
+    assert kwargs["config"]["metadata"]["prompt_name"] == "rag:router:llm"
+    assert kwargs["config"]["tags"] == ["injected"]
+
+    # Test grade_kb with injected store
+    docs = [Document(page_content="doc content", metadata={"source": "kb.md"})]
+    grade_kb = adapter.grade_kb("my question", "my query", docs)
+    assert grade_kb.grade == "good"
+    prompt_used, kwargs = mock_structured.invoke.call_args_list[1]
+    assert "CUSTOM GRADE KB: my question | my query | Source: kb.md\ndoc content" == prompt_used[0]
+    assert kwargs["config"]["metadata"]["prompt_name"] == "rag:grade_kb:llm"
+
+    # Test grade_web with injected store
+    grade_web = adapter.grade_web("my question", "my query", "web docs")
+    assert grade_web.grade == "weak"
+    prompt_used, kwargs = mock_structured.invoke.call_args_list[2]
+    assert "CUSTOM GRADE WEB: my question | my query | web docs" == prompt_used[0]
+    assert kwargs["config"]["metadata"]["prompt_name"] == "rag:grade_web:llm"
 
 
 # ==============================================================================
@@ -289,3 +335,52 @@ def test_jev_classifier_adapter_records_telemetry():
         assert obs_kwargs["usage_details"]["input"] >= 1
         assert obs_kwargs["usage_details"]["output"] >= 1
         mock_obs.end.assert_called_once()
+
+
+def test_jev_classifier_adapter_injected_prompt_store():
+    custom_store = LocalPromptStore(
+        templates={
+            "rag:router:jev": "JEV CUSTOM ROUTE: {{question}}",
+            "rag:grade_kb:jev": "JEV CUSTOM KB: {{question}}",
+            "rag:grade_web:jev": "JEV CUSTOM WEB: {{question}}",
+        }
+    )
+    mock_jev = MagicMock()
+    mock_choice_route = MagicMock(choice="kb")
+    mock_result_route = MagicMock(choices={"route": mock_choice_route})
+
+    mock_choice_kb = MagicMock(choice="good")
+    mock_result_kb = MagicMock(choices={"grade": mock_choice_kb})
+
+    mock_choice_web = MagicMock(choice="weak")
+    mock_result_web = MagicMock(choices={"grade": mock_choice_web})
+
+    mock_jev.invoke.side_effect = [mock_result_route, mock_result_kb, mock_result_web]
+
+    mock_langfuse = MagicMock()
+    mock_obs = MagicMock()
+    mock_langfuse.start_observation.return_value = mock_obs
+
+    with patch("app.rag.classifiers.get_langfuse_client", return_value=mock_langfuse):
+        adapter = JevClassifierAdapter(classifier=mock_jev, prompt_store=custom_store)
+        assert adapter.prompt_store is custom_store
+
+        # Route
+        decision = adapter.route("my question", config={"metadata": {"trace_id": "trace-jev"}})
+        assert decision.route == "kb"
+        obs_kwargs = mock_langfuse.start_observation.call_args[1]
+        assert obs_kwargs["metadata"]["prompt_name"] == "rag:router:jev"
+        assert obs_kwargs["metadata"]["prompt_fallback"] is True
+
+        # Grade KB
+        grade_kb = adapter.grade_kb("my question", "my query", [Document(page_content="doc")])
+        assert grade_kb.grade == "good"
+        obs_kwargs_kb = mock_langfuse.start_observation.call_args[1]
+        assert obs_kwargs_kb["metadata"]["prompt_name"] == "rag:grade_kb:jev"
+
+        # Grade Web
+        grade_web = adapter.grade_web("my question", "my query", "web res")
+        assert grade_web.grade == "weak"
+        obs_kwargs_web = mock_langfuse.start_observation.call_args[1]
+        assert obs_kwargs_web["metadata"]["prompt_name"] == "rag:grade_web:jev"
+

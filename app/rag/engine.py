@@ -1,6 +1,6 @@
 import logging
 from collections.abc import Sequence
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 import structlog
 from langchain_core.language_models.chat_models import BaseChatModel
@@ -12,10 +12,10 @@ from langgraph.graph import END, START, StateGraph
 
 from app.core.concurrency import wrap_safe_invoke
 from app.core.config import get_settings
-from app.rag.classifiers import WorkflowClassifier, _build_prompt_config
+from app.rag.classifiers import WorkflowClassifier
+from app.rag.prompts import PromptStore, RenderedPrompt, get_prompt_store
 from app.rag.state import AgentState
 from app.rag.tools import create_retriever_tool, create_web_search_tool
-from app.services.prompts import get_workflow_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -108,35 +108,31 @@ def after_web(state: AgentState) -> Literal["generate_from_web", "rewrite_query"
 def _prepare_generation_prompt(
     prompt_key: str,
     state: AgentState,
+    config: RunnableConfig | None = None,
+    prompt_store: PromptStore | None = None,
     **extra_kwargs: Any,
-) -> tuple[str, Any]:
+) -> RenderedPrompt:
     """Extract conversation history, format context variables, and compile prompt with history fallback prep."""
-    prompt_obj = get_workflow_prompt(prompt_key)
+    store = prompt_store if prompt_store is not None else get_prompt_store()
     raw_history = state.get("messages", [])[:-1] if state.get("messages") else []
     history_str = _format_chat_history(raw_history) if raw_history else ""
     current_q = state.get("current_query") or state["question"]
 
     compile_kwargs = {
         "question": state["question"],
+        "current_query": current_q,
         **extra_kwargs,
     }
 
     if history_str:
-        try:
-            prompt = prompt_obj.compile(
-                current_query=current_q,
-                history=history_str,
-                chat_history=history_str,
-                **compile_kwargs,
-            )
-        except TypeError:
-            prompt = prompt_obj.compile(**compile_kwargs)
-        if history_str and history_str not in prompt:
-            prompt = f"Chat History:\n{history_str}\n\n{prompt}"
-    else:
-        prompt = prompt_obj.compile(**compile_kwargs)
+        compile_kwargs["chat_history"] = history_str
+        compile_kwargs["history"] = history_str
 
-    return prompt, prompt_obj
+    rendered = store.render(prompt_key, config=config, **compile_kwargs)
+    if history_str and history_str not in rendered.text:
+        rendered = rendered.with_prefix(f"Chat History:\n{history_str}\n\n")
+
+    return rendered
 
 
 async def direct_answer(
@@ -144,12 +140,12 @@ async def direct_answer(
     config: RunnableConfig | None = None,
     *,
     model: BaseChatModel | None = None,
+    prompt_store: PromptStore | None = None,
 ) -> dict[str, Any]:
     structlog.contextvars.bind_contextvars(step="direct_answer")
-    prompt, prompt_obj = _prepare_generation_prompt("rag:direct_answer", state)
-    run_cfg = _build_prompt_config(prompt_obj, config)
+    rendered = _prepare_generation_prompt("rag:direct_answer", state, config=config, prompt_store=prompt_store)
     active_model = model if model is not None else get_chat_model()
-    response = await active_model.ainvoke(prompt, config=run_cfg)
+    response = await active_model.ainvoke(rendered.text, config=cast(RunnableConfig, rendered.config))
     answer = response.content if hasattr(response, "content") else str(response)
     return {
         "answer": answer,
@@ -175,6 +171,7 @@ def create_agentic_rag_graph(
     model: BaseChatModel | None = None,
     kb_tool: BaseTool | None = None,
     web_tool: BaseTool | None = None,
+    prompt_store: PromptStore | None = None,
 ) -> Any:
     """Build and compile the canonical 11-node StateGraph topology.
 
@@ -186,6 +183,8 @@ def create_agentic_rag_graph(
             Defaults to create_retriever_tool().
         web_tool: Optional BaseTool instance for web search fallback.
             Defaults to create_web_search_tool().
+        prompt_store: Optional PromptStore instance for prompt compilation and observation metadata.
+            Defaults to get_prompt_store().
 
     Returns:
         Compiled StateGraph runnable wrapped with wrap_safe_invoke ready for execution.
@@ -193,23 +192,21 @@ def create_agentic_rag_graph(
     active_model = model if model is not None else get_chat_model()
     active_kb_tool = kb_tool if kb_tool is not None else create_retriever_tool()
     active_web_tool = web_tool if web_tool is not None else create_web_search_tool()
+    active_prompt_store = prompt_store if prompt_store is not None else get_prompt_store()
 
     async def node_condense_query(state: AgentState, config: RunnableConfig | None = None) -> dict[str, Any]:
         structlog.contextvars.bind_contextvars(step="condense_query")
         raw_history = state.get("messages", [])[:-1] if state.get("messages") else []
         history_str = _format_chat_history(raw_history)
         current_question = state["question"]
-        prompt_obj = get_workflow_prompt("rag:condense_query")
-        try:
-            prompt = prompt_obj.compile(
-                question=current_question,
-                chat_history=history_str,
-                history=history_str,
-            )
-        except TypeError:
-            prompt = prompt_obj.compile(question=current_question)
-        run_cfg = _build_prompt_config(prompt_obj, config)
-        response = await active_model.ainvoke(prompt, config=run_cfg)
+        rendered = active_prompt_store.render(
+            "rag:condense_query",
+            config=config,
+            question=current_question,
+            chat_history=history_str,
+            history=history_str,
+        )
+        response = await active_model.ainvoke(rendered.text, config=cast(RunnableConfig, rendered.config))
         raw_query = response.content if hasattr(response, "content") else str(response)
         standalone_query = (raw_query if isinstance(raw_query, str) else str(raw_query)).strip()
         if not standalone_query:
@@ -298,14 +295,14 @@ def create_agentic_rag_graph(
 
     async def rewrite_query(state: AgentState, config: RunnableConfig | None = None) -> dict[str, Any]:
         structlog.contextvars.bind_contextvars(step="rewrite_query")
-        prompt_obj = get_workflow_prompt("rag:rewrite_query")
         search_query = state.get("current_query") or state["question"]
-        prompt = prompt_obj.compile(
+        rendered = active_prompt_store.render(
+            "rag:rewrite_query",
+            config=config,
             question=state["question"],
             current_query=search_query,
         )
-        run_cfg = _build_prompt_config(prompt_obj, config)
-        response = await active_model.ainvoke(prompt, config=run_cfg)
+        response = await active_model.ainvoke(rendered.text, config=cast(RunnableConfig, rendered.config))
         raw_rewritten = response.content if hasattr(response, "content") else str(response)
         rewritten = (raw_rewritten if isinstance(raw_rewritten, str) else str(raw_rewritten)).strip()
         return {
@@ -319,9 +316,14 @@ def create_agentic_rag_graph(
         context = "\n\n".join(
             f"[Source: {d.metadata.get('source', 'unknown')}]\n{d.page_content}" for d in state["kb_docs"]
         )
-        prompt, prompt_obj = _prepare_generation_prompt("rag:generate_kb", state, context=context)
-        run_cfg = _build_prompt_config(prompt_obj, config)
-        response = await active_model.ainvoke(prompt, config=run_cfg)
+        rendered = _prepare_generation_prompt(
+            "rag:generate_kb",
+            state,
+            config=config,
+            prompt_store=active_prompt_store,
+            context=context,
+        )
+        response = await active_model.ainvoke(rendered.text, config=cast(RunnableConfig, rendered.config))
         answer = response.content if hasattr(response, "content") else str(response)
         citations = state.get("citations")
         if not citations:
@@ -345,9 +347,14 @@ def create_agentic_rag_graph(
 
     async def generate_from_web(state: AgentState, config: RunnableConfig | None = None) -> dict[str, Any]:
         structlog.contextvars.bind_contextvars(step="generate_from_web")
-        prompt, prompt_obj = _prepare_generation_prompt("rag:generate_web", state, web_results=state["web_results"])
-        run_cfg = _build_prompt_config(prompt_obj, config)
-        response = await active_model.ainvoke(prompt, config=run_cfg)
+        rendered = _prepare_generation_prompt(
+            "rag:generate_web",
+            state,
+            config=config,
+            prompt_store=active_prompt_store,
+            web_results=state["web_results"],
+        )
+        response = await active_model.ainvoke(rendered.text, config=cast(RunnableConfig, rendered.config))
         answer = response.content if hasattr(response, "content") else str(response)
         return {
             "answer": answer,
@@ -358,7 +365,7 @@ def create_agentic_rag_graph(
         }
 
     async def node_direct_answer(state: AgentState, config: RunnableConfig | None = None) -> dict[str, Any]:
-        return await direct_answer(state, config=config, model=active_model)
+        return await direct_answer(state, config=config, model=active_model, prompt_store=active_prompt_store)
 
     graph = StateGraph(AgentState)
     nodes = {

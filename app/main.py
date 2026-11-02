@@ -11,7 +11,7 @@ from app.core.concurrency import shutdown_background_loop
 from app.core.config import BASE_DIR, get_settings
 from app.core.logger import configure_logging
 from app.core.telemetry import flush_telemetry
-from app.services.prompts import seed_all_prompts
+from app.rag.prompts import get_prompt_store
 
 settings = get_settings()
 
@@ -20,7 +20,7 @@ settings = get_settings()
 async def lifespan(app: FastAPI):
     # Startup
     configure_logging()
-    seed_all_prompts()
+    get_prompt_store().seed_prompts()
     yield
     # Shutdown
     flush_telemetry()

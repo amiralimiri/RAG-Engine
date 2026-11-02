@@ -123,6 +123,19 @@ class RenderedPrompt(BaseModel):
     config: dict[str, Any] = Field(default_factory=dict)
     raw_prompt: Any = None
 
+    def with_text(self, text: str) -> RenderedPrompt:
+        """Return a new RenderedPrompt with updated text, preserving metadata and raw prompt."""
+        return RenderedPrompt(
+            name=self.name,
+            text=text,
+            config=dict(self.config),
+            raw_prompt=self.raw_prompt,
+        )
+
+    def with_prefix(self, prefix: str) -> RenderedPrompt:
+        """Return a new RenderedPrompt with prefixed text, preserving metadata and raw prompt."""
+        return self.with_text(f"{prefix}{self.text}")
+
     def __str__(self) -> str:
         """Coerce seamlessly to compiled text when passed into LLMs or format strings."""
         return self.text

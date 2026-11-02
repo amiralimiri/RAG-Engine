@@ -9,8 +9,8 @@ from langchain_typesafe import Choice, TypeSafeClassifier
 
 from app.core.config import get_settings
 from app.core.telemetry import extract_trace_id, get_langfuse_client
+from app.rag.prompts import PromptStore, RenderedPrompt, get_prompt_store
 from app.rag.state import EvidenceGrade, RouteDecision
-from app.services.prompts import get_workflow_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +19,6 @@ __all__ = [
     "FakeClassifierAdapter",
     "OpenAIClassifierAdapter",
     "JevClassifierAdapter",
-    "_build_prompt_config",
     "_estimate_jev_tokens",
     "_record_jev_generation",
 ]
@@ -70,25 +69,6 @@ def _normalize_grade(val: EvidenceGrade | str) -> EvidenceGrade:
     return EvidenceGrade(grade=val)  # type: ignore[arg-type]
 
 
-def _build_prompt_config(prompt_obj: Any, config: RunnableConfig | None = None) -> RunnableConfig:
-    """Build or merge a RunnableConfig linking prompt metadata to LangChain observations."""
-    prompt_meta: dict[str, Any] = {}
-    if prompt_obj is not None:
-        if getattr(prompt_obj, "is_fallback", False) is True:
-            prompt_meta = {
-                "prompt_name": getattr(prompt_obj, "name", ""),
-                "prompt_fallback": True,
-            }
-        else:
-            prompt_meta = {"langfuse_prompt": prompt_obj}
-
-    cfg: RunnableConfig = dict(config) if config else {}
-    existing_meta = dict(cfg.get("metadata") or {})
-    existing_meta.update(prompt_meta)
-    cfg["metadata"] = existing_meta
-    return cfg
-
-
 def _estimate_jev_tokens(prompt_text: str, output_text: str) -> dict[str, int]:
     """Heuristic rule-of-thumb: 1 token ~= 4 characters."""
     input_tokens = max(1, len(prompt_text) // 4)
@@ -105,8 +85,9 @@ def _record_jev_generation(
     input_text: str,
     output_text: str,
     trace_id: str | None = None,
+    rendered: RenderedPrompt | None = None,
     prompt_client: Any | None = None,
-    config: RunnableConfig | None = None,
+    config: RunnableConfig | dict[str, Any] | None = None,
 ) -> None:
     try:
         client = get_langfuse_client()
@@ -114,16 +95,17 @@ def _record_jev_generation(
             return
         current_settings = get_settings()
 
+        active_config = rendered.config if rendered is not None else config
         active_trace_id = trace_id
-        if not active_trace_id and config and isinstance(config, dict):
-            callbacks = config.get("callbacks") or []
+        if not active_trace_id and active_config and isinstance(active_config, dict):
+            callbacks = active_config.get("callbacks") or []
             if isinstance(callbacks, list):
                 for cb in callbacks:
                     active_trace_id = extract_trace_id(cb)
                     if active_trace_id:
                         break
             if not active_trace_id:
-                meta = config.get("metadata")
+                meta = active_config.get("metadata")
                 if isinstance(meta, dict):
                     active_trace_id = meta.get("trace_id")
 
@@ -141,6 +123,24 @@ def _record_jev_generation(
             "total": input_cost + output_cost,
         }
 
+        meta_dict: dict[str, Any] = {"classifier": "typesafe_jev"}
+        if active_config and isinstance(active_config, dict):
+            cfg_meta = active_config.get("metadata")
+            if isinstance(cfg_meta, dict):
+                meta_dict.update(cfg_meta)
+
+        prompt_target = (
+            rendered.raw_prompt
+            if (rendered is not None and rendered.raw_prompt is not None and not getattr(rendered.raw_prompt, "is_fallback", False))
+            else (prompt_client if (prompt_client is not None and not getattr(prompt_client, "is_fallback", False)) else None)
+        )
+        if prompt_target is None and prompt_client is not None:
+            prompt_name = getattr(prompt_client, "name", None)
+            if prompt_name:
+                meta_dict["prompt_name"] = prompt_name
+            if getattr(prompt_client, "is_fallback", False):
+                meta_dict["prompt_fallback"] = True
+
         if hasattr(client, "start_observation"):
             obs_kwargs: dict[str, Any] = {
                 "name": name,
@@ -150,16 +150,10 @@ def _record_jev_generation(
                 "output": output_text,
                 "usage_details": usage,
                 "cost_details": cost_details,
-                "metadata": {"classifier": "typesafe_jev"},
+                "metadata": meta_dict,
             }
-            if prompt_client is not None:
-                if not getattr(prompt_client, "is_fallback", False):
-                    obs_kwargs["prompt"] = prompt_client
-                else:
-                    obs_kwargs["metadata"]["prompt_fallback"] = True
-                    prompt_name = getattr(prompt_client, "name", None)
-                    if prompt_name:
-                        obs_kwargs["metadata"]["prompt_name"] = prompt_name
+            if prompt_target is not None:
+                obs_kwargs["prompt"] = prompt_target
             if trace_context:
                 obs_kwargs["trace_context"] = trace_context
             obs = client.start_observation(**obs_kwargs)
@@ -178,13 +172,13 @@ def _record_jev_generation(
                 "input": input_text,
                 "output": output_text,
                 "usage": usage,
-                "metadata": {"classifier": "typesafe_jev"},
+                "metadata": meta_dict,
             }
-            if prompt_client is not None and not getattr(prompt_client, "is_fallback", False):
-                gen_kwargs["prompt"] = prompt_client
+            if prompt_target is not None:
+                gen_kwargs["prompt"] = prompt_target
             if active_trace_id:
                 gen_kwargs["trace_id"] = str(active_trace_id)
-            client.generation(**gen_kwargs)
+            getattr(client, "generation")(**gen_kwargs)
     except Exception as exc:
         logger.debug("Failed to record JEV generation span: %s", exc)
 
@@ -262,15 +256,26 @@ class FakeClassifierAdapter:
 
 def _fallback_evidence_grade(exc: Exception) -> EvidenceGrade:
     """Safe fallback evidence grade when structured grader invocation fails."""
-    logger.warning("evidence_grade_structured_parsing_failed", error=str(exc))
+    logger.warning("evidence_grade_structured_parsing_failed: %s", exc)
     return EvidenceGrade(grade="weak")
 
 
 class OpenAIClassifierAdapter:
     """Production classifier adapter backed by ChatOpenAI structured outputs."""
 
-    def __init__(self, chat_model: Any = None) -> None:
+    def __init__(
+        self,
+        chat_model: Any = None,
+        prompt_store: PromptStore | None = None,
+    ) -> None:
         self._chat_model = chat_model
+        self._prompt_store = prompt_store
+
+    @property
+    def prompt_store(self) -> PromptStore:
+        if self._prompt_store is None:
+            self._prompt_store = get_prompt_store()
+        return self._prompt_store
 
     def _get_chat_model(self) -> Any:
         if self._chat_model is None:
@@ -290,10 +295,8 @@ class OpenAIClassifierAdapter:
         config: RunnableConfig | None = None,
     ) -> RouteDecision:
         router = self._get_chat_model().with_structured_output(RouteDecision, method="json_mode")
-        prompt_obj = get_workflow_prompt("rag:router:llm")
-        prompt = prompt_obj.compile(question=question)
-        run_cfg = _build_prompt_config(prompt_obj, config)
-        decision = cast(RouteDecision, router.invoke(prompt, config=run_cfg))
+        rendered = self.prompt_store.render("rag:router:llm", config=config, question=question)
+        decision = cast(RouteDecision, router.invoke(rendered.text, config=cast(RunnableConfig, rendered.config)))
         if isinstance(decision, dict):
             decision = RouteDecision(**decision)
         return decision
@@ -307,15 +310,15 @@ class OpenAIClassifierAdapter:
     ) -> EvidenceGrade:
         grader = self._get_chat_model().with_structured_output(EvidenceGrade, method="json_mode")
         context = "\n\n".join(f"Source: {d.metadata.get('source', 'unknown')}\n{d.page_content}" for d in kb_docs)
-        prompt_obj = get_workflow_prompt("rag:grade_kb:llm")
-        prompt = prompt_obj.compile(
+        rendered = self.prompt_store.render(
+            "rag:grade_kb:llm",
+            config=config,
             question=question,
             current_query=current_query,
             context=context,
         )
-        run_cfg = _build_prompt_config(prompt_obj, config)
         try:
-            grade = cast(EvidenceGrade, grader.invoke(prompt, config=run_cfg))
+            grade = cast(EvidenceGrade, grader.invoke(rendered.text, config=cast(RunnableConfig, rendered.config)))
             if isinstance(grade, dict):
                 grade = EvidenceGrade(**grade)
             return grade
@@ -330,15 +333,15 @@ class OpenAIClassifierAdapter:
         config: RunnableConfig | None = None,
     ) -> EvidenceGrade:
         grader = self._get_chat_model().with_structured_output(EvidenceGrade, method="json_mode")
-        prompt_obj = get_workflow_prompt("rag:grade_web:llm")
-        prompt = prompt_obj.compile(
+        rendered = self.prompt_store.render(
+            "rag:grade_web:llm",
+            config=config,
             question=question,
             current_query=current_query,
             web_results=web_results,
         )
-        run_cfg = _build_prompt_config(prompt_obj, config)
         try:
-            grade = cast(EvidenceGrade, grader.invoke(prompt, config=run_cfg))
+            grade = cast(EvidenceGrade, grader.invoke(rendered.text, config=cast(RunnableConfig, rendered.config)))
             if isinstance(grade, dict):
                 grade = EvidenceGrade(**grade)
             return grade
@@ -349,8 +352,19 @@ class OpenAIClassifierAdapter:
 class JevClassifierAdapter:
     """Production classifier adapter backed by TypeSafeClassifier."""
 
-    def __init__(self, classifier: Any = None) -> None:
+    def __init__(
+        self,
+        classifier: Any = None,
+        prompt_store: PromptStore | None = None,
+    ) -> None:
         self._classifier = classifier
+        self._prompt_store = prompt_store
+
+    @property
+    def prompt_store(self) -> PromptStore:
+        if self._prompt_store is None:
+            self._prompt_store = get_prompt_store()
+        return self._prompt_store
 
     def _get_classifier(self) -> Any:
         if self._classifier is None:
@@ -367,7 +381,7 @@ class JevClassifierAdapter:
         question: str,
         config: RunnableConfig | None = None,
     ) -> RouteDecision:
-        prompt_client = get_workflow_prompt("rag:router:jev")
+        rendered = self.prompt_store.render("rag:router:jev", config=config, question=question)
         result = self._get_classifier().invoke(
             {
                 "state": question,
@@ -392,8 +406,7 @@ class JevClassifierAdapter:
             "jev_router",
             question,
             decision,
-            prompt_client=prompt_client,
-            config=config,
+            rendered=rendered,
         )
         return RouteDecision(route=decision)
 
@@ -404,8 +417,14 @@ class JevClassifierAdapter:
         kb_docs: list[Document],
         config: RunnableConfig | None = None,
     ) -> EvidenceGrade:
-        prompt_client = get_workflow_prompt("rag:grade_kb:jev")
         context = "\n\n".join(f"Source: {d.metadata.get('source', 'unknown')}\n{d.page_content}" for d in kb_docs)
+        rendered = self.prompt_store.render(
+            "rag:grade_kb:jev",
+            config=config,
+            question=question,
+            current_query=current_query,
+            context=context,
+        )
         prompt_state = (
             f"Original user question:\n{question}\n\n"
             f"Query used for retrieval (search aid only):\n{current_query}\n\n"
@@ -442,8 +461,7 @@ class JevClassifierAdapter:
             "jev_kb_grader",
             prompt_state,
             grade,
-            prompt_client=prompt_client,
-            config=config,
+            rendered=rendered,
         )
         return EvidenceGrade(grade=grade)
 
@@ -454,7 +472,13 @@ class JevClassifierAdapter:
         web_results: str,
         config: RunnableConfig | None = None,
     ) -> EvidenceGrade:
-        prompt_client = get_workflow_prompt("rag:grade_web:jev")
+        rendered = self.prompt_store.render(
+            "rag:grade_web:jev",
+            config=config,
+            question=question,
+            current_query=current_query,
+            web_results=web_results,
+        )
         prompt_state = (
             f"Original user question:\n{question}\n\n"
             f"Query used for web search (retrieval aid only):\n{current_query}\n\n"
@@ -492,7 +516,6 @@ class JevClassifierAdapter:
             "jev_web_grader",
             prompt_state,
             grade,
-            prompt_client=prompt_client,
-            config=config,
+            rendered=rendered,
         )
         return EvidenceGrade(grade=grade)

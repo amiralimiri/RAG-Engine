@@ -1,20 +1,23 @@
 import functools
 import inspect
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import structlog
 from langchain_core.documents import Document
 from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.tools import BaseTool
 
 from app.rag.classifiers import FakeClassifierAdapter
 from app.rag.engine import (
     GENERATION_NODES,
     create_agentic_rag_graph,
+    direct_answer,
     get_chat_model,
 )
+from app.rag.prompts import LocalPromptStore
 from app.rag.tools import create_retriever_tool, create_web_search_tool
 
 
@@ -373,3 +376,122 @@ def test_unpack_tool_output_handles_empty_dict_artifact():
     assert content == "Found nothing"
     assert artifact == {}
     assert isinstance(artifact, dict)
+
+
+@pytest.mark.asyncio
+async def test_direct_answer_accepts_injected_prompt_store(mock_llm):
+    custom_store = LocalPromptStore(
+        templates={"rag:direct_answer": "INJECTED DIRECT: {{question}}"}
+    )
+    result = await direct_answer(
+        cast(Any, {"question": "How are you?"}),
+        config=cast(Any, {"tags": ["custom-test"]}),
+        model=mock_llm,
+        prompt_store=custom_store,
+    )
+    assert result["source_used"] == "direct"
+    assert mock_llm.ainvoke.await_count == 1
+    call_args = mock_llm.ainvoke.call_args
+    prompt_arg = call_args[0][0]
+    config_arg = call_args[1]["config"]
+    assert prompt_arg == "INJECTED DIRECT: How are you?"
+    assert config_arg["metadata"]["prompt_name"] == "rag:direct_answer"
+    assert config_arg["tags"] == ["custom-test"]
+
+
+@pytest.mark.asyncio
+async def test_create_agentic_rag_graph_injected_prompt_store_direct_and_kb(mock_llm, mock_kb_tool):
+    custom_store = LocalPromptStore(
+        templates={
+            "rag:direct_answer": "INJECTED DIRECT ROUTE: {{question}}",
+            "rag:generate_kb": "INJECTED KB ROUTE: {{question}} || {{context}}",
+            "rag:condense_query": "INJECTED CONDENSE: {{question}}",
+        }
+    )
+
+    # 1. Direct answer flow with injected prompt store
+    classifier_direct = FakeClassifierAdapter(route_decision="direct")
+    graph_direct = create_agentic_rag_graph(
+        classifier_direct,
+        model=mock_llm,
+        prompt_store=custom_store,
+    )
+    res_direct = await graph_direct.ainvoke({"question": "Hi IT support", "retry_count": 0})
+    assert res_direct["source_used"] == "direct"
+    last_call = mock_llm.ainvoke.call_args
+    assert "INJECTED DIRECT ROUTE: Hi IT support" in last_call[0][0]
+    assert last_call[1]["config"]["metadata"]["prompt_name"] == "rag:direct_answer"
+
+    # 2. KB generation flow with injected prompt store
+    classifier_kb = FakeClassifierAdapter(route_decision="kb", kb_grade="good")
+    graph_kb = create_agentic_rag_graph(
+        classifier_kb,
+        model=mock_llm,
+        kb_tool=mock_kb_tool,
+        prompt_store=custom_store,
+    )
+    res_kb = await graph_kb.ainvoke({"question": "VPN setup details", "retry_count": 0})
+    assert res_kb["source_used"] == "vectorstore"
+    last_call_kb = mock_llm.ainvoke.call_args
+    assert "INJECTED KB ROUTE: VPN setup details" in last_call_kb[0][0]
+    assert last_call_kb[1]["config"]["metadata"]["prompt_name"] == "rag:generate_kb"
+
+    # 3. Condense query flow with injected prompt store
+    res_condense = await graph_direct.ainvoke(
+        {
+            "question": "Can you elaborate?",
+            "retry_count": 0,
+            "messages": [
+                HumanMessage(content="Previous question"),
+                AIMessage(content="Previous answer"),
+                HumanMessage(content="Can you elaborate?"),
+            ],
+        }
+    )
+    assert res_condense["source_used"] == "direct"
+    # Find the condense_query call among the invocations
+    all_prompts = [call[0][0] for call in mock_llm.ainvoke.call_args_list]
+    assert any("INJECTED CONDENSE: Can you elaborate?" in p for p in all_prompts)
+
+
+@pytest.mark.asyncio
+async def test_create_agentic_rag_graph_injected_prompt_store_rewrite_and_web(mock_llm, mock_kb_tool, mock_web_tool):
+    custom_store = LocalPromptStore(
+        templates={
+            "rag:rewrite_query": "INJECTED REWRITE: {{question}} / {{current_query}}",
+            "rag:generate_web": "INJECTED WEB ROUTE: {{question}} || {{web_results}}",
+            "rag:generate_kb": "INJECTED KB ROUTE: {{question}}",
+        }
+    )
+
+    # Web generation flow with injected prompt store
+    classifier_web = FakeClassifierAdapter(route_decision="kb", kb_grade="weak", web_grade="good")
+    graph_web = create_agentic_rag_graph(
+        classifier_web,
+        model=mock_llm,
+        kb_tool=mock_kb_tool,
+        web_tool=mock_web_tool,
+        prompt_store=custom_store,
+    )
+    res_web = await graph_web.ainvoke({"question": "External query", "retry_count": 0})
+    assert res_web["source_used"] == "web_search"
+    all_prompts = [call[0][0] for call in mock_llm.ainvoke.call_args_list]
+    assert any("INJECTED WEB ROUTE: External query" in p for p in all_prompts)
+
+    # Query rewrite flow with injected prompt store
+    classifier_rewrite = FakeClassifierAdapter(
+        route_decision="kb",
+        kb_grade=["weak", "good"],
+        web_grade="weak",
+    )
+    graph_rewrite = create_agentic_rag_graph(
+        classifier_rewrite,
+        model=mock_llm,
+        kb_tool=mock_kb_tool,
+        web_tool=mock_web_tool,
+        prompt_store=custom_store,
+    )
+    await graph_rewrite.ainvoke({"question": "Tough question", "retry_count": 0})
+    all_prompts_rewrite = [call[0][0] for call in mock_llm.ainvoke.call_args_list]
+    assert any("INJECTED REWRITE: Tough question" in p for p in all_prompts_rewrite)
+

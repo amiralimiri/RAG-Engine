@@ -38,6 +38,20 @@ def test_lifespan_startup_and_shutdown(monkeypatch):
     mock_flush.assert_called_once()
 
 
+@pytest.mark.asyncio
+async def test_lifespan_seeds_prompts_via_prompt_store(monkeypatch):
+    from app.main import lifespan
+
+    mock_store = MagicMock()
+    monkeypatch.setattr("app.main.get_prompt_store", lambda: mock_store)
+    monkeypatch.setattr("app.main.configure_logging", MagicMock())
+    monkeypatch.setattr("app.main.flush_telemetry", MagicMock())
+    monkeypatch.setattr("app.main.shutdown_background_loop", MagicMock())
+
+    async with lifespan(MagicMock()):
+        mock_store.seed_prompts.assert_called_once()
+
+
 def test_e2e_flow_with_langfuse_mocked(client, monkeypatch, register_mock_workflow):
     """Mock Langfuse client and callback; invoke /api/chat with fix_single_llm, verify trace returned, invoke /api/feedback with that trace ID, assert 200 response and background score dispatch."""
     mock_client = MagicMock()
