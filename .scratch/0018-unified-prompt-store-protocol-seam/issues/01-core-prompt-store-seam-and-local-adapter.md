@@ -5,11 +5,11 @@ Establish the foundational prompt management seam by creating `app/rag/prompts/b
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** completed
 
-- [ ] Create `app/rag/prompts/base.py` declaring `PromptStore` protocol seam (`render`, `get_template`, `seed_prompts`) and `CANONICAL_PROMPTS` containing all 11 canonical prompt templates.
-- [ ] Define `RenderedPrompt(BaseModel)` exposing `name: str`, `text: str`, `config: dict[str, Any]`, and `raw_prompt: Any`, implementing `__str__` returning `self.text`.
-- [ ] Implement shared deterministic mustache interpolation handling whitespace inside tag brackets (e.g. `{{  var  }}`), backslash escapes in values, and unprovided variable preservation.
-- [ ] Implement `LocalPromptStore` in `app/rag/prompts/local.py` accepting optional `templates: dict[str, str]` and exposing `register_prompt(name, template)`.
-- [ ] Ensure `LocalPromptStore.render` produces `RenderedPrompt` with `config["metadata"] = {"prompt_name": name, "prompt_fallback": True}` merged with any provided `RunnableConfig`.
-- [ ] Add comprehensive unit tests in `tests/rag/test_prompt_store.py` verifying protocol compliance, template interpolation edge cases, and in-memory rendering.
+- [x] Create `app/rag/prompts/base.py` declaring `PromptStore` protocol seam (`render`, `get_template`, `seed_prompts`) and `CANONICAL_PROMPTS` containing all 11 canonical prompt templates.
+- [x] Define `RenderedPrompt(BaseModel)` exposing `name: str`, `text: str`, `config: dict[str, Any]`, and `raw_prompt: Any`, implementing `__str__` returning `self.text`.
+- [x] Implement shared deterministic mustache interpolation handling whitespace inside tag brackets (e.g. `{{  var  }}`), backslash escapes in values, and unprovided variable preservation.
+- [x] Implement `LocalPromptStore` in `app/rag/prompts/local.py` accepting optional `templates: dict[str, str]` and exposing `register_prompt(name, template)`.
+- [x] Ensure `LocalPromptStore.render` produces `RenderedPrompt` with `config["metadata"] = {"prompt_name": name, "prompt_fallback": True}` merged with any provided `RunnableConfig`.
+- [x] Add comprehensive unit tests in `tests/rag/test_prompt_store.py` verifying protocol compliance, template interpolation edge cases, and in-memory rendering.
