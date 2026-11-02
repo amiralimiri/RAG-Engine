@@ -1,46 +1,69 @@
-from unittest.mock import MagicMock, patch
+"""Tests for unified PromptStore protocol seam, LocalPromptStore, and LangfusePromptStore CMS integration."""
 
+from __future__ import annotations
+
+import time
+from typing import Any
+from unittest.mock import MagicMock
+
+import pytest
+from langchain_core.runnables import RunnableConfig
 from langfuse.model import TextPromptClient
 
-from app.services.prompts import LOCAL_PROMPTS, FallbackPrompt, get_workflow_prompt
+from app.core.config import Settings
+from app.rag.prompts import (
+    CANONICAL_PROMPTS,
+    LangfusePromptStore,
+    LocalPromptStore,
+    PromptStore,
+    RenderedPrompt,
+    get_prompt_store,
+    reset_prompt_store,
+)
 
 
-class TestFallbackPrompt:
-    def test_fallback_prompt_initialization_and_properties(self):
-        prompt = FallbackPrompt(name="test:prompt", template="Hello {{name}}!", version=0)
-        assert prompt.name == "test:prompt"
-        assert prompt.template == "Hello {{name}}!"
-        assert prompt.version == 0
-        assert prompt.prompt == "Hello {{name}}!"
-
-    def test_fallback_prompt_compile_single_variable(self):
-        prompt = FallbackPrompt(name="greeting", template="Hello, {{name}}!")
-        rendered = prompt.compile(name="Alice")
-        assert rendered == "Hello, Alice!"
-
-    def test_fallback_prompt_compile_multiple_variables_with_spacing(self):
-        template = "Question: {{ question }}\nContext:\n{{context}}\nQuery: {{  current_query  }}"
-        prompt = FallbackPrompt(name="multi_var", template=template)
-        rendered = prompt.compile(
-            question="How do I reset MFA?",
-            context="Use the IT portal.",
-            current_query="mfa reset",
-        )
-        assert rendered == "Question: How do I reset MFA?\nContext:\nUse the IT portal.\nQuery: mfa reset"
-
-    def test_fallback_prompt_compile_handles_backslashes_in_values(self):
-        prompt = FallbackPrompt(name="path_test", template="File path: {{path}}")
-        rendered = prompt.compile(path=r"C:\users\alice\documents\file.txt")
-        assert rendered == r"File path: C:\users\alice\documents\file.txt"
-
-    def test_fallback_prompt_compile_ignores_missing_variables(self):
-        prompt = FallbackPrompt(name="partial", template="Hello {{name}}, welcome to {{place}}!")
-        rendered = prompt.compile(name="Bob")
-        assert rendered == "Hello Bob, welcome to {{place}}!"
+def _make_settings(**kwargs: Any) -> Settings:
+    """Helper to instantiate Settings test doubles with arbitrary overrides."""
+    return Settings.model_construct(**kwargs)
 
 
-class TestLocalPromptsRegistry:
-    REQUIRED_KEYS = [
+class TestPromptStoreProtocol:
+    """Verify runtime checkability and protocol compliance of adapters."""
+
+    def test_local_store_satisfies_protocol(self):
+        store = LocalPromptStore()
+        assert isinstance(store, PromptStore)
+
+    def test_langfuse_store_satisfies_protocol(self):
+        settings = _make_settings(langfuse_enabled=False)
+        store = LangfusePromptStore(settings=settings)
+        assert isinstance(store, PromptStore)
+
+
+class TestRenderedPromptValueObject:
+    """Verify RenderedPrompt domain model behavior, string coercion, and config merging."""
+
+    def test_rendered_prompt_str_coercion(self):
+        prompt = RenderedPrompt(name="greeting", text="Hello world")
+        assert prompt.name == "greeting"
+        assert prompt.text == "Hello world"
+        assert str(prompt) == "Hello world"
+        assert f"{prompt}" == "Hello world"
+        assert prompt.config == {}
+        assert prompt.raw_prompt is None
+
+    def test_rendered_prompt_custom_config_and_raw_prompt(self):
+        raw_obj = object()
+        cfg = {"metadata": {"trace_id": "tr-123"}, "tags": ["test"]}
+        prompt = RenderedPrompt(name="custom", text="Custom text", config=cfg, raw_prompt=raw_obj)
+        assert prompt.config["metadata"]["trace_id"] == "tr-123"
+        assert prompt.raw_prompt is raw_obj
+
+
+class TestLocalPromptStore:
+    """Verify LocalPromptStore in-memory adapter, canonical templates, and interpolation."""
+
+    REQUIRED_CANONICAL_KEYS = [
         "rag:router:llm",
         "rag:router:jev",
         "rag:grade_kb:llm",
@@ -55,12 +78,15 @@ class TestLocalPromptsRegistry:
     ]
 
     def test_all_canonical_prompt_keys_exist(self):
-        for key in self.REQUIRED_KEYS:
-            assert key in LOCAL_PROMPTS, f"Missing required canonical prompt key: {key}"
-            assert isinstance(LOCAL_PROMPTS[key], str)
-            assert len(LOCAL_PROMPTS[key].strip()) > 0
+        store = LocalPromptStore()
+        for key in self.REQUIRED_CANONICAL_KEYS:
+            assert key in CANONICAL_PROMPTS
+            template = store.get_template(key)
+            assert isinstance(template, str)
+            assert len(template.strip()) > 0
 
-    def test_all_canonical_prompts_compile_cleanly(self):
+    def test_all_canonical_prompts_render_cleanly(self):
+        store = LocalPromptStore()
         test_vars = {
             "question": "What is the VPN server address?",
             "context": "The VPN server is vpn.company.com.",
@@ -68,273 +94,259 @@ class TestLocalPromptsRegistry:
             "web_results": "Title: VPN\nContent: Connect to VPN gateway.",
             "chat_history": "Human: Hi\nAssistant: Hello! How can I help you?",
         }
-        for key in self.REQUIRED_KEYS:
-            prompt = FallbackPrompt(name=key, template=LOCAL_PROMPTS[key])
-            rendered = prompt.compile(**test_vars)
-            assert isinstance(rendered, str)
-            assert "{{" not in rendered, f"Unsubstituted mustache tag remaining in {key}: {rendered}"
+        for key in self.REQUIRED_CANONICAL_KEYS:
+            rendered = store.render(key, **test_vars)
+            assert isinstance(rendered, RenderedPrompt)
+            assert "{{" not in rendered.text, f"Unsubstituted mustache tag remaining in {key}: {rendered.text}"
 
-
-class TestGetWorkflowPrompt:
-    def test_get_workflow_prompt_langfuse_disabled_returns_fallback(self):
-        with patch("app.services.prompts.get_settings") as mock_settings:
-            mock_settings.return_value.langfuse_enabled = False
-            mock_settings.return_value.langfuse_prompt_cache_ttl_seconds = 300
-
-            prompt = get_workflow_prompt("rag:direct_answer")
-            assert isinstance(prompt, FallbackPrompt)
-            assert prompt.name == "rag:direct_answer"
-            assert prompt.version == 0
-            assert "Respond briefly, warmly" in prompt.template
-            rendered = prompt.compile(question="hello")
-            assert "hello" in rendered
-
-    def test_get_workflow_prompt_langfuse_client_none_returns_fallback(self):
-        with (
-            patch("app.services.prompts.get_settings") as mock_settings,
-            patch("app.services.prompts.get_langfuse_client", return_value=None),
-        ):
-            mock_settings.return_value.langfuse_enabled = True
-            mock_settings.return_value.langfuse_prompt_cache_ttl_seconds = 300
-
-            prompt = get_workflow_prompt("rag:router:llm")
-            assert isinstance(prompt, FallbackPrompt)
-            assert prompt.name == "rag:router:llm"
-            assert prompt.version == 0
-            assert "You route messages" in prompt.template
-
-    def test_get_workflow_prompt_client_exception_fail_open(self):
-        mock_client = MagicMock()
-        mock_client.get_prompt.side_effect = ConnectionError("Langfuse unreachable")
-
-        with (
-            patch("app.services.prompts.get_settings") as mock_settings,
-            patch("app.services.prompts.get_langfuse_client", return_value=mock_client),
-        ):
-            mock_settings.return_value.langfuse_enabled = True
-            mock_settings.return_value.langfuse_prompt_cache_ttl_seconds = 300
-
-            prompt = get_workflow_prompt("rag:generate_kb")
-            assert isinstance(prompt, FallbackPrompt)
-            assert prompt.name == "rag:generate_kb"
-            assert prompt.version == 0
-            assert "Private KB" in prompt.template
-
-    def test_get_workflow_prompt_success_calls_langfuse_client(self):
-        mock_client = MagicMock()
-        mock_langfuse_prompt = MagicMock(spec=TextPromptClient)
-        mock_langfuse_prompt.name = "rag:direct_answer"
-        mock_langfuse_prompt.version = 4
-        mock_client.get_prompt.return_value = mock_langfuse_prompt
-
-        with (
-            patch("app.services.prompts.get_settings") as mock_settings,
-            patch("app.services.prompts.get_langfuse_client", return_value=mock_client),
-        ):
-            mock_settings.return_value.langfuse_enabled = True
-            mock_settings.return_value.langfuse_prompt_cache_ttl_seconds = 300
-
-            prompt = get_workflow_prompt("rag:direct_answer")
-
-            assert prompt is mock_langfuse_prompt
-            mock_client.get_prompt.assert_called_once_with(
-                name="rag:direct_answer",
-                type="text",
-                cache_ttl_seconds=300,
-                fallback=LOCAL_PROMPTS["rag:direct_answer"],
-            )
-
-    def test_get_workflow_prompt_unknown_key_returns_empty_fallback(self):
-        with patch("app.services.prompts.get_settings") as mock_settings:
-            mock_settings.return_value.langfuse_enabled = False
-            mock_settings.return_value.langfuse_prompt_cache_ttl_seconds = 300
-
-            prompt = get_workflow_prompt("rag:unknown_key")
-            assert isinstance(prompt, FallbackPrompt)
-            assert prompt.name == "rag:unknown_key"
-            assert prompt.template == ""
-            assert prompt.version == 0
-
-
-class TestPromptAutoSeeding:
-    """Verifies auto-seeding missing prompts into Langfuse Prompt CMS on 404 or fallback."""
-
-    def test_seed_prompt_skips_create_when_prompt_already_exists(self, monkeypatch):
-        from app.services import prompts
-
-        prompts._seeded_prompts.clear()
-
-        mock_client = MagicMock()
-        mock_existing = MagicMock(spec=TextPromptClient)
-        mock_existing.is_fallback = False
-        mock_existing.version = 3
-        mock_client.get_prompt.return_value = mock_existing
-
-        mock_settings = MagicMock()
-        mock_settings.langfuse_enabled = True
-
-        monkeypatch.setattr(prompts, "get_settings", lambda: mock_settings)
-        monkeypatch.setattr(prompts, "get_langfuse_client", lambda: mock_client)
-
-        success = prompts.seed_prompt("rag:direct_answer")
-        assert success is True
-        mock_client.get_prompt.assert_called_once_with(
-            name="rag:direct_answer",
-            label="production",
-            cache_ttl_seconds=0,
-        )
-        mock_client.create_prompt.assert_not_called()
-        assert "rag:direct_answer" in prompts._seeded_prompts
-
-    def test_seed_prompt_calls_create_when_not_found(self, monkeypatch):
-        from app.services import prompts
-
-        prompts._seeded_prompts.clear()
-
-        mock_client = MagicMock()
-        mock_client.get_prompt.side_effect = RuntimeError("404 LangfuseNotFoundError")
-        mock_settings = MagicMock()
-        mock_settings.langfuse_enabled = True
-
-        monkeypatch.setattr(prompts, "get_settings", lambda: mock_settings)
-        monkeypatch.setattr(prompts, "get_langfuse_client", lambda: mock_client)
-
-        success = prompts.seed_prompt("rag:direct_answer")
-        assert success is True
-        mock_client.get_prompt.assert_called_once_with(
-            name="rag:direct_answer",
-            label="production",
-            cache_ttl_seconds=0,
-        )
-        mock_client.create_prompt.assert_called_once_with(
-            name="rag:direct_answer",
-            prompt=prompts.LOCAL_PROMPTS["rag:direct_answer"],
-            labels=["production"],
-            type="text",
-        )
-        assert "rag:direct_answer" in prompts._seeded_prompts
-
-        # Second call should be a no-op (idempotent in-memory gate)
-        mock_client.create_prompt.reset_mock()
-        mock_client.get_prompt.reset_mock()
-        success2 = prompts.seed_prompt("rag:direct_answer")
-        assert success2 is True
-        mock_client.get_prompt.assert_not_called()
-        mock_client.create_prompt.assert_not_called()
-
-    def test_seed_all_prompts_seeds_missing_prompts(self, monkeypatch):
-        from app.services import prompts
-
-        prompts._seeded_prompts.clear()
-
-        mock_client = MagicMock()
-        # All 10 prompts missing on server initially
-        mock_client.get_prompt.side_effect = RuntimeError("404 NotFound")
-        mock_settings = MagicMock()
-        mock_settings.langfuse_enabled = True
-
-        monkeypatch.setattr(prompts, "get_settings", lambda: mock_settings)
-        monkeypatch.setattr(prompts, "get_langfuse_client", lambda: mock_client)
-
-        results = prompts.seed_all_prompts()
-        assert len(results) == len(prompts.LOCAL_PROMPTS)
-        assert all(results.values())
-        assert mock_client.create_prompt.call_count == len(prompts.LOCAL_PROMPTS)
-
-    def test_seed_all_prompts_skips_when_already_on_server(self, monkeypatch):
-        from app.services import prompts
-
-        prompts._seeded_prompts.clear()
-
-        mock_client = MagicMock()
-        mock_existing = MagicMock(spec=TextPromptClient)
-        mock_existing.is_fallback = False
-        mock_client.get_prompt.return_value = mock_existing
-
-        mock_settings = MagicMock()
-        mock_settings.langfuse_enabled = True
-
-        monkeypatch.setattr(prompts, "get_settings", lambda: mock_settings)
-        monkeypatch.setattr(prompts, "get_langfuse_client", lambda: mock_client)
-
-        results = prompts.seed_all_prompts()
-        assert len(results) == len(prompts.LOCAL_PROMPTS)
-        assert all(results.values())
-        assert mock_client.create_prompt.call_count == 0
-
-    def test_get_workflow_prompt_auto_seeds_when_fallback_returned(self, monkeypatch):
-        from app.services import prompts
-
-        prompts._seeded_prompts.clear()
-
-        mock_client = MagicMock()
-        mock_fallback_client = MagicMock(spec=TextPromptClient)
-        mock_fallback_client.is_fallback = True
-
-        def mock_get_prompt(name, **kwargs):
-            if kwargs.get("cache_ttl_seconds") == 0:
-                raise RuntimeError("404 NotFound")
-            return mock_fallback_client
-
-        mock_client.get_prompt.side_effect = mock_get_prompt
-
-        mock_settings = MagicMock()
-        mock_settings.langfuse_enabled = True
-        mock_settings.langfuse_prompt_cache_ttl_seconds = 300
-
-        monkeypatch.setattr(prompts, "get_settings", lambda: mock_settings)
-        monkeypatch.setattr(prompts, "get_langfuse_client", lambda: mock_client)
-
-        prompt = prompts.get_workflow_prompt("rag:router:llm")
-        assert prompt is mock_fallback_client
-        mock_client.create_prompt.assert_called_once_with(
-            name="rag:router:llm",
-            prompt=prompts.LOCAL_PROMPTS["rag:router:llm"],
-            labels=["production"],
-            type="text",
+    def test_template_interpolation_whitespace_and_backslashes(self):
+        store = LocalPromptStore(
+            templates={
+                "path_test": "File: {{path}}",
+                "spacing_test": "Question: {{ question }}\nQuery: {{  current_query  }}",
+                "partial_test": "Hello {{user}}, welcome to {{place}}!",
+            }
         )
 
-    def test_get_workflow_prompt_does_not_create_if_already_on_server(self, monkeypatch):
-        from app.services import prompts
+        path_val = r"C:\users\alice\documents\file.txt"
+        assert store.render("path_test", path=path_val).text == f"File: {path_val}"
 
-        prompts._seeded_prompts.clear()
+        rendered_spacing = store.render("spacing_test", question="How to MFA?", current_query="mfa")
+        assert rendered_spacing.text == "Question: How to MFA?\nQuery: mfa"
 
+        rendered_partial = store.render("partial_test", user="Bob")
+        assert rendered_partial.text == "Hello Bob, welcome to {{place}}!"
+
+    def test_custom_template_registration_and_retrieval(self):
+        store = LocalPromptStore(templates={"custom:one": "One {{val}}"})
+        assert store.get_template("custom:one") == "One {{val}}"
+
+        with pytest.raises(KeyError):
+            store.get_template("rag:direct_answer")
+
+        store.register_prompt("custom:two", "Two {{val}}")
+        assert store.get_template("custom:two") == "Two {{val}}"
+        assert store.render("custom:two", val="2").text == "Two 2"
+
+    def test_unknown_key_raises_key_error(self):
+        store = LocalPromptStore()
+        with pytest.raises(KeyError, match="not found"):
+            store.get_template("nonexistent:key")
+        with pytest.raises(KeyError, match="not found"):
+            store.render("nonexistent:key")
+
+    def test_render_merges_inbound_runnable_config(self):
+        store = LocalPromptStore()
+        inbound_cfg: RunnableConfig = {
+            "metadata": {"session_id": "ses-abc", "user_id": "usr-1"},
+            "tags": ["prod"],
+            "run_name": "agent_run",
+        }
+        rendered = store.render("rag:direct_answer", config=inbound_cfg, question="Hello")
+
+        assert rendered.config["tags"] == ["prod"]
+        assert rendered.config["run_name"] == "agent_run"
+        assert rendered.config["metadata"] == {
+            "session_id": "ses-abc",
+            "user_id": "usr-1",
+            "prompt_name": "rag:direct_answer",
+            "prompt_fallback": True,
+        }
+
+    def test_seed_prompts_reports_all_seeded(self):
+        store = LocalPromptStore(templates={"p1": "one", "p2": "two"})
+        result = store.seed_prompts()
+        assert result == {"p1": True, "p2": True}
+
+
+class TestLangfusePromptStoreRetrieval:
+    """Verify LangfusePromptStore remote resolution, fallback mechanisms, and caching."""
+
+    def test_remote_prompt_retrieval_success(self):
         mock_client = MagicMock()
         mock_prompt = MagicMock(spec=TextPromptClient)
+        mock_prompt.name = "rag:direct_answer"
+        mock_prompt.prompt = "Answer directly to: {{question}}"
         mock_prompt.is_fallback = False
         mock_client.get_prompt.return_value = mock_prompt
 
-        mock_settings = MagicMock()
-        mock_settings.langfuse_enabled = True
-        mock_settings.langfuse_prompt_cache_ttl_seconds = 300
+        settings = _make_settings(langfuse_enabled=True, langfuse_prompt_cache_ttl_seconds=300)
+        store = LangfusePromptStore(settings=settings, client=mock_client)
 
-        monkeypatch.setattr(prompts, "get_settings", lambda: mock_settings)
-        monkeypatch.setattr(prompts, "get_langfuse_client", lambda: mock_client)
+        inbound_config: RunnableConfig = {"metadata": {"session_id": "ses-100"}, "tags": ["live"]}
+        rendered = store.render("rag:direct_answer", config=inbound_config, question="Need help")
 
-        prompt = prompts.get_workflow_prompt("rag:router:llm")
-        assert prompt is mock_prompt
+        assert rendered.name == "rag:direct_answer"
+        assert rendered.text == "Answer directly to: Need help"
+        assert rendered.raw_prompt is mock_prompt
+        assert rendered.config["tags"] == ["live"]
+        assert rendered.config["metadata"]["session_id"] == "ses-100"
+        assert rendered.config["metadata"]["langfuse_prompt"] is mock_prompt
+        assert "prompt_fallback" not in rendered.config["metadata"]
+        mock_client.get_prompt.assert_called_once_with(
+            name="rag:direct_answer",
+            label="production",
+            cache_ttl_seconds=300,
+        )
+
+    def test_langfuse_disabled_falls_back_to_local(self):
+        settings = _make_settings(langfuse_enabled=False)
+        store = LangfusePromptStore(settings=settings)
+
+        rendered = store.render("rag:direct_answer", question="hello")
+        assert rendered.name == "rag:direct_answer"
+        assert "Respond briefly, warmly" in rendered.text
+        assert rendered.config["metadata"]["prompt_fallback"] is True
+        assert rendered.config["metadata"]["prompt_name"] == "rag:direct_answer"
+        assert rendered.raw_prompt is None
+
+    def test_langfuse_client_none_falls_back_to_local(self):
+        settings = _make_settings(langfuse_enabled=True)
+        store = LangfusePromptStore(settings=settings, client=None)
+
+        rendered = store.render("rag:router:llm", question="vpn issue")
+        assert rendered.name == "rag:router:llm"
+        assert "You route messages" in rendered.text
+        assert rendered.config["metadata"]["prompt_fallback"] is True
+
+    def test_client_exception_fails_open_to_local(self):
+        mock_client = MagicMock()
+        mock_client.get_prompt.side_effect = ConnectionError("Langfuse unreachable")
+
+        settings = _make_settings(langfuse_enabled=True)
+        store = LangfusePromptStore(settings=settings, client=mock_client)
+
+        rendered = store.render("rag:generate_kb", question="vpn", context="portal")
+        assert rendered.name == "rag:generate_kb"
+        assert "Private KB" in rendered.text
+        assert rendered.config["metadata"]["prompt_fallback"] is True
+
+    def test_ttl_caching_and_expiration(self, monkeypatch: pytest.MonkeyPatch):
+        mock_client = MagicMock()
+        mock_prompt1 = MagicMock(spec=TextPromptClient)
+        mock_prompt1.prompt = "Cached template: {{question}}"
+        mock_prompt1.is_fallback = False
+
+        mock_prompt2 = MagicMock(spec=TextPromptClient)
+        mock_prompt2.prompt = "Refreshed template: {{question}}"
+        mock_prompt2.is_fallback = False
+
+        mock_client.get_prompt.side_effect = [mock_prompt1, mock_prompt2]
+
+        current_time = 1000.0
+        monkeypatch.setattr(time, "monotonic", lambda: current_time)
+
+        settings = _make_settings(langfuse_enabled=True, langfuse_prompt_cache_ttl_seconds=10)
+        store = LangfusePromptStore(settings=settings, client=mock_client, cache_ttl_seconds=10)
+
+        # Call 1: fetch from client
+        res1 = store.render("rag:direct_answer", question="q1")
+        assert mock_client.get_prompt.call_count == 1
+        assert res1.text == "Cached template: q1"
+
+        # Call 2: served from cache within TTL
+        res2 = store.render("rag:direct_answer", question="q2")
+        assert mock_client.get_prompt.call_count == 1
+        assert res2.text == "Cached template: q2"
+
+        # Advance time beyond TTL
+        current_time = 1020.0
+        res3 = store.render("rag:direct_answer", question="q3")
+        assert mock_client.get_prompt.call_count == 2
+        assert res3.text == "Refreshed template: q3"
+
+
+class TestLangfusePromptStoreAutoSeeding:
+    """Verify idempotent seeding of missing prompts into Langfuse Prompt CMS."""
+
+    def test_seed_prompts_skips_when_already_exists(self):
+        mock_client = MagicMock()
+        mock_existing = MagicMock(spec=TextPromptClient)
+        mock_existing.is_fallback = False
+        mock_client.get_prompt.return_value = mock_existing
+
+        settings = _make_settings(langfuse_enabled=True)
+        store = LangfusePromptStore(settings=settings, client=mock_client)
+
+        results = store.seed_prompts()
+        assert len(results) == len(CANONICAL_PROMPTS)
+        assert all(results.values())
         mock_client.create_prompt.assert_not_called()
 
-    def test_get_workflow_prompt_auto_seeds_on_404_exception(self, monkeypatch):
-        from app.services import prompts
-
-        prompts._seeded_prompts.clear()
-
+    def test_seed_prompts_creates_missing_prompts(self):
         mock_client = MagicMock()
-        mock_client.get_prompt.side_effect = RuntimeError("404 LangfuseNotFoundError")
+        mock_client.get_prompt.side_effect = RuntimeError("404 NotFound")
 
-        mock_settings = MagicMock()
-        mock_settings.langfuse_enabled = True
-        mock_settings.langfuse_prompt_cache_ttl_seconds = 300
+        settings = _make_settings(langfuse_enabled=True)
+        store = LangfusePromptStore(settings=settings, client=mock_client)
 
-        monkeypatch.setattr(prompts, "get_settings", lambda: mock_settings)
-        monkeypatch.setattr(prompts, "get_langfuse_client", lambda: mock_client)
-
-        prompt = prompts.get_workflow_prompt("rag:grade_kb:jev")
-        assert isinstance(prompt, prompts.FallbackPrompt)
-        mock_client.create_prompt.assert_called_once_with(
-            name="rag:grade_kb:jev",
-            prompt=prompts.LOCAL_PROMPTS["rag:grade_kb:jev"],
+        results = store.seed_prompts()
+        assert len(results) == len(CANONICAL_PROMPTS)
+        assert all(results.values())
+        assert mock_client.create_prompt.call_count == len(CANONICAL_PROMPTS)
+        mock_client.create_prompt.assert_any_call(
+            name="rag:direct_answer",
+            prompt=CANONICAL_PROMPTS["rag:direct_answer"],
             labels=["production"],
             type="text",
         )
+
+        # Re-calling seed_prompts is idempotent (in-memory _seeded set prevents re-query)
+        mock_client.create_prompt.reset_mock()
+        mock_client.get_prompt.reset_mock()
+        results2 = store.seed_prompts()
+        assert all(results2.values())
+        mock_client.get_prompt.assert_not_called()
+        mock_client.create_prompt.assert_not_called()
+
+    def test_seed_prompts_when_disabled_makes_no_calls(self):
+        mock_client = MagicMock()
+        settings = _make_settings(langfuse_enabled=False)
+        store = LangfusePromptStore(settings=settings, client=mock_client)
+
+        results = store.seed_prompts()
+        assert len(results) == len(CANONICAL_PROMPTS)
+        assert not any(results.values())
+        mock_client.get_prompt.assert_not_called()
+        mock_client.create_prompt.assert_not_called()
+
+    def test_render_does_not_seed_and_fails_open_on_missing_prompt(self):
+        """Verify inference calls perform zero writes (fail-open) per ADR-0018."""
+        mock_client = MagicMock()
+        mock_client.get_prompt.side_effect = RuntimeError("404 NotFound")
+
+        settings = _make_settings(langfuse_enabled=True, langfuse_prompt_cache_ttl_seconds=300)
+        store = LangfusePromptStore(settings=settings, client=mock_client)
+
+        rendered = store.render("rag:grade_kb:jev", question="q", context="c")
+        assert rendered.name == "rag:grade_kb:jev"
+        assert rendered.config["metadata"]["prompt_fallback"] is True
+        mock_client.create_prompt.assert_not_called()
+
+
+class TestPromptStoreDependencyInjection:
+    """Verify get_prompt_store factory, singleton lifecycles, and overrides."""
+
+    def test_get_prompt_store_singleton_and_reset(self):
+        reset_prompt_store()
+        store1 = get_prompt_store()
+        store2 = get_prompt_store()
+        assert store1 is store2
+        assert isinstance(store1, LangfusePromptStore)
+
+        reset_prompt_store()
+        store3 = get_prompt_store()
+        assert store3 is not store1
+        reset_prompt_store()
+
+    def test_get_prompt_store_explicit_store_injection(self):
+        reset_prompt_store()
+        custom_store = LocalPromptStore(templates={"custom": "Hello"})
+        injected = get_prompt_store(store=custom_store)
+        assert injected is custom_store
+        assert get_prompt_store() is custom_store
+
+    def test_get_prompt_store_type_selection(self):
+        reset_prompt_store()
+        local_store = get_prompt_store(store_type="local")
+        assert isinstance(local_store, LocalPromptStore)

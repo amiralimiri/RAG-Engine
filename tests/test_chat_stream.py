@@ -189,7 +189,6 @@ def mock_telemetry_defaults(monkeypatch):
     )
     monkeypatch.setattr("app.rag.workflows.runner.flush_telemetry", lambda: None)
     get_workflow_runner().eval_task_fn = AsyncMock()
-    monkeypatch.setattr("app.services.prompts.get_langfuse_client", lambda: None)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
