@@ -106,7 +106,11 @@ A concrete adapter satisfying the `ConversationMemoryAdapter` storage seam:
 A strongly-typed domain model (`ConversationTurn`) representing a single completed conversational exchange within a session, encapsulating `session_id`, 0-based `turn_index`, `user_query`, `assistant_answer`, `attachments`, `citations`, `source_used`, `trace_id`, and `created_at`. Strictly excludes intermediate tool scratchpads.
 
 ### In-Place Turn Rewind (Truncation)
-The conversational capability (`atruncate_from`) allowing a user to edit past query $k$ and continue execution within the existing session, safely pruning all turns $\ge k$ from persistent storage atomically upon successful turn completion.
+The conversational capability allowing a user to edit past query $k$ and continue execution within the existing session, safely pruning all turns $\ge k$ from persistent storage atomically upon successful turn completion via `aappend_turn(..., rewind_turn_index=k)`, or explicitly via `atruncate_from` for standalone rewind endpoints.
+
+### Atomic Turn Append
+The deep entrypoint (`aappend_turn`) on `ConversationMemoryAdapter` that atomically calculates the monotonic `turn_index`, commits in-place rewind truncation (if rewinding), persists the new completed `ConversationTurn`, and updates session timestamps within a single database transaction.
+_Avoid_: Manual turn counting, separate truncate-then-save calls, caller-managed indexing
 
 ### Conversation Branching (Forking)
 The capability (`afork_session`) to clone conversation turns $[0 \dots k]$ into a new child session (`new_session_id`) with lineage metadata (`parent_session_id`, `forked_from_turn`), enabling alternative exploration branches without modifying the original session.

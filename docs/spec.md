@@ -1,177 +1,208 @@
-# Technical Specification: Knowledge Store Seam and Unified Document Indexing Pipeline
+# Technical Specification: Deepen Conversation Memory Seam with Atomic Append and Bounded Message Hydration
 
-- **ADR Reference:** `docs/adr/0009-knowledge-store-seam-and-document-indexing-pipeline.md`
-- **Specification Document:** `docs/specs/0009-knowledge-store-seam-and-document-indexing-pipeline-spec.md`
-- **Target Version:** `0.9.0`
-- **Status:** Completed
-
----
-
-## 1. Problem Statement
-
-Following ADR 0006, ADR 0007, and ADR 0008, the agentic RAG platform established a unified 10-node StateGraph engine, pluggable classifier adapters, an extensible multi-workflow registry, and a standardized dual-output `BaseTool` layer.
-
-However, document ingestion and vector storage remain architecturally fragmented and shallow:
-1. **Shallow Ingestion Layer**: `app/services/ingestion.py` exposes only two thin procedural helpers (`load_file` and `chunk_documents`), leaving all orchestration to callers. Callers such as the HTTP upload route (`app/api/routes.py:upload_file`) and bulk CLI ingesters (`ingest_sample_kb.py`) are forced to manually coordinate file reading, document loading, chunk splitting, threadpool dispatch, batch slicing, and vectorstore calls.
-2. **Coupled Storage and Index Lifecycle**: `app/rag/vectorstore.py` tightly couples callers to `PineconeVectorStore` and cloud Pinecone SDKs. Its `ensure_index()` method executes blocking sleep loops (`while not pc.has_index: time.sleep(1)`) and destructively deletes indexes when embedding dimensions mismatch.
-3. **Asymmetric Testability & Impossible Offline Testing**: Because vector storage is bound to cloud Pinecone and global module singletons (`_vectorstore`, `_embeddings`), testing ingestion or retrieval requires a live Pinecone API key or invasive monkeypatching of third-party network clients.
-4. **Non-Idempotent Vector Ingestion**: Re-indexing an existing file assigns random chunk IDs, duplicating vector entries in Pinecone and degrading retrieval accuracy.
-5. **Rigid Parsing and Chunking**: File extension handling and text chunking parameters (`chunk_size=900, chunk_overlap=120`) are hardcoded, preventing developers from testing alternative parsers or semantic chunkers without directly modifying library code.
-6. **Seam Leakage in Retriever Tool**: `app/rag/tools/retriever.py` contains reflection hacks inspecting `sys.modules["app.rag.engine"]` to bypass global state when monkeypatched in legacy tests.
-
-To achieve maximum modularity, callers require a deep document indexing pipeline behind a single-method interface, and workflows require an independent vector store protocol seam with an in-memory double for fast, offline testing.
+- **ADR Reference:** `docs/adr/0017-deepen-conversation-memory-seam.md`
+- **Target Subsystem:** `app/rag/memory/` and `app/rag/workflows/runner.py`
+- **Specification Document:** `docs/spec.md` & `docs/specs/0017-deepen-conversation-memory-seam-spec.md`
+- **Status:** Proposed
 
 ---
 
-## 2. Architectural Solution
+## Problem Statement
 
-Establish a unified knowledge subsystem in `app/rag/knowledge/` providing clean CQRS separation between the write pipeline (`DocumentIndexer`) and the read/retrieval storage seam (`VectorStoreAdapter`).
+Following the introduction of the pluggable conversation memory subsystem (ADR-0016), multi-turn conversation history, session resumption, turn rewind, and session branching were established across all workflow paradigms.
 
-1. **Independent `VectorStoreAdapter` Protocol Seam (`app/rag/knowledge/base.py`)**:
-   - Define a strongly-typed Python `Protocol` specifying dual synchronous and native asynchronous storage methods: `add_documents` / `aadd_documents`, `similarity_search` / `asimilarity_search`, and `as_retriever`.
-   - Provide concrete `PineconeVectorStoreAdapter` and `InMemoryVectorStoreAdapter` implementations.
-   - Provide an injectable factory `get_knowledge_store(settings=None, store_type=None)` managing singleton lifecycle and test overrides.
-2. **Deep Write-Path Indexing Pipeline (`app/rag/knowledge/indexer.py`)**:
-   - Encapsulate file parsing, chunk splitting, batch scheduling, deterministic SHA-256 chunk ID generation, and vector persistence behind a single-method `DocumentIndexer` interface (`index_file`, `aindex_file`, `index_batch`, `aindex_batch`).
-3. **Pluggable Parser and Chunker Strategy Protocols (`parsers.py`, `chunkers.py`)**:
-   - `DocumentParser`: Pluggable strategy with format registry (PDF, MD, TXT, DOCX).
-   - `DocumentChunker`: Pluggable strategy driven by application settings.
-4. **Caller Modernization & Backward Compatibility Shims**:
-   - Migrate `app/api/routes.py:upload_file`, `ingest_sample_kb.py`, and `app/rag/tools/retriever.py`.
-   - Preserve `app/rag/vectorstore.py` and `app/services/ingestion.py` as backward-compatibility delegation shims.
+However, the `ConversationMemoryAdapter` protocol seam remains shallow, leaking internal storage mechanics and serialization burdens onto callers—specifically `WorkflowRunner`:
+1. **Caller-Managed Turn Indexing**: Callers must know how to calculate the next 0-based `turn_index`, requiring `WorkflowRunner._apersist_turn` to query turn counts from the store before instantiating a `ConversationTurn`.
+2. **$O(N)$ Full-Session JSON Deserialization Penalty**: To evaluate `turn_index = len(existing_turns)` during normal turn persistence, `WorkflowRunner` executes `await self.memory.aget_turns(session_id)`. In SQLite, this deserializes all JSON columns (`attachments_json`, `citations_json`) for every turn across the entire conversation on every single user message.
+3. **Write Concurrency and Race Hazards**: When multiple requests complete concurrently within the same session, both read the same turn count and assign duplicate `turn_index` values, causing silent data overwrite in SQLite.
+4. **Non-Atomic Rewind Commit**: In-place rewind requires `WorkflowRunner` to issue two separate asynchronous operations: first calling `atruncate_from(session_id, rewind_turn_index)`, then `asave_turn(turn)`. If the process halts or the second write fails, the session is left truncated with the replacement turn lost.
+5. **Rewind Hydration Penalty**: When hydrating memory for an in-place turn edit (`rewind_turn_index is not None`), `WorkflowRunner._ahydrate_memory` executes `aget_turns(session_id)` and manually slices `all_turns[max(0, rewind_turn_index - max_turns) : rewind_turn_index]`. This reintroduces full-session JSON deserialization into the pre-execution read path.
+
+To eliminate this friction, the `ConversationMemoryAdapter` protocol seam must be deepened to encapsulate atomic turn appending, SQL-level monotonic index generation, atomic rewind truncation, and bounded pre-rewind message queries behind a high-leverage interface.
 
 ---
 
-## 3. User Stories
+## Solution
 
-1. **As a backend developer**, I want to create a new workflow by subclassing or implementing `WorkflowDefinition`, so that I can add new agent topologies without modifying FastAPI transport routes or existing workflows.
-2. **As an agent developer**, I want to use standard LangChain tools (`retriever_tool`, `web_search_tool`) inside dynamic ReAct agents, so that I don't have to reimplement search or telemetry logic.
-3. **As a frontend developer**, I want `GET /api/workflows` to return rich capabilities metadata (name, description, conversational flag, step labels), so that the UI can dynamically configure its chat interface and step spinners.
-4. **As an enterprise user**, I want multi-turn conversations with the ReAct agent to remember previous context within the same `session_id`, without needing to resend the entire message history every turn.
-5. **As an API consumer**, I want existing requests to `POST /api/chat` and `POST /api/chat/stream` with `workflow="fix_single_llm"` and `workflow="fix_single_jev"` to function with zero breaking changes.
-6. **As a streaming client**, I want tool-calling reasoning tokens (JSON function arguments) filtered out of the SSE `token` stream, so that only user-facing conversational text is rendered in the chat bubble.
-7. **As an LLMOps engineer**, I want online evaluation (`run_online_evaluation_task`) to evaluate any workflow through a standardized `extract_eval_context()` hook, ensuring metrics are recorded without key errors.
-8. **As a QA engineer**, I want to run `BaseWorkflowContractTest` against any new workflow, ensuring that all state adapters, fallbacks, and schema guarantees are validated automatically in CI.
+Deepen the `ConversationMemoryAdapter` protocol seam and its concrete implementations (`SQLiteConversationStore`, `InMemoryConversationStore`, `NoOpMemoryStore`):
 
----
-
-## 4. Detailed Component Design
-
-### 4.1. Core Protocol & Schemas (`app/rag/workflows/base.py`)
-
-```python
-from typing import Any, Protocol, runtime_checkable
-from pydantic import BaseModel, Field
-from app.api.schemas import ChatRequest, ChatResponse
-
-class WorkflowInfo(BaseModel):
-    id: str
-    name: str
-    description: str
-    is_conversational: bool = False
-    supports_streaming: bool = True
-    step_labels: dict[str, str] = Field(default_factory=dict)
-    generation_nodes: set[str] = Field(default_factory=set)
-
-class EvalContext(BaseModel):
-    source_used: str = "direct"
-    retrieved_contexts: list[str] = Field(default_factory=list)
-
-@runtime_checkable
-class WorkflowDefinition(Protocol):
-    info: WorkflowInfo
-
-    def get_compiled_graph(self) -> Any:
-        """Return the compiled, thread-safe LangGraph runnable."""
-        ...
-
-    def to_initial_state(self, request: ChatRequest, trace_id: str | None = None) -> dict[str, Any]:
-        """Convert an incoming API ChatRequest into internal workflow graph state."""
-        ...
-
-    def to_chat_response(self, final_state: dict[str, Any], trace_id: str | None = None) -> ChatResponse:
-        """Convert the internal final graph state into a normalized ChatResponse."""
-        ...
-
-    def extract_eval_context(self, final_state: dict[str, Any]) -> EvalContext:
-        """Extract evidence contexts and source used for online evaluation."""
-        ...
-
-    def handle_error(self, exc: Exception, current_state: dict[str, Any]) -> dict[str, Any]:
-        """Provide a fallback final state dictionary in the event of an unhandled node exception."""
-        ...
-```
-
-### 4.2. Workflow Registry (`app/rag/workflows/registry.py`)
-
-- Maintain an internal registry map `_REGISTRY: dict[str, WorkflowDefinition]`.
-- Provide thread-safe methods:
-  - `register(workflow: WorkflowDefinition) -> None`
-  - `get(workflow_id: str) -> WorkflowDefinition`
-  - `list_info() -> list[WorkflowInfo]`
-  - `list_ids() -> list[str]`
-  - `warmup() -> None` (compiles all registered graphs)
-- Decorator `@register_workflow` for declarative registration.
-
-### 4.3. Tool Abstraction Layer (`app/rag/tools/`)
-
-- `app/rag/tools/retriever.py`:
-  - `KnowledgeSearchInput`: Pydantic schema with `query: str`.
-  - `create_retriever_tool(retriever=None) -> BaseTool`: Encapsulates Pinecone vectorstore lookup and returns formatted chunk text.
-- `app/rag/tools/search.py`:
-  - `WebSearchInput`: Pydantic schema with `query: str`.
-  - `create_web_search_tool() -> BaseTool`: Encapsulates Tavily general search.
-- All tools pass `RunnableConfig` through, ensuring Langfuse telemetry callbacks log tool spans.
-
-### 4.4. Parameterized Self-Corrective RAG (`app/rag/workflows/self_corrective.py`)
-
-- Subclasses/implements `WorkflowDefinition`.
-- Parameterized by `classifier: WorkflowClassifier`.
-- Compiles the canonical 10-node DAG from `app/rag/engine.py`.
-- Encapsulates `AgentState` conversion, citations extraction, and error handling.
-- Registered twice:
-  - `id="fix_single_llm"` with `OpenAIClassifierAdapter()`
-  - `id="fix_single_jev"` with `JevClassifierAdapter()`
-
-### 4.5. Reference ReAct Agent (`app/rag/workflows/react_agent.py`)
-
-- Subclasses/implements `WorkflowDefinition`.
-- Uses `langgraph.prebuilt.create_react_agent(llm, tools, checkpointer=MemorySaver())`.
-- State is a list of LangChain messages (`Sequence[BaseMessage]`).
-- Converts `ChatRequest.question` and optional `messages` into `HumanMessage`.
-- Maps `session_id` into `thread_id` for conversation persistence across invocations.
-- Extracts citations from tool messages (`ToolMessage`) in state history.
-
-### 4.6. API Schemas & Route Integration
-
-- **`app/api/schemas.py`**:
-  - `ChatMessage(role: str, content: str)`
-  - `Attachment(filename: str, content_type: str, url: str | None = None)`
-  - `ChatRequest`: add `messages: list[ChatMessage] | None = None`, `attachments: list[Attachment] | None = None`.
-  - `WorkflowListResponse`: returns `default: str`, `workflows: list[str]`, and `details: list[WorkflowInfo]`.
-- **`app/api/routes.py`**:
-  - Delegate execution entirely to `WorkflowRegistry.get(payload.workflow)`.
-  - In `chat_event_generator`:
-    - Lookup step labels from `workflow.info.step_labels`.
-    - Check token emission against `workflow.info.generation_nodes`.
-    - Filter out tool-call JSON deltas (`chunk.message.tool_call_chunks`).
-    - Use `workflow.extract_eval_context()` for online evaluation.
-    - Wrap execution with `workflow.handle_error()` for graceful failure synthesis.
+1. **Atomic Turn Append (`aappend_turn`)**:
+   Introduce a high-leverage entrypoint on `ConversationMemoryAdapter` accepting scalar turn parameters and returning the persisted `ConversationTurn`. The adapter guarantees atomic monotonic indexing, rewind truncation, session timestamp updates, and persistence in a single transaction.
+2. **Transactional SQL-Level Monotonic Indexing**:
+   In `SQLiteConversationStore`, resolve `turn_index` using `SELECT COALESCE(MAX(turn_index) + 1, 0) FROM conversation_turns WHERE session_id = ?` under write lock, avoiding in-memory counting and deserialization.
+3. **Atomic Rewind Commit**:
+   Wrap turn deletion (`WHERE turn_index >= rewind_turn_index`) and replacement turn insertion in a single SQLite transaction block (`with conn:`), ensuring complete atomicity.
+4. **Bounded Pre-Rewind Message Hydration (`before_turn_index`)**:
+   Add `before_turn_index: int | None = None` to `aget_messages` and `aget_turns`. Push the `AND turn_index < before_turn_index` filter directly into SQL queries, eliminating Python-side turn slicing.
+5. **Caller Streamlining in `WorkflowRunner`**:
+   Refactor `_apersist_turn` to invoke `aappend_turn` in a single line. Refactor `_ahydrate_memory` to call `aget_messages` with `before_turn_index=rewind_turn_index`, collapsing branched logic into a single query.
+6. **Preserved Seam Primitives**:
+   Retain `asave_turn` for seed fixtures and test doubles; retain `atruncate_from` exclusively for the explicit `POST /api/chat/{session_id}/rewind` REST endpoint.
 
 ---
 
-## 5. Verification Plan
+## User Stories
 
-1. **Unit & Conformance Testing**:
-   - `tests/rag/test_workflow_contracts.py`: Conformance suite running against `fix_single_llm`, `fix_single_jev`, and `react_agent`.
-   - `tests/rag/test_tools.py`: Tool invocation, schema validation, and config/telemetry propagation.
-   - `tests/rag/test_registry.py`: Registration, duplicate detection, lazy compilation, and lookup.
-2. **API & Streaming Integration**:
-   - Verify `GET /api/workflows` returns both legacy list and rich metadata.
-   - Verify `POST /api/chat` and `POST /api/chat/stream` work seamlessly across all registered workflows.
-   - Verify multi-turn context retention in `react_agent` using identical `session_id`.
-   - Verify tool-call JSON chunks are not leaked during streaming.
-3. **Telemetry & Observability**:
-   - Confirm Langfuse trace generation, span hierarchy, and online evaluation execution for all workflows.
-4. **Regression Safety**:
-   - Run the complete existing test suite (260 tests) to ensure zero regressions on existing endpoints and workflows.
+1. As an API caller sending sequential chat turns, I want the memory store to assign monotonic `turn_index` values in $O(1)$ database operations, so that conversation turn persistence does not degrade in latency as the session grows longer.
+2. As a user performing an in-place turn rewind, I want the deletion of obsolete turns and insertion of the replacement turn to occur atomically in a single database transaction, so that my session is never left in a corrupt or partially deleted state if an error occurs.
+3. As a user resuming a conversation from an edited turn, I want `WorkflowRunner` to hydrate only the bounded window of turns prior to that turn directly from the database, so that message hydration does not scan or deserialize unrelated future turns.
+4. As an engineer maintaining `WorkflowRunner`, I want `_apersist_turn` to make a single call to `memory.aappend_turn(...)`, so that `WorkflowRunner` is completely decoupled from database indexing math and storage transaction ordering.
+5. As an engineer maintaining `WorkflowRunner`, I want `_ahydrate_memory` to use a single unified call to `memory.aget_messages(session_id, limit=max_turns, before_turn_index=rewind_turn_index)`, so that standard execution and rewind hydration share the exact same code path.
+6. As a concurrent multi-tab user interacting with the same session, I want atomic database-level index increments, so that simultaneous requests do not overwrite each other's turns due to client or runner index calculation races.
+7. As a frontend client calling `POST /api/chat/{session_id}/rewind`, I want the explicit rewind endpoint to remain operational using `atruncate_from`, so that standalone turn deletion without immediate query generation continues to function.
+8. As a developer running tests with `NoOpMemoryStore`, I want `aappend_turn` to return an ephemeral `ConversationTurn` stamped with `turn_index = rewind_turn_index or 0`, so that callers never encounter unexpected `None` return values.
+9. As a developer writing isolated unit tests, I want `InMemoryConversationStore` to mimic the transactional index assignment and rewind truncation of SQLite in memory, so that test suites run deterministically without disk I/O.
+10. As a QA developer writing test doubles, I want `asave_turn` to remain available on `ConversationMemoryAdapter`, so that existing unit tests constructing custom mock turn sequences continue to pass without modification.
+
+---
+
+## Implementation Decisions
+
+### 1. `ConversationMemoryAdapter` Protocol Seam Changes
+- Add `aappend_turn` to `ConversationMemoryAdapter` in `app/rag/memory/base.py`:
+  ```python
+  async def aappend_turn(
+      self,
+      session_id: str,
+      user_query: str,
+      assistant_answer: str,
+      *,
+      rewind_turn_index: int | None = None,
+      attachments: list[dict[str, Any]] | None = None,
+      citations: list[dict[str, Any]] | None = None,
+      source_used: str = "direct",
+      trace_id: str | None = None,
+  ) -> ConversationTurn:
+      """Atomically append a completed conversational turn, handling truncation on rewind."""
+      ...
+  ```
+- Extend `aget_messages` and `aget_turns` on `ConversationMemoryAdapter`:
+  ```python
+  async def aget_messages(
+      self,
+      session_id: str,
+      limit: int | None = None,
+      before_turn_index: int | None = None,
+  ) -> list[BaseMessage]:
+      ...
+
+  async def aget_turns(
+      self,
+      session_id: str,
+      limit: int | None = None,
+      before_turn_index: int | None = None,
+  ) -> list[ConversationTurn]:
+      ...
+  ```
+- Retain `asave_turn(turn: ConversationTurn) -> None` on the protocol seam.
+- Retain `atruncate_from(session_id: str, turn_index: int) -> None` on the protocol seam.
+
+### 2. `SQLiteConversationStore` Implementation Details
+- In `aappend_turn`:
+  - Acquire `self._write_lock`.
+  - Dispatch a synchronous transaction function via `run_in_threadpool`.
+  - Inside `with conn:`:
+    - If `rewind_turn_index is not None`: execute `DELETE FROM conversation_turns WHERE session_id = ? AND turn_index >= ?`, and set `turn_index = rewind_turn_index`.
+    - If `rewind_turn_index is None`: execute `SELECT COALESCE(MAX(turn_index) + 1, 0) AS next_index FROM conversation_turns WHERE session_id = ?`, and set `turn_index = int(cursor.fetchone()["next_index"])`.
+    - Upsert parent session into `conversation_sessions` with `updated_at = now_iso`.
+    - Insert turn into `conversation_turns`.
+    - Return instantiated `ConversationTurn` model.
+- In `aget_turns`:
+  - Incorporate `before_turn_index` parameter into SQL query generation:
+    - If `before_turn_index is not None`, add `AND turn_index < ?` to the `WHERE` clause.
+    - If `limit is not None`, wrap with inner descending query and outer ascending sort:
+      ```sql
+      SELECT {columns} FROM (
+          SELECT {columns} FROM conversation_turns
+          WHERE session_id = ? AND turn_index < ?
+          ORDER BY turn_index DESC LIMIT ?
+      ) ORDER BY turn_index ASC;
+      ```
+
+### 3. `InMemoryConversationStore` Implementation Details
+- In `aappend_turn`:
+  - Acquire `self._lock`.
+  - If `rewind_turn_index is not None`: prune `[t for t in turns if t.turn_index < rewind_turn_index]`, set `turn_index = rewind_turn_index`.
+  - If `rewind_turn_index is None`: set `turn_index = max([t.turn_index for t in turns], default=-1) + 1`.
+  - Construct `ConversationTurn`, append to `self._turns[session_id]`, sort by `turn_index ASC`.
+  - Upsert `SessionInfo` with updated `turn_count` and `updated_at`.
+  - Return a deep copy of the turn.
+- In `aget_turns`:
+  - Filter turns by `turn.turn_index < before_turn_index` when `before_turn_index is not None`.
+  - Apply `limit` to the tail of the filtered list.
+
+### 4. `NoOpMemoryStore` Implementation Details
+- In `aappend_turn`:
+  - Return an ephemeral `ConversationTurn(session_id=session_id, turn_index=rewind_turn_index or 0, user_query=user_query, assistant_answer=assistant_answer, ...)` without persisting.
+- In `aget_messages` and `aget_turns`:
+  - Accept `before_turn_index: int | None = None` and return empty lists.
+
+### 5. `WorkflowRunner` Orchestration Refactoring
+- In `_apersist_turn`:
+  - Remove all manual calls to `self.memory.atruncate_from` and `self.memory.aget_turns`.
+  - Invoke:
+    ```python
+    turn = await self.memory.aappend_turn(
+        session_id=session_id,
+        user_query=request.question,
+        assistant_answer=domain_output.answer,
+        rewind_turn_index=rewind_turn_index,
+        attachments=getattr(request, "attachments", None) or [],
+        citations=domain_output.citations,
+        source_used=domain_output.source_used,
+        trace_id=tid,
+    )
+    ```
+- In `_ahydrate_memory`:
+  - Remove the branched rewind slicing logic (`all_turns = await self.memory.aget_turns(session_id); sliced = ...`).
+  - Collapse into:
+    ```python
+    hydrated = await self.memory.aget_messages(
+        session_id=session_id,
+        limit=max_turns,
+        before_turn_index=rewind_turn_index,
+    )
+    ```
+- Eliminate direct references to `atruncate_from` in `WorkflowRunner`.
+
+---
+
+## Testing Decisions
+
+### Guiding Principles
+- Tests must verify external behavioral contracts across the `ConversationMemoryAdapter` protocol seam rather than private SQLite helpers or internal locking state.
+- Existing tests for `WorkflowRunner` memory orchestration must pass with updated mocks that reflect `aappend_turn`.
+
+### Target Modules & Test Suites
+1. **`tests/rag/test_conversation_memory_sqlite.py`**:
+   - Test `aappend_turn` normal monotonic sequencing (`turn_index = 0, 1, 2`).
+   - Test `aappend_turn` with `rewind_turn_index = 1` pruning turns $\ge 1$ and appending the replacement turn at `turn_index = 1`.
+   - Test `aget_messages` and `aget_turns` with `before_turn_index` and `limit`.
+   - Test concurrent `aappend_turn` invocations ensuring no collision or duplicate `turn_index`.
+2. **`tests/rag/test_conversation_memory_in_memory.py`**:
+   - Mirror SQLite tests against `InMemoryConversationStore`.
+3. **`tests/rag/test_conversation_memory_base.py`**:
+   - Verify `ConversationMemoryAdapter` protocol conformance for all three adapters.
+   - Verify `NoOpMemoryStore.aappend_turn` returns a valid non-null `ConversationTurn`.
+4. **`tests/rag/test_workflow_runner_memory.py`**:
+   - Update mock memory doubles to implement `aappend_turn`.
+   - Verify `WorkflowRunner._apersist_turn` delegates to `aappend_turn` with correct parameters.
+   - Verify `WorkflowRunner._ahydrate_memory` passes `before_turn_index` during rewind.
+5. **Regression Verification**:
+   - Run the complete test suite (`uv run pytest tests`) to ensure all 651 existing tests continue to pass.
+
+---
+
+## Out of Scope
+
+- Modifying the SQLite schema (`conversation_sessions` and `conversation_turns` table schemas remain unchanged).
+- Modifying REST endpoint URLs or HTTP request/response payloads (`/api/chat/{session_id}/rewind` and `/api/chat/{session_id}/fork` contracts remain unchanged).
+- Refactoring `WorkflowRunner` streaming generator or execution profile resolution (designated for Candidate 2).
+- Changing prompt condensation logic or graph topologies.
+
+---
+
+## Further Notes
+
+- This specification implements **Candidate 1** from the architectural review and directly fulfills **ADR 0017**.
+- By shifting storage indexing into SQLite and eliminating $O(N)$ full-session JSON deserialization, persistent multi-turn conversational chat maintains consistent sub-millisecond overhead regardless of conversation length.
