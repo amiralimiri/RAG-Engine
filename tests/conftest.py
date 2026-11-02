@@ -14,6 +14,7 @@ from opentelemetry.sdk.trace.export import SpanExporter, SpanExportResult
 import app.core.telemetry as telemetry
 from app.rag.evaluation import reset_evaluator
 from app.rag.memory import reset_conversation_memory
+from app.rag.prompts import LocalPromptStore, get_prompt_store, reset_prompt_store
 from app.rag.workflows import register_default_workflows
 from app.rag.workflows.base import (
     EvalContext,
@@ -239,11 +240,32 @@ def clean_evaluator() -> Generator[None]:
 
 
 @pytest.fixture(autouse=True)
+def clean_prompt_store() -> Generator[None]:
+    """Autouse fixture resetting global PromptStore singleton before and after each test."""
+    reset_prompt_store()
+    try:
+        yield
+    finally:
+        reset_prompt_store()
+
+
+@pytest.fixture(autouse=True)
 def clean_telemetry() -> Generator[None]:
     """Autouse fixture ensuring global telemetry client is reset between tests."""
     telemetry._langfuse_client = None
     yield
     telemetry._langfuse_client = None
+
+
+@pytest.fixture
+def fake_prompt_store() -> Generator[LocalPromptStore]:
+    """Fixture providing an isolated LocalPromptStore test double injected globally."""
+    store = LocalPromptStore()
+    get_prompt_store(store=store)
+    try:
+        yield store
+    finally:
+        reset_prompt_store()
 
 
 @pytest.fixture
@@ -260,9 +282,12 @@ def register_mock_workflow(clean_registry: WorkflowRegistry) -> Callable[..., Mo
 
 __all__ = [
     "MockWorkflowDefinition",
+    "clean_evaluator",
     "clean_memory",
+    "clean_prompt_store",
     "clean_registry",
     "clean_runner",
     "clean_telemetry",
+    "fake_prompt_store",
     "register_mock_workflow",
 ]

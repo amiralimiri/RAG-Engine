@@ -255,6 +255,9 @@ def test_package_exports():
 
     assert hasattr(prompts, "PromptStore")
     assert hasattr(prompts, "LocalPromptStore")
+    assert hasattr(prompts, "LangfusePromptStore")
     assert hasattr(prompts, "RenderedPrompt")
     assert hasattr(prompts, "CANONICAL_PROMPTS")
     assert hasattr(prompts, "interpolate_mustache")
+    assert hasattr(prompts, "get_prompt_store")
+    assert hasattr(prompts, "reset_prompt_store")
