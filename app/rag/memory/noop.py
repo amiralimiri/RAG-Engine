@@ -44,9 +44,10 @@ class NoOpMemoryStore(ConversationMemoryAdapter):
         trace_id: str | None = None,
     ) -> ConversationTurn:
         """Return an ephemeral ConversationTurn model without state persistence."""
+        turn_index = rewind_turn_index if rewind_turn_index is not None else 0
         return ConversationTurn(
             session_id=session_id,
-            turn_index=rewind_turn_index or 0,
+            turn_index=turn_index,
             user_query=user_query,
             assistant_answer=assistant_answer,
             attachments=attachments or [],

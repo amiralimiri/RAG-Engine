@@ -441,6 +441,171 @@ def test_factory_resolution_and_singleton(monkeypatch: pytest.MonkeyPatch, tmp_p
     assert singleton_3 is not singleton_1
 
 
+@pytest.mark.asyncio
+async def test_in_memory_append_turn_monotonic_indices() -> None:
+    """Validate that sequential aappend_turn calls assign monotonic turn indices 0, 1, 2 and update session."""
+    store = InMemoryConversationStore()
+    session_id = "session-append-seq"
+
+    turn_0 = await store.aappend_turn(
+        session_id=session_id,
+        user_query="First question",
+        assistant_answer="First answer",
+    )
+    assert turn_0.turn_index == 0
+    assert turn_0.session_id == session_id
+    assert turn_0.user_query == "First question"
+    assert turn_0.assistant_answer == "First answer"
+
+    turn_1 = await store.aappend_turn(
+        session_id=session_id,
+        user_query="Second question",
+        assistant_answer="Second answer",
+    )
+    assert turn_1.turn_index == 1
+
+    turn_2 = await store.aappend_turn(
+        session_id=session_id,
+        user_query="Third question",
+        assistant_answer="Third answer",
+    )
+    assert turn_2.turn_index == 2
+
+    session = await store.aget_session(session_id)
+    assert session is not None
+    assert session.turn_count == 3
+    assert session.title == "First question"
+
+    turns = await store.aget_turns(session_id)
+    assert len(turns) == 3
+    assert [t.turn_index for t in turns] == [0, 1, 2]
+
+
+@pytest.mark.asyncio
+async def test_in_memory_append_turn_rewind_truncation() -> None:
+    """Validate that aappend_turn with rewind_turn_index deletes turns >= k and persists replacement turn at k."""
+    store = InMemoryConversationStore()
+    session_id = "session-append-rewind"
+
+    # Append 3 turns: 0, 1, 2
+    for idx in range(3):
+        await store.aappend_turn(
+            session_id=session_id,
+            user_query=f"Original Q{idx}",
+            assistant_answer=f"Original A{idx}",
+        )
+
+    # Rewind at turn 1 with new question/answer
+    rewound_turn = await store.aappend_turn(
+        session_id=session_id,
+        user_query="Rewound Q1",
+        assistant_answer="Rewound A1",
+        rewind_turn_index=1,
+    )
+
+    assert rewound_turn.turn_index == 1
+    assert rewound_turn.user_query == "Rewound Q1"
+    assert rewound_turn.assistant_answer == "Rewound A1"
+
+    session = await store.aget_session(session_id)
+    assert session is not None
+    assert session.turn_count == 2
+
+    turns = await store.aget_turns(session_id)
+    assert len(turns) == 2
+    assert [t.turn_index for t in turns] == [0, 1]
+    assert turns[0].user_query == "Original Q0"
+    assert turns[1].user_query == "Rewound Q1"
+
+    # Now append again without rewind; should get index 2
+    next_turn = await store.aappend_turn(
+        session_id=session_id,
+        user_query="New Q2",
+        assistant_answer="New A2",
+    )
+    assert next_turn.turn_index == 2
+    assert (await store.aget_session(session_id)).turn_count == 3
+
+
+@pytest.mark.asyncio
+async def test_in_memory_bounded_retrieval_before_turn_index() -> None:
+    """Validate that aget_turns and aget_messages filter by before_turn_index and apply limit to the tail."""
+    store = InMemoryConversationStore()
+    session_id = "session-bounded-before"
+
+    for idx in range(5):
+        await store.aappend_turn(
+            session_id=session_id,
+            user_query=f"Query {idx}",
+            assistant_answer=f"Answer {idx}",
+        )
+
+    # All turns: [0, 1, 2, 3, 4]
+    # Filter before_turn_index=3 => turns [0, 1, 2]
+    turns_before_3 = await store.aget_turns(session_id, before_turn_index=3)
+    assert len(turns_before_3) == 3
+    assert [t.turn_index for t in turns_before_3] == [0, 1, 2]
+
+    # Filter before_turn_index=2 and limit=1 => turn [1]
+    turns_bounded = await store.aget_turns(session_id, limit=1, before_turn_index=2)
+    assert len(turns_bounded) == 1
+    assert turns_bounded[0].turn_index == 1
+    assert turns_bounded[0].user_query == "Query 1"
+
+    # Filter messages before_turn_index=2 and limit=1 => 2 messages corresponding to turn 1
+    messages_bounded = await store.aget_messages(session_id, limit=1, before_turn_index=2)
+    assert len(messages_bounded) == 2
+    assert messages_bounded[0].content == "Query 1"
+    assert messages_bounded[1].content == "Answer 1"
+
+    # Filter before_turn_index=0 => empty list
+    turns_before_0 = await store.aget_turns(session_id, before_turn_index=0)
+    assert turns_before_0 == []
+    messages_before_0 = await store.aget_messages(session_id, before_turn_index=0)
+    assert messages_before_0 == []
+
+
+@pytest.mark.asyncio
+async def test_in_memory_append_turn_preserves_attachments_citations_and_metadata() -> None:
+    """Validate that multi-turn append with attachments, citations, source, and trace_id preserves all attributes."""
+    store = InMemoryConversationStore()
+    session_id = "session-rich-append"
+
+    attachments = [{"name": "spec.pdf", "type": "application/pdf"}]
+    citations = [{"source": "kb/doc1.md", "snippet": "relevant snippet"}]
+
+    turn = await store.aappend_turn(
+        session_id=session_id,
+        user_query="Explain the spec",
+        assistant_answer="According to spec.pdf...",
+        attachments=attachments,
+        citations=citations,
+        source_used="vectorstore",
+        trace_id="trace-12345",
+    )
+
+    assert turn.turn_index == 0
+    assert turn.attachments == attachments
+    assert turn.citations == citations
+    assert turn.source_used == "vectorstore"
+    assert turn.trace_id == "trace-12345"
+
+    # Verify retrieval preserves all attributes
+    retrieved_turns = await store.aget_turns(session_id)
+    assert len(retrieved_turns) == 1
+    stored = retrieved_turns[0]
+    assert stored.attachments == attachments
+    assert stored.citations == citations
+    assert stored.source_used == "vectorstore"
+    assert stored.trace_id == "trace-12345"
+
+    # Verify deep copy isolation: mutating returned turn does not affect store
+    turn.attachments.append({"name": "mutated.txt"})
+    fresh_turns = await store.aget_turns(session_id)
+    assert len(fresh_turns[0].attachments) == 1
+
+
+
 
 
 

@@ -1,7 +1,7 @@
 # Ticket 02: In-Memory Adapter Atomic Append & Bounded Slicing
 
 - **Milestone:** Deepen Conversation Memory Seam (ADR-0017)
-- **Status:** ready-for-agent
+- **Status:** completed
 - **Blocked by:** Ticket 01 (Protocol Seam Deepening & No-Op Adapter)
 - **Estimated Scope:** Small
 
@@ -46,7 +46,7 @@ Implement `aappend_turn` and bounded retrieval via `before_turn_index` in `InMem
 ---
 
 ## Acceptance Criteria
-- [ ] `InMemoryConversationStore.aappend_turn` assigns `0, 1, 2...` monotonically on sequential calls.
-- [ ] Rewind truncation in `aappend_turn` removes prior turns $\ge k$ and inserts the replacement turn at `turn_index = k`.
-- [ ] `aget_turns` and `aget_messages` properly bound results when `before_turn_index` is specified.
-- [ ] All unit tests in `tests/rag/test_conversation_memory_in_memory.py` pass.
+- [x] `InMemoryConversationStore.aappend_turn` assigns `0, 1, 2...` monotonically on sequential calls.
+- [x] Rewind truncation in `aappend_turn` removes prior turns $\ge k$ and inserts the replacement turn at `turn_index = k`.
+- [x] `aget_turns` and `aget_messages` properly bound results when `before_turn_index` is specified.
+- [x] All unit tests in `tests/rag/test_conversation_memory_in_memory.py` pass.
