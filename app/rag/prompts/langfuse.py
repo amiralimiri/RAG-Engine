@@ -3,10 +3,16 @@
 from __future__ import annotations
 
 import logging
+import threading
 import time
 from typing import TYPE_CHECKING, Any
 
 from langchain_core.runnables import RunnableConfig
+
+try:
+    from langfuse.api.commons.errors.not_found_error import NotFoundError as LangfuseNotFoundError
+except ImportError:  # pragma: no cover
+    LangfuseNotFoundError = None
 
 from app.core.config import get_settings
 from app.core.telemetry import get_langfuse_client
@@ -19,6 +25,19 @@ if TYPE_CHECKING:
     from app.core.config import Settings
 
 logger = logging.getLogger(__name__)
+
+
+def _is_not_found_error(exc: Exception) -> bool:
+    """Return True if exception indicates the prompt does not exist on the remote server."""
+    if LangfuseNotFoundError is not None and isinstance(exc, LangfuseNotFoundError):
+        return True
+    if getattr(exc, "status_code", None) == 404 or getattr(exc, "code", None) == 404:
+        return True
+    cls_name = exc.__class__.__name__.lower()
+    if "notfound" in cls_name:
+        return True
+    err_msg = str(exc).lower()
+    return "404" in err_msg or "not found" in err_msg
 
 
 class LangfusePromptStore:
@@ -40,6 +59,7 @@ class LangfusePromptStore:
             self._cache_ttl_seconds = getattr(self._settings, "langfuse_prompt_cache_ttl_seconds", 300)
 
         self._local_store = LocalPromptStore(templates=local_templates)
+        self._lock = threading.Lock()
         self._cache: dict[str, tuple[float, Any]] = {}
         self._seeded_prompts: set[str] = set()
 
@@ -57,11 +77,12 @@ class LangfusePromptStore:
     def _fetch_remote_prompt(self, name: str) -> Any | None:
         """Fetch remote prompt from Langfuse Prompt CMS or TTL cache, returning None on failure."""
         now = time.monotonic()
-        if name in self._cache:
-            expires_at, cached_obj = self._cache[name]
-            if now < expires_at:
-                return cached_obj
-            self._cache.pop(name, None)
+        with self._lock:
+            if name in self._cache:
+                expires_at, cached_obj = self._cache[name]
+                if now < expires_at:
+                    return cached_obj
+                self._cache.pop(name, None)
 
         if not getattr(self._settings, "langfuse_enabled", True):
             return None
@@ -85,7 +106,8 @@ class LangfusePromptStore:
 
             if prompt_obj is not None and not getattr(prompt_obj, "is_fallback", False):
                 if self._cache_ttl_seconds > 0:
-                    self._cache[name] = (time.monotonic() + self._cache_ttl_seconds, prompt_obj)
+                    with self._lock:
+                        self._cache[name] = (time.monotonic() + self._cache_ttl_seconds, prompt_obj)
                 return prompt_obj
             return None
         except Exception as exc:
@@ -138,8 +160,10 @@ class LangfusePromptStore:
         Checks if the prompt already exists on the Langfuse server with label 'production'
         before calling create_prompt to prevent duplicate prompt versions.
         """
-        if name in self._seeded_prompts:
-            return True
+        with self._lock:
+            if name in self._seeded_prompts:
+                return True
+
         if not getattr(self._settings, "langfuse_enabled", True):
             return False
         client = self._get_client()
@@ -153,22 +177,36 @@ class LangfusePromptStore:
         # 1. Check if the prompt already exists on the Langfuse server without fallback
         if hasattr(client, "get_prompt"):
             try:
-                existing = client.get_prompt(
-                    name=name,
-                    label="production",
-                    cache_ttl_seconds=0,
-                )
+                try:
+                    existing = client.get_prompt(
+                        name=name,
+                        label="production",
+                        cache_ttl_seconds=0,
+                    )
+                except TypeError:
+                    existing = client.get_prompt(
+                        name=name,
+                        cache_ttl_seconds=0,
+                    )
                 if existing is not None and not getattr(existing, "is_fallback", False):
-                    self._seeded_prompts.add(name)
+                    with self._lock:
+                        self._seeded_prompts.add(name)
                     logger.debug(
                         "Prompt '%s' already exists in Langfuse Prompt CMS (version %s); skipping create_prompt",
                         name,
                         getattr(existing, "version", "unknown"),
                     )
                     return True
-            except Exception:
+            except Exception as exc:
+                if not _is_not_found_error(exc):
+                    logger.warning(
+                        "Failed to check prompt '%s' on Langfuse server: %s. Aborting seed to avoid duplicate creation.",
+                        name,
+                        exc,
+                    )
+                    return False
                 # Prompt does not exist on Langfuse server; proceed to create
-                pass
+                logger.debug("Prompt '%s' not found on Langfuse server; proceeding to create", name)
 
         # 2. Only call create_prompt if prompt does not exist on the server
         if not hasattr(client, "create_prompt"):
@@ -181,7 +219,8 @@ class LangfusePromptStore:
                 labels=["production"],
                 type="text",
             )
-            self._seeded_prompts.add(name)
+            with self._lock:
+                self._seeded_prompts.add(name)
             logger.info("Auto-seeded prompt '%s' into Langfuse Prompt CMS with label 'production'", name)
             return True
         except Exception as exc:

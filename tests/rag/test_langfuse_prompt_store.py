@@ -299,6 +299,63 @@ def test_langfuse_prompt_store_seed_prompts_failure_handling():
     assert not any(results.values())
 
 
+def test_langfuse_prompt_store_seed_prompts_network_error_aborts_create():
+    """Verify seed_prompts aborts creation without calling create_prompt on network/connection errors."""
+    mock_client = MagicMock()
+    mock_client.get_prompt.side_effect = ConnectionError("Langfuse server unreachable")
+
+    settings = _make_settings(langfuse_enabled=True)
+    store = LangfusePromptStore(settings=settings, client=mock_client)
+
+    results = store.seed_prompts()
+    assert len(results) == len(CANONICAL_PROMPTS)
+    assert not any(results.values())
+    # Crucial: create_prompt must NOT be called on network/connection errors
+    mock_client.create_prompt.assert_not_called()
+
+
+def test_langfuse_prompt_store_seed_prompts_with_typed_not_found_error():
+    """Verify seed_prompts proceeds to create_prompt when LangfuseNotFoundError is raised."""
+    from langfuse.api.commons.errors.not_found_error import NotFoundError as LangfuseNotFoundError
+
+    mock_client = MagicMock()
+    mock_client.get_prompt.side_effect = LangfuseNotFoundError(body={"message": "Prompt not found"})
+
+    settings = _make_settings(langfuse_enabled=True)
+    store = LangfusePromptStore(settings=settings, client=mock_client)
+
+    results = store.seed_prompts()
+    assert len(results) == len(CANONICAL_PROMPTS)
+    assert all(results.values())
+    assert mock_client.create_prompt.call_count == len(CANONICAL_PROMPTS)
+
+
+def test_langfuse_prompt_store_concurrent_thread_safety():
+    """Verify thread-safe operation of cache and seeding under concurrent multi-threaded access."""
+    import concurrent.futures
+
+    mock_client = MagicMock()
+    mock_prompt = MagicMock(spec=TextPromptClient)
+    mock_prompt.prompt = "Concurrent template: {{question}}"
+    mock_prompt.is_fallback = False
+    mock_client.get_prompt.return_value = mock_prompt
+
+    settings = _make_settings(langfuse_enabled=True, langfuse_prompt_cache_ttl_seconds=60)
+    store = LangfusePromptStore(settings=settings, client=mock_client)
+
+    def _worker(idx: int) -> str:
+        rendered = store.render("rag:direct_answer", question=f"thread-{idx}")
+        return rendered.text
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
+        futures = [executor.submit(_worker, i) for i in range(30)]
+        results = [f.result() for f in futures]
+
+    assert len(results) == 30
+    assert all(r.startswith("Concurrent template: thread-") for r in results)
+    assert mock_client.get_prompt.call_count >= 1
+
+
 def test_get_prompt_store_and_reset():
     """Verify dependency injection factory and reset lifecycle."""
     from app.rag.prompts import (
