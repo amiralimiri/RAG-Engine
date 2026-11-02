@@ -319,7 +319,7 @@ class TestChatMemoryRoutes:
         queries = ["First question", "Second question", "Third question"]
         answers = ["First answer", "Second answer", "Third answer"]
 
-        for i, (q, a) in enumerate(zip(queries, answers)):
+        for q, a in zip(queries, answers):
             register_mock_workflow("fix_single_jev", answer=a)
             resp = client.post(
                 "/api/chat",
@@ -351,10 +351,11 @@ class TestChatMemoryRoutes:
         session_id = "sess-standalone-rewind-append"
         for i in range(3):
             register_mock_workflow("fix_single_jev", answer=f"Answer {i}")
-            client.post(
+            setup_resp = client.post(
                 "/api/chat",
                 json={"question": f"Question {i}", "session_id": session_id, "workflow": "fix_single_jev"},
             )
+            assert setup_resp.status_code == 200
 
         # Truncate turns from index 1 (removes turn 1 and 2, keeps turn 0)
         rewind_resp = client.post(f"/api/chat/{session_id}/rewind", json={"turn_index": 1})
@@ -445,7 +446,9 @@ class TestChatMemoryRoutes:
         db_path = tmp_path / "test_sqlite_e2e.db"
         sqlite_store = SQLiteConversationStore(db_path=db_path)
         monkeypatch.setattr("app.rag.memory._memory_instance", sqlite_store)
-        runner = WorkflowRunner(registry=get_workflow_registry(), memory=sqlite_store, eval_task_fn=lambda **kwargs: None)
+        runner = WorkflowRunner(
+            registry=get_workflow_registry(), memory=sqlite_store, eval_task_fn=lambda **kwargs: None
+        )
         monkeypatch.setattr("app.rag.workflows.runner._default_runner", runner)
 
         session_id = "sess-sqlite-e2e"
@@ -500,7 +503,7 @@ class TestChatMemoryRoutes:
         assert detail_after["turns"][1]["user_query"] == "SQLite replaced question 1"
         assert detail_after["turns"][1]["assistant_answer"] == "SQLite replaced answer 1"
 
-        # 5. Standalone rewind to 0 (keeps only turn 0)
+        # 5. Standalone rewind from index 1 (keeps turn 0)
         del_resp = client.post(f"/api/chat/{session_id}/rewind", json={"turn_index": 1})
         assert del_resp.status_code == 200
 
