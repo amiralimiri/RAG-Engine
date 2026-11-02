@@ -118,3 +118,16 @@ The capability (`afork_session`) to clone conversation turns $[0 \dots k]$ into 
 ### Query Condensation (Contextualization)
 A fast pre-retrieval graph step (`condense_query`) in multi-turn workflows that resolves pronouns and ambiguous references against prior conversational turns (`messages[:-1]`) into a standalone retrieval query (`current_query`) before vector store or web search dispatch.
 _Avoid_: Query rewrite, prompt stuffing, raw query search
+
+### Prompt Store (Prompt Seam)
+A strongly-typed protocol seam (`PromptStore`) defining the template resolution, compilation, and telemetry observation binding lifecycle for all system prompts. Decouples LLM callers and decision classifiers from concrete CMS backends and external observability SDKs.
+_Avoid_: Prompt helper, prompt CMS singleton, raw template dictionary
+
+### Prompt Store Adapter
+A concrete adapter satisfying the `PromptStore` seam:
+- `LangfusePromptStore`: Production adapter retrieving managed templates from Langfuse Prompt CMS with in-memory TTL caching, automatic fail-open local fallback, and Langfuse observation linking.
+- `LocalPromptStore`: Fast, isolated in-memory adapter backed by canonical local template strings for deterministic unit testing (`pytest`) and offline execution.
+
+### Rendered Prompt
+A strongly-typed domain model (`RenderedPrompt`) produced by `PromptStore.render`, encapsulating the compiled prompt text (`text`), pre-merged execution configuration with trace and observation metadata (`config`), and the underlying provider prompt reference (`raw_prompt`).
+_Avoid_: Formatted prompt string, prompt tuple, template dict
