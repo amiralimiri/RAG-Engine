@@ -769,4 +769,3 @@ async def test_runner_persist_turn_rejects_sentinel_session_ids(sentinel_id: str
     result = await runner._apersist_turn(req, output)
     assert result is None
     memory.aappend_turn.assert_not_called()
-

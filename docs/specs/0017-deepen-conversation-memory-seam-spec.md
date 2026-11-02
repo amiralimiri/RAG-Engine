@@ -3,7 +3,7 @@
 - **ADR Reference:** `docs/adr/0017-deepen-conversation-memory-seam.md`
 - **Target Subsystem:** `app/rag/memory/` and `app/rag/workflows/runner.py`
 - **Specification Document:** `docs/spec.md` & `docs/specs/0017-deepen-conversation-memory-seam-spec.md`
-- **Status:** Proposed
+- **Status:** Implemented
 
 ---
 

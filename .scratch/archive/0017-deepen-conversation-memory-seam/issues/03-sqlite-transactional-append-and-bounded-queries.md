@@ -1,7 +1,7 @@
 # Ticket 03: SQLite Adapter Transactional Append & SQL-Level Index Resolution
 
 - **Milestone:** Deepen Conversation Memory Seam (ADR-0017)
-- **Status:** closed
+- **Status:** completed
 - **Blocked by:** Ticket 01 (Protocol Seam Deepening & No-Op Adapter)
 - **Estimated Scope:** Medium
 
