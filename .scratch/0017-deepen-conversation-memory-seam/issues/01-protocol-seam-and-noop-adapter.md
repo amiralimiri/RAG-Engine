@@ -1,7 +1,7 @@
 # Ticket 01: Protocol Seam Deepening & No-Op Adapter
 
 - **Milestone:** Deepen Conversation Memory Seam (ADR-0017)
-- **Status:** ready-for-agent
+- **Status:** completed
 - **Blocked by:** None (can start immediately)
 - **Estimated Scope:** Small
 
@@ -72,7 +72,7 @@ Deepen the `ConversationMemoryAdapter` protocol seam in `app/rag/memory/base.py`
 ---
 
 ## Acceptance Criteria
-- [ ] `ConversationMemoryAdapter` defines `aappend_turn` with complete type annotations.
-- [ ] `ConversationMemoryAdapter.aget_messages` and `aget_turns` accept optional `before_turn_index`.
-- [ ] `NoOpMemoryStore.aappend_turn` returns a fully instantiated `ConversationTurn` model.
-- [ ] `tests/rag/test_conversation_memory_base.py` passes cleanly.
+- [x] `ConversationMemoryAdapter` defines `aappend_turn` with complete type annotations.
+- [x] `ConversationMemoryAdapter.aget_messages` and `aget_turns` accept optional `before_turn_index`.
+- [x] `NoOpMemoryStore.aappend_turn` returns a fully instantiated `ConversationTurn` model.
+- [x] `tests/rag/test_conversation_memory_base.py` passes cleanly.

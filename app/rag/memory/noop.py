@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from typing import Any
 
 from langchain_core.messages import BaseMessage
 
@@ -12,13 +13,47 @@ from app.rag.memory.base import ConversationMemoryAdapter, ConversationTurn, Ses
 class NoOpMemoryStore(ConversationMemoryAdapter):
     """Stateless no-op conversation memory adapter for disabled-memory deployments."""
 
-    async def aget_messages(self, session_id: str, limit: int | None = None) -> list[BaseMessage]:
+    async def aget_messages(
+        self,
+        session_id: str,
+        limit: int | None = None,
+        before_turn_index: int | None = None,
+    ) -> list[BaseMessage]:
         """Return an empty message list."""
         return []
 
-    async def aget_turns(self, session_id: str, limit: int | None = None) -> list[ConversationTurn]:
+    async def aget_turns(
+        self,
+        session_id: str,
+        limit: int | None = None,
+        before_turn_index: int | None = None,
+    ) -> list[ConversationTurn]:
         """Return an empty turn list."""
         return []
+
+    async def aappend_turn(
+        self,
+        session_id: str,
+        user_query: str,
+        assistant_answer: str,
+        *,
+        rewind_turn_index: int | None = None,
+        attachments: list[dict[str, Any]] | None = None,
+        citations: list[dict[str, Any]] | None = None,
+        source_used: str = "direct",
+        trace_id: str | None = None,
+    ) -> ConversationTurn:
+        """Return an ephemeral ConversationTurn model without state persistence."""
+        return ConversationTurn(
+            session_id=session_id,
+            turn_index=rewind_turn_index or 0,
+            user_query=user_query,
+            assistant_answer=assistant_answer,
+            attachments=attachments or [],
+            citations=citations or [],
+            source_used=source_used,
+            trace_id=trace_id,
+        )
 
     async def asave_turn(self, turn: ConversationTurn) -> None:
         """Discard turn persistence."""

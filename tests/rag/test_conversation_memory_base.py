@@ -13,6 +13,7 @@ from app.rag.memory.base import (
     ConversationTurn,
     SessionInfo,
 )
+from app.rag.memory.noop import NoOpMemoryStore
 
 
 def test_conversation_turn_creation_and_to_messages() -> None:
@@ -125,16 +126,36 @@ def test_session_info_validation() -> None:
 
 
 def test_protocol_runtime_checkable() -> None:
-    """Validate ConversationMemoryAdapter is runtime checkable."""
+    """Validate ConversationMemoryAdapter is runtime checkable and enforces deep seam methods."""
+
     class CompleteMemoryAdapter:
-        async def aget_messages(self, session_id: str, limit: int | None = None):
+        async def aget_messages(self, session_id: str, limit: int | None = None, before_turn_index: int | None = None):
             return []
 
-        async def aget_turns(self, session_id: str, limit: int | None = None):
+        async def aget_turns(self, session_id: str, limit: int | None = None, before_turn_index: int | None = None):
             return []
 
         async def asave_turn(self, turn: ConversationTurn) -> None:
             pass
+
+        async def aappend_turn(
+            self,
+            session_id: str,
+            user_query: str,
+            assistant_answer: str,
+            *,
+            rewind_turn_index: int | None = None,
+            attachments: list[dict[str, Any]] | None = None,
+            citations: list[dict[str, Any]] | None = None,
+            source_used: str = "direct",
+            trace_id: str | None = None,
+        ) -> ConversationTurn:
+            return ConversationTurn(
+                session_id=session_id,
+                turn_index=rewind_turn_index or 0,
+                user_query=user_query,
+                assistant_answer=assistant_answer,
+            )
 
         async def aclear(self, session_id: str) -> None:
             pass
@@ -157,11 +178,93 @@ def test_protocol_runtime_checkable() -> None:
         async def aget_messages(self, session_id: str, limit: int | None = None):
             return []
 
+    class MissingAppendTurnAdapter:
+        async def aget_messages(self, session_id: str, limit: int | None = None, before_turn_index: int | None = None):
+            return []
+
+        async def aget_turns(self, session_id: str, limit: int | None = None, before_turn_index: int | None = None):
+            return []
+
+        async def asave_turn(self, turn: ConversationTurn) -> None:
+            pass
+
+        async def aclear(self, session_id: str) -> None:
+            pass
+
+        async def atruncate_from(self, session_id: str, turn_index: int) -> None:
+            pass
+
+        async def afork_session(
+            self, source_session_id: str, upto_turn_index: int, new_session_id: str | None = None
+        ) -> str:
+            return "forked-id"
+
+        async def alist_sessions(self, limit: int = 50):
+            return []
+
+        async def aget_session(self, session_id: str):
+            return None
+
     dummy_complete = CompleteMemoryAdapter()
     assert isinstance(dummy_complete, ConversationMemoryAdapter)
 
     dummy_incomplete = IncompleteMemoryAdapter()
     assert not isinstance(dummy_incomplete, ConversationMemoryAdapter)
+
+    dummy_missing_append = MissingAppendTurnAdapter()
+    assert not isinstance(dummy_missing_append, ConversationMemoryAdapter)
+
+
+@pytest.mark.asyncio
+async def test_noop_memory_store_conformance_and_append_turn() -> None:
+    """Validate NoOpMemoryStore protocol conformance, bounded message queries, and aappend_turn."""
+    store = NoOpMemoryStore()
+    assert isinstance(store, ConversationMemoryAdapter)
+
+    # Validate aget_messages and aget_turns accept before_turn_index without error
+    messages = await store.aget_messages("session-noop", limit=5, before_turn_index=2)
+    assert messages == []
+
+    turns = await store.aget_turns("session-noop", limit=5, before_turn_index=2)
+    assert turns == []
+
+    # Validate aappend_turn default turn_index = 0 and non-null ConversationTurn
+    turn1 = await store.aappend_turn(
+        session_id="session-noop",
+        user_query="Hello",
+        assistant_answer="World",
+    )
+    assert isinstance(turn1, ConversationTurn)
+    assert turn1.session_id == "session-noop"
+    assert turn1.turn_index == 0
+    assert turn1.user_query == "Hello"
+    assert turn1.assistant_answer == "World"
+    assert turn1.attachments == []
+    assert turn1.citations == []
+    assert turn1.source_used == "direct"
+    assert turn1.trace_id is None
+    assert isinstance(turn1.created_at, datetime)
+
+    # Validate aappend_turn with rewind_turn_index and rich metadata
+    turn2 = await store.aappend_turn(
+        session_id="session-noop",
+        user_query="Rewound question",
+        assistant_answer="Rewound answer",
+        rewind_turn_index=3,
+        attachments=[{"type": "doc", "name": "spec.pdf"}],
+        citations=[{"source": "spec.pdf", "snippet": "requirements"}],
+        source_used="vectorstore",
+        trace_id="trace-xyz",
+    )
+    assert isinstance(turn2, ConversationTurn)
+    assert turn2.session_id == "session-noop"
+    assert turn2.turn_index == 3
+    assert turn2.user_query == "Rewound question"
+    assert turn2.assistant_answer == "Rewound answer"
+    assert turn2.attachments == [{"type": "doc", "name": "spec.pdf"}]
+    assert turn2.citations == [{"source": "spec.pdf", "snippet": "requirements"}]
+    assert turn2.source_used == "vectorstore"
+    assert turn2.trace_id == "trace-xyz"
 
 
 def test_config_settings() -> None:

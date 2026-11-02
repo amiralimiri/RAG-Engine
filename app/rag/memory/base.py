@@ -47,12 +47,37 @@ class SessionInfo(BaseModel):
 class ConversationMemoryAdapter(Protocol):
     """Protocol seam defining conversation memory persistence, resumption, and branching."""
 
-    async def aget_messages(self, session_id: str, limit: int | None = None) -> list[BaseMessage]:
+    async def aget_messages(
+        self,
+        session_id: str,
+        limit: int | None = None,
+        before_turn_index: int | None = None,
+    ) -> list[BaseMessage]:
         """Retrieve bounded LangChain messages for LLM prompting."""
         ...
 
-    async def aget_turns(self, session_id: str, limit: int | None = None) -> list[ConversationTurn]:
+    async def aget_turns(
+        self,
+        session_id: str,
+        limit: int | None = None,
+        before_turn_index: int | None = None,
+    ) -> list[ConversationTurn]:
         """Retrieve rich domain turn models for UI hydration and API consumers."""
+        ...
+
+    async def aappend_turn(
+        self,
+        session_id: str,
+        user_query: str,
+        assistant_answer: str,
+        *,
+        rewind_turn_index: int | None = None,
+        attachments: list[dict[str, Any]] | None = None,
+        citations: list[dict[str, Any]] | None = None,
+        source_used: str = "direct",
+        trace_id: str | None = None,
+    ) -> ConversationTurn:
+        """Atomically append a completed conversational turn, handling truncation on rewind."""
         ...
 
     async def asave_turn(self, turn: ConversationTurn) -> None:
