@@ -55,10 +55,14 @@ Bring multi-turn uniformity and context awareness into graph execution and workf
   - `graph.add_node("condense_query", node_condense_query)`
   - Replace `graph.add_edge(START, "route_question")` with:
     ```python
-    graph.add_conditional_edges(START, route_start, {
-        "condense_query": "condense_query",
-        "route_question": "route_question",
-    })
+    graph.add_conditional_edges(
+        START,
+        route_start,
+        {
+            "condense_query": "condense_query",
+            "route_question": "route_question",
+        },
+    )
     graph.add_edge("condense_query", "route_question")
     ```
 - Generation nodes update:

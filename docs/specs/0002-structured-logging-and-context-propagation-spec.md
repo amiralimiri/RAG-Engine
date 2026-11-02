@@ -91,6 +91,7 @@ Extend `Settings` with typed logging parameters:
 ```python
 from typing import Literal
 
+
 class Settings(BaseSettings):
     # ... existing settings ...
 
@@ -158,8 +159,7 @@ def _scrub_value(value: Any) -> Any:
         return value
     if isinstance(value, MutableMapping):
         return {
-            k: (REDACTED_STR if SENSITIVE_KEY_PATTERNS.search(str(k)) else _scrub_value(v))
-            for k, v in value.items()
+            k: (REDACTED_STR if SENSITIVE_KEY_PATTERNS.search(str(k)) else _scrub_value(v)) for k, v in value.items()
         }
     if isinstance(value, (list, tuple, set)):
         scrubbed = [_scrub_value(v) for v in value]
@@ -167,9 +167,7 @@ def _scrub_value(value: Any) -> Any:
     return value
 
 
-def scrub_sensitive_data(
-    logger: WrappedLogger, method_name: str, event_dict: EventDict
-) -> EventDict:
+def scrub_sensitive_data(logger: WrappedLogger, method_name: str, event_dict: EventDict) -> EventDict:
     """Structlog processor to scrub credentials and PII from keys and string values."""
     for key, value in list(event_dict.items()):
         if SENSITIVE_KEY_PATTERNS.search(str(key)):
@@ -190,9 +188,8 @@ def configure_logging() -> None:
     log_level = getattr(logging, settings.log_level.upper(), logging.INFO)
 
     # Determine renderer based on settings and environment
-    render_as_json = (
-        settings.log_format == "json"
-        or (settings.log_format == "auto" and settings.app_env != "development")
+    render_as_json = settings.log_format == "json" or (
+        settings.log_format == "auto" and settings.app_env != "development"
     )
 
     renderer = (
@@ -301,6 +298,7 @@ logger = structlog.get_logger("app.access")
 
 SUPPRESSED_PATHS = {"/api/health"}
 
+
 class CorrelationLoggingMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
         # Clear any residual contextvars for safety
@@ -364,6 +362,7 @@ FastAPI `BackgroundTasks` run asynchronously after the HTTP response has finishe
 ```python
 import contextvars
 
+
 def run_with_context(func: Callable, *args: Any, **kwargs: Any) -> None:
     """Execute a function inside a snapshot of the current contextvars."""
     ctx = contextvars.copy_context()
@@ -405,21 +404,26 @@ Both `fix_single_llm.py` and `fix_single_jev.py` will update `step` in contextva
 ```python
 import structlog
 
+
 def route_question(state: AgentState) -> dict:
     structlog.contextvars.bind_contextvars(step="route_question")
     # ... existing routing logic ...
+
 
 def retrieve_documents(state: AgentState) -> dict:
     structlog.contextvars.bind_contextvars(step="retrieve_documents")
     # ... existing retrieval logic ...
 
+
 def grade_evidence(state: AgentState) -> dict:
     structlog.contextvars.bind_contextvars(step="grade_evidence")
     # ... existing grading logic ...
 
+
 def generate_answer(state: AgentState) -> dict:
     structlog.contextvars.bind_contextvars(step="generate_answer")
     # ... existing generation logic ...
+
 
 def rewrite_query(state: AgentState) -> dict:
     structlog.contextvars.bind_contextvars(step="rewrite_query")
@@ -430,21 +434,26 @@ def rewrite_query(state: AgentState) -> dict:
 ```python
 import structlog
 
+
 def jev_route_question(state: AgentState) -> dict:
     structlog.contextvars.bind_contextvars(step="jev_route_question")
     # ... existing jev routing logic ...
+
 
 def retrieve_documents(state: AgentState) -> dict:
     structlog.contextvars.bind_contextvars(step="retrieve_documents")
     # ... existing retrieval logic ...
 
+
 def jev_grade_evidence(state: AgentState) -> dict:
     structlog.contextvars.bind_contextvars(step="jev_grade_evidence")
     # ... existing jev grading logic ...
 
+
 def generate_answer(state: AgentState) -> dict:
     structlog.contextvars.bind_contextvars(step="generate_answer")
     # ... existing generation logic ...
+
 
 def rewrite_query(state: AgentState) -> dict:
     structlog.contextvars.bind_contextvars(step="rewrite_query")
@@ -461,6 +470,7 @@ Mount the correlation middleware on the FastAPI app:
 from app.api.middleware import CorrelationLoggingMiddleware
 from app.core.logger import configure_logging
 
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
@@ -469,6 +479,7 @@ async def lifespan(app: FastAPI):
     yield
     # Shutdown
     flush_telemetry()
+
 
 app = FastAPI(title=settings.app_name, version="1.0.0", lifespan=lifespan)
 app.add_middleware(CorrelationLoggingMiddleware)

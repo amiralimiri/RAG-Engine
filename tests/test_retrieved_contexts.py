@@ -25,6 +25,7 @@ def mock_workflow_prompts():
 # 1. State Schema Verification
 # ==============================================================================
 
+
 def test_agent_state_defines_retrieved_contexts():
     """Verify AgentState in app/rag/state.py explicitly defines retrieved_contexts: list[str]."""
     assert "retrieved_contexts" in AgentState.__annotations__, (
@@ -49,6 +50,7 @@ def test_agent_state_defines_retrieved_contexts():
 # 2. Pure Graph Topology Context Population via create_agentic_rag_graph
 # ==============================================================================
 
+
 def test_graph_kb_retrieval_and_generation_populates_retrieved_contexts():
     """KB retrieval path populates retrieved_contexts with raw chunk strings and generates from KB."""
     docs = [
@@ -61,10 +63,12 @@ def test_graph_kb_retrieval_and_generation_populates_retrieved_contexts():
     mock_classifier.grade_kb.return_value = MagicMock(grade="good")
 
     mock_kb_tool = MagicMock()
-    mock_kb_tool.ainvoke = AsyncMock(return_value=(
-        "Formatted KB docs",
-        {"documents": docs, "citations": [{"title": "vpn.md", "url": "", "type": "private_kb"}]},
-    ))
+    mock_kb_tool.ainvoke = AsyncMock(
+        return_value=(
+            "Formatted KB docs",
+            {"documents": docs, "citations": [{"title": "vpn.md", "url": "", "type": "private_kb"}]},
+        )
+    )
 
     mock_model = MagicMock()
     mock_model.ainvoke = AsyncMock(return_value=MagicMock(content="Follow these VPN steps."))
@@ -108,20 +112,24 @@ def test_graph_web_search_and_generation_populates_retrieved_contexts():
     mock_classifier.grade_web.return_value = MagicMock(grade="good")
 
     mock_kb_tool = MagicMock()
-    mock_kb_tool.ainvoke = AsyncMock(return_value=(
-        "Stale KB chunk",
-        {"documents": [Document(page_content="Prior rejected KB chunk", metadata={})], "citations": []},
-    ))
+    mock_kb_tool.ainvoke = AsyncMock(
+        return_value=(
+            "Stale KB chunk",
+            {"documents": [Document(page_content="Prior rejected KB chunk", metadata={})], "citations": []},
+        )
+    )
 
     web_snippet = "Title: Vendor Support\nURL: https://example.com/vpn\nContent: Official Cisco AnyConnect docs"
     mock_web_tool = MagicMock()
-    mock_web_tool.ainvoke = AsyncMock(return_value=(
-        "External answer",
-        {
-            "retrieved_contexts": [web_snippet],
-            "citations": [{"title": "Vendor Support", "url": "https://example.com/vpn", "type": "web"}],
-        },
-    ))
+    mock_web_tool.ainvoke = AsyncMock(
+        return_value=(
+            "External answer",
+            {
+                "retrieved_contexts": [web_snippet],
+                "citations": [{"title": "Vendor Support", "url": "https://example.com/vpn", "type": "web"}],
+            },
+        )
+    )
 
     mock_model = MagicMock()
     mock_model.ainvoke = AsyncMock(return_value=MagicMock(content="Vendor recommends reinstalling."))
@@ -286,6 +294,7 @@ def test_graph_insufficient_path_returns_empty_retrieved_contexts(monkeypatch):
 # ==============================================================================
 # 3. WorkflowDefinition and Runner Initial State Contract Tests
 # ==============================================================================
+
 
 @pytest.mark.parametrize("workflow_id", ["fix_single_llm", "fix_single_jev"])
 def test_workflow_initial_state_contains_retrieved_contexts(workflow_id: str):

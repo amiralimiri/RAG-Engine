@@ -59,6 +59,7 @@ def test_self_corrective_state_mutation():
         classifier=FakeClassifierAdapter(),
     )
     from app.api.schemas import ChatRequest
+
     req = ChatRequest(question="How to configure VPN?", trace_id="tid_123")
     state = wf.to_initial_state(req)
 
@@ -157,6 +158,7 @@ def test_self_corrective_get_compiled_graph_forwards_tools():
 def test_self_corrective_model_injection_parameters():
     """Verify SelfCorrectiveRagWorkflow accepts, stores, and forwards model."""
     from langchain_core.language_models.chat_models import BaseChatModel
+
     mock_model = MagicMock(spec=BaseChatModel)
     classifier = FakeClassifierAdapter()
     wf = SelfCorrectiveRagWorkflow(
@@ -210,4 +212,3 @@ async def test_self_corrective_workflow_execution_with_injected_tools():
     mock_kb_tool.ainvoke.assert_awaited_once()
     assert result["kb_docs"] == [custom_doc]
     assert result["citations"] == [{"title": "kb.md", "url": "", "type": "private_kb"}]
-

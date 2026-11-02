@@ -190,6 +190,7 @@ async def test_unsupported_file_extension_raises_value_error_async(temp_docs_dir
 
 def test_composite_parser_custom_registry():
     """Verify custom parser registry ordering and delegation."""
+
     class DummyParser:
         def can_parse(self, suffix: str) -> bool:
             return suffix.lower() in {".custom", "custom"}

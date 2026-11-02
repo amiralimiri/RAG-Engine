@@ -303,21 +303,25 @@ def test_extract_eval_context():
     wf = PluggableWorkflow(info=info, graph=lambda: None)
 
     # Direct fields
-    ctx1 = wf.extract_eval_context({
-        "source_used": "vectorstore",
-        "retrieved_contexts": ["Snippet 1", "Snippet 2"],
-    })
+    ctx1 = wf.extract_eval_context(
+        {
+            "source_used": "vectorstore",
+            "retrieved_contexts": ["Snippet 1", "Snippet 2"],
+        }
+    )
     assert isinstance(ctx1, EvalContext)
     assert ctx1.source_used == "vectorstore"
     assert ctx1.retrieved_contexts == ["Snippet 1", "Snippet 2"]
 
     # Fallback to tool messages
-    ctx2 = wf.extract_eval_context({
-        "source_used": "tools",
-        "messages": [
-            ToolMessage(content="Retrieved tool result chunk", tool_call_id="call_1"),
-        ],
-    })
+    ctx2 = wf.extract_eval_context(
+        {
+            "source_used": "tools",
+            "messages": [
+                ToolMessage(content="Retrieved tool result chunk", tool_call_id="call_1"),
+            ],
+        }
+    )
     assert isinstance(ctx2, EvalContext)
     assert ctx2.source_used == "tools"
     assert ctx2.retrieved_contexts == ["Retrieved tool result chunk"]

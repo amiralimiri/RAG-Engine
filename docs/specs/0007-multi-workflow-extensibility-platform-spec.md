@@ -64,6 +64,7 @@ from typing import Any, Protocol, runtime_checkable
 from pydantic import BaseModel, Field
 from app.api.schemas import ChatRequest, ChatResponse
 
+
 class WorkflowInfo(BaseModel):
     id: str
     name: str
@@ -73,9 +74,11 @@ class WorkflowInfo(BaseModel):
     step_labels: dict[str, str] = Field(default_factory=dict)
     generation_nodes: set[str] = Field(default_factory=set)
 
+
 class EvalContext(BaseModel):
     source_used: str = "direct"
     retrieved_contexts: list[str] = Field(default_factory=list)
+
 
 @runtime_checkable
 class WorkflowDefinition(Protocol):

@@ -160,7 +160,9 @@ class StreamMetadataEvent(BaseModel):
     source_used: str = Field(..., description="Information source used (e.g. private_kb, web, direct)")
     workflow: str = Field(..., description="Workflow executed")
     trace: list[str] = Field(default_factory=list, description="Execution step trace list")
-    citations: list[dict[str, Any]] = Field(default_factory=list, description="Document citations and source references")
+    citations: list[dict[str, Any]] = Field(
+        default_factory=list, description="Document citations and source references"
+    )
     rewritten_query: str | None = Field(default=None, description="Rewritten search query if applicable")
     variant_id: str | None = Field(default=None, description="Execution variant identifier")
 

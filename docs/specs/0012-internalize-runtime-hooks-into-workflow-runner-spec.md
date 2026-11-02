@@ -114,8 +114,7 @@ def get_workflow_runner(
     trace_extractor: Callable[[Any], str | None] | None = None,
     telemetry_flusher: Callable[[], None] | None = None,
     eval_task_fn: Callable[..., Any] | None = None,
-) -> WorkflowRunner:
-    ...
+) -> WorkflowRunner: ...
 ```
 
 #### After
@@ -190,8 +189,7 @@ def execute(
     telemetry_flusher: Callable[[], None] | None = None,
     eval_task_fn: Callable[..., Any] | None = None,
     **kwargs: Any,
-) -> ChatResponse:
-    ...
+) -> ChatResponse: ...
 ```
 
 #### After
@@ -237,8 +235,7 @@ async def aexecute(
     telemetry_flusher: Callable[[], None] | None = None,
     eval_task_fn: Callable[..., Any] | None = None,
     **kwargs: Any,
-) -> ChatResponse:
-    ...
+) -> ChatResponse: ...
 ```
 
 #### After
@@ -279,8 +276,7 @@ def stream(
     trace_extractor: Callable[[Any], str | None] | None = None,
     telemetry_flusher: Callable[[], None] | None = None,
     eval_task_fn: Callable[..., Any] | None = None,
-) -> AsyncGenerator[str, None]:
-    ...
+) -> AsyncGenerator[str, None]: ...
 ```
 
 #### After
@@ -311,6 +307,7 @@ def _execute_with_state(
 ) -> tuple[ChatResponse, dict[str, Any]]:
     """Internal synchronous execution returning (ChatResponse, final_state)."""
     ...
+
 
 async def _aexecute_with_state(
     self,
@@ -424,6 +421,7 @@ Add `clean_runner` fixture to ensure test isolation:
 
 ```python
 from app.rag.workflows.runner import reset_workflow_runner
+
 
 @pytest.fixture(autouse=True)
 def clean_runner():

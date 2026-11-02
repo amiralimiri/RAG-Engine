@@ -48,9 +48,9 @@ def parse_sse_events(lines: list[str]) -> list[dict[str, Any]]:
 
     for line in lines:
         if line.startswith("event:"):
-            current_event = line[len("event:"):].strip()
+            current_event = line[len("event:") :].strip()
         elif line.startswith("data:"):
-            current_data.append(line[len("data:"):].strip())
+            current_data.append(line[len("data:") :].strip())
         elif line == "" and current_event is not None:
             raw = "\n".join(current_data)
             try:
@@ -89,13 +89,13 @@ class TestStreamingHtmlDelivery:
 
         # 1. In-Feed Thinking Placeholder Bubble with accessibility
         assert 'id="thinkingBubble"' in html, "Missing #thinkingBubble container in index.html"
-        assert 'class="message assistant thinking-bubble hidden"' in html or 'thinking-bubble' in html
+        assert 'class="message assistant thinking-bubble hidden"' in html or "thinking-bubble" in html
         assert 'aria-live="polite"' in html, "#thinkingBubble must have aria-live='polite' for accessibility"
 
         # 2. Streaming workflow and dynamic step status badges
         assert 'class="thinking-workflow"' in html, "Missing .thinking-workflow element in index.html"
         assert 'id="thinkingWorkflow"' in html, "Missing #thinkingWorkflow ID in index.html"
-        assert 'class="thinking-status hidden"' in html or 'thinking-status' in html, (
+        assert 'class="thinking-status hidden"' in html or "thinking-status" in html, (
             "Missing .thinking-status element in index.html"
         )
 
@@ -259,14 +259,10 @@ class TestStreamingContractParity:
         monkeypatch.setattr("app.rag.workflows.runner.extract_trace_id", lambda handler: test_trace_id)
         monkeypatch.setattr("app.rag.workflows.runner.flush_telemetry", lambda: None)
 
-        test_answer = (
-            "To connect to the corporate VPN, authenticate via Okta MFA and launch GlobalProtect."
-        )
+        test_answer = "To connect to the corporate VPN, authenticate via Okta MFA and launch GlobalProtect."
         test_source = "vectorstore"
         test_trace = ["route_question", "retrieve_kb", "grade_documents", "generate_from_kb"]
-        test_citations = [
-            {"title": "VPN Handbook", "url": "https://intranet.example.com/vpn-guide.pdf"}
-        ]
+        test_citations = [{"title": "VPN Handbook", "url": "https://intranet.example.com/vpn-guide.pdf"}]
         test_rewritten = "How do I connect to the corporate VPN?"
 
         # Setup streaming graph mock emitting steps, tokens, and final completion
@@ -370,9 +366,7 @@ class TestStreamingContractParity:
 
         # Reconstruct stream tokens into synthesized answer
         token_deltas = [
-            e["data"]["delta"]
-            for e in parsed_events
-            if e["event"] == "token" and isinstance(e["data"], dict)
+            e["data"]["delta"] for e in parsed_events if e["event"] == "token" and isinstance(e["data"], dict)
         ]
         reconstructed_answer = "".join(token_deltas)
 
@@ -415,8 +409,16 @@ class TestStreamingContractParity:
 
         async def mock_astream_events(initial_state, version="v2", config=None):
             yield {"event": "on_chain_start", "metadata": {"langgraph_node": "route_question"}, "data": {}}
-            yield {"event": "on_chat_model_stream", "metadata": {"langgraph_node": "direct_answer"}, "data": {"chunk": {"content": "Suppressed steps answer"}}}
-            yield {"event": "on_chain_end", "metadata": {"langgraph_node": "direct_answer"}, "data": {"output": {"source_used": "direct"}}}
+            yield {
+                "event": "on_chat_model_stream",
+                "metadata": {"langgraph_node": "direct_answer"},
+                "data": {"chunk": {"content": "Suppressed steps answer"}},
+            }
+            yield {
+                "event": "on_chain_end",
+                "metadata": {"langgraph_node": "direct_answer"},
+                "data": {"output": {"source_used": "direct"}},
+            }
 
         mock_graph = MagicMock()
         mock_graph.astream_events = mock_astream_events

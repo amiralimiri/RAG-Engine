@@ -489,7 +489,9 @@ def test_run_workflow_benchmark_link_naming_and_source_accuracy():
     mock_runner = MagicMock()
     mock_runner.registry.get.return_value = MagicMock()
 
-    resp1 = WorkflowOutput(workflow="fix_single_llm", answer="Connect via client", source_used="vectorstore", trace_id="tr-1")
+    resp1 = WorkflowOutput(
+        workflow="fix_single_llm", answer="Connect via client", source_used="vectorstore", trace_id="tr-1"
+    )
     ctx1 = EvalContext(source_used="vectorstore", retrieved_contexts=["VPN doc"])
     resp2 = WorkflowOutput(workflow="fix_single_llm", answer="I don't know", source_used="vectorstore", trace_id="tr-2")
     ctx2 = EvalContext(source_used="vectorstore", retrieved_contexts=[])
@@ -566,7 +568,9 @@ matrix:
     mock_runner = MagicMock()
     mock_runner.registry.get.return_value = MagicMock()
 
-    resp = WorkflowOutput(workflow="fix_single_llm", answer="Test answer", source_used="vectorstore", trace_id="tr-test")
+    resp = WorkflowOutput(
+        workflow="fix_single_llm", answer="Test answer", source_used="vectorstore", trace_id="tr-test"
+    )
     ctx = EvalContext(source_used="vectorstore", retrieved_contexts=["context"])
     mock_runner.execute_with_context.return_value = ExecutionResult(response=resp, eval_context=ctx)
 
@@ -642,7 +646,9 @@ def test_main_cli_execution_with_matrix(capsys, register_mock_workflow, tmp_path
     from app.rag.evaluation import FakeEvaluator, get_evaluator
     from evaluation.run_experiment import main
 
-    register_mock_workflow("fix_single_llm", answer="Matrix answer", source_used="vectorstore", retrieved_contexts=["ctx"])
+    register_mock_workflow(
+        "fix_single_llm", answer="Matrix answer", source_used="vectorstore", retrieved_contexts=["ctx"]
+    )
 
     matrix_content = """
 matrix:

@@ -239,7 +239,6 @@ def test_chat_request_with_rewind_turn_index():
         ChatRequest(question="bad rewind", rewind_turn_index=-1)
 
 
-
 def test_stream_metadata_event():
     event = StreamMetadataEvent(
         trace_id="trace-abc-123",

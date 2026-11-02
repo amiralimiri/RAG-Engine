@@ -73,5 +73,3 @@ def shutdown_background_loop(timeout: float = 2.0) -> None:
             _bg_loop.close()
         _bg_loop = None
         _bg_thread = None
-
-

@@ -202,7 +202,10 @@ class AgentState(TypedDict):
 - In `search_web(state: AgentState, config: RunnableConfig)`:
   ```python
   # When extracting items from Tavily results:
-  web_contexts = [f"Title: {item.get('title')}\nURL: {item.get('url')}\nContent: {item.get('content')}" for item in result.get("results", [])]
+  web_contexts = [
+      f"Title: {item.get('title')}\nURL: {item.get('url')}\nContent: {item.get('content')}"
+      for item in result.get("results", [])
+  ]
   return {
       "web_results": "\n\n".join(lines),
       "citations": citations,
@@ -238,6 +241,7 @@ from app.core.config import get_settings
 from app.services.evaluation import score_trace_faithfulness, score_trace_answer_relevancy
 
 logger = logging.getLogger(__name__)
+
 
 async def run_online_evaluation_task(
     trace_id: Optional[str],
@@ -314,7 +318,7 @@ async def run_online_evaluation_task(
               source_used=result["source_used"],
               retrieved_contexts=result.get("retrieved_contexts", []),
           )
-      return { ... }
+      return {...}
   ```
 - **Streaming Endpoint (`POST /api/chat/stream`)**:
   In `chat_event_generator()`, capture accumulated answer and contexts:
@@ -556,6 +560,7 @@ In both `app/rag/fix_single_llm.py` and `app/rag/fix_single_jev.py`, update retr
 ```python
 from langchain_core.runnables import RunnableConfig
 
+
 def retrieve_kb(state: AgentState, config: RunnableConfig | None = None):
     structlog.contextvars.bind_contextvars(step="retrieve_kb")
     docs = get_retriever().invoke(state["current_query"], config=config)
@@ -564,6 +569,7 @@ def retrieve_kb(state: AgentState, config: RunnableConfig | None = None):
         "retrieved_contexts": [d.page_content for d in docs],
         "trace": [f"Private KB retrieval → {len(docs)} chunks"],
     }
+
 
 def search_web(state: AgentState, config: RunnableConfig | None = None):
     structlog.contextvars.bind_contextvars(step="search_web")
@@ -679,6 +685,7 @@ Create `data/gold_benchmarks.json` containing 10 curated enterprise test cases:
 Usage:
     uv run python evaluation/run_experiment.py [--dataset-name it-support-benchmark] [--workflows fix_single_llm,fix_single_jev]
 """
+
 import argparse
 import json
 import logging
@@ -701,12 +708,14 @@ WORKFLOWS = {
     "fix_single_jev": fix_single_jev.ask,
 }
 
+
 def load_gold_benchmarks() -> list[dict[str, Any]]:
     benchmark_file = Path("data/gold_benchmarks.json")
     if not benchmark_file.exists():
         raise FileNotFoundError(f"Missing benchmark file: {benchmark_file}")
     with open(benchmark_file, "r", encoding="utf-8") as f:
         return json.load(f)
+
 
 def ensure_dataset(client: Any, dataset_name: str) -> Any:
     try:
@@ -729,6 +738,7 @@ def ensure_dataset(client: Any, dataset_name: str) -> Any:
             )
         logger.info("Successfully seeded %d items into Langfuse dataset '%s'", len(benchmarks), dataset_name)
         return client.get_dataset(dataset_name)
+
 
 def main():
     parser = argparse.ArgumentParser(description="Run Langfuse Experimentation Benchmarks")
@@ -801,13 +811,15 @@ def main():
         avg_faith = sum(faithfulness_scores) / len(faithfulness_scores) if faithfulness_scores else 0.0
         avg_rel = sum(relevancy_scores) / len(relevancy_scores) if relevancy_scores else 0.0
 
-        results_table.append({
-            "Workflow": wf_name,
-            "Items Evaluated": len(dataset.items),
-            "Avg Latency (s)": round(avg_lat, 3),
-            "Avg Faithfulness": round(avg_faith, 3),
-            "Avg Relevancy": round(avg_rel, 3),
-        })
+        results_table.append(
+            {
+                "Workflow": wf_name,
+                "Items Evaluated": len(dataset.items),
+                "Avg Latency (s)": round(avg_lat, 3),
+                "Avg Faithfulness": round(avg_faith, 3),
+                "Avg Relevancy": round(avg_rel, 3),
+            }
+        )
 
     print("\n" + "=" * 65)
     print("           LANGFUSE BENCHMARK EXPERIMENT RESULTS")
@@ -818,6 +830,7 @@ def main():
         print(f"  - Avg Faithfulness:  {r['Avg Faithfulness']}")
         print(f"  - Avg Relevancy:     {r['Avg Relevancy']}")
         print("-" * 65)
+
 
 if __name__ == "__main__":
     main()

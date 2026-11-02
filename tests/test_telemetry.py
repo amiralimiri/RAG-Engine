@@ -57,6 +57,7 @@ def test_callback_created_with_tags_and_metadata(monkeypatch):
     from langfuse.langchain import CallbackHandler
 
     import app.core.telemetry as telemetry
+
     telemetry._langfuse_client = None
 
     handler = telemetry.get_langfuse_callback(
@@ -177,6 +178,7 @@ def test_initialization_exceptions_fail_open(monkeypatch):
     )
     monkeypatch.setattr("app.core.telemetry.get_settings", lambda: dummy_settings)
     import app.core.telemetry as telemetry
+
     telemetry._langfuse_client = None
 
     def raise_err(*args, **kwargs):
@@ -203,6 +205,7 @@ def test_callback_on_chain_start_injects_attributes(monkeypatch):
     )
     monkeypatch.setattr("app.core.telemetry.get_settings", lambda: dummy_settings)
     import app.core.telemetry as telemetry
+
     telemetry._langfuse_client = None
 
     handler = telemetry.get_langfuse_callback(
@@ -216,7 +219,9 @@ def test_callback_on_chain_start_injects_attributes(monkeypatch):
 
     captured = {}
 
-    def mock_super_on_chain_start(self, serialized, inputs, *, run_id, parent_run_id=None, tags=None, metadata=None, **kwargs):
+    def mock_super_on_chain_start(
+        self, serialized, inputs, *, run_id, parent_run_id=None, tags=None, metadata=None, **kwargs
+    ):
         captured["tags"] = tags
         captured["metadata"] = metadata
         return "chain_started"
@@ -311,6 +316,3 @@ def test_evaluation_engine_client_respects_engine_settings(monkeypatch):
     assert captured_init["public_key"] == "pk-eval-custom"
     assert captured_init["secret_key"] == "sk-eval-custom"
     assert captured_init["host"] == "https://eval.cloud.langfuse.com"
-
-
-

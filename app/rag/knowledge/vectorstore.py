@@ -50,8 +50,7 @@ def get_embedding_dimension(model_name: str | None = None, settings: Settings | 
             return dim
 
     raise ConfigurationError(
-        f"Unsupported embedding model '{name}' for Pinecone. "
-        "Add the matching dimension to EMBEDDING_DIMENSIONS."
+        f"Unsupported embedding model '{name}' for Pinecone. Add the matching dimension to EMBEDDING_DIMENSIONS."
     )
 
 
@@ -65,7 +64,6 @@ def _cosine_similarity(u: list[float], v: list[float]) -> float:
 
 
 class OfflineDeterministicEmbeddings(Embeddings):
-
     """Deterministic offline hash embedding double for network-free local testing."""
 
     def __init__(self, dimension: int = 128) -> None:
@@ -217,7 +215,9 @@ class PineconeVectorStoreAdapter:
                 else None
             )
             if not api_key:
-                raise ConfigurationError("embed_api_key is required to initialize embeddings for PineconeVectorStoreAdapter")
+                raise ConfigurationError(
+                    "embed_api_key is required to initialize embeddings for PineconeVectorStoreAdapter"
+                )
             self.embeddings = OpenAIEmbeddings(
                 model=self.settings.embed_model,
                 base_url=self.settings.embed_base_url,
@@ -230,7 +230,9 @@ class PineconeVectorStoreAdapter:
         elif hasattr(self.embeddings, "dimension") and isinstance(getattr(self.embeddings, "dimension"), int):
             self.dimension = self.embeddings.dimension
         else:
-            self.dimension = get_embedding_dimension(getattr(self.settings, "embed_model", None), settings=self.settings)
+            self.dimension = get_embedding_dimension(
+                getattr(self.settings, "embed_model", None), settings=self.settings
+            )
 
         # 3. Resolve Pinecone client
         if client is not None:
@@ -378,5 +380,3 @@ def get_knowledge_store(
             _knowledge_store_instances[normalized_type] = adapter
 
         return adapter
-
-

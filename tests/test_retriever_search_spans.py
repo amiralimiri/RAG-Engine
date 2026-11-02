@@ -57,6 +57,7 @@ def dummy_web_search(query: str) -> dict:
 # 1. create_retriever_tool config propagation & callbacks
 # ==============================================================================
 
+
 def test_fix_single_llm_retrieve_kb_signature_and_config_forwarding():
     """create_retriever_tool accepts config: RunnableConfig and passes it to retriever.invoke."""
     mock_retriever = MagicMock()
@@ -106,6 +107,7 @@ def test_fix_single_llm_retrieve_kb_triggers_retriever_callbacks():
 # 2. create_web_search_tool config propagation & callbacks
 # ==============================================================================
 
+
 def test_fix_single_llm_search_web_signature_and_config_forwarding():
     """create_web_search_tool accepts config: RunnableConfig and passes it to search_client.invoke."""
     mock_search = MagicMock()
@@ -153,6 +155,7 @@ def test_fix_single_llm_search_web_triggers_tool_callbacks():
 # ==============================================================================
 # 3. Prompt CMS integration
 # ==============================================================================
+
 
 def test_fix_single_llm_uses_workflow_prompt_service():
     """Prompt nodes obtain prompts via get_workflow_prompt."""
@@ -267,22 +270,25 @@ async def test_fix_single_llm_nodes_link_active_langfuse_prompt():
         web_tool.ainvoke = AsyncMock(return_value=("web content", {"retrieved_contexts": [], "citations": []}))
 
         graph = create_agentic_rag_graph(mock_classifier, model=mock_llm, kb_tool=kb_tool, web_tool=web_tool)
-        await graph.ainvoke({
-            "question": "q",
-            "current_query": "",
-            "kb_docs": [],
-            "web_results": "",
-            "kb_grade": "",
-            "web_grade": "",
-            "answer": "",
-            "source_used": "",
-            "retry_count": 0,
-            "trace": [],
-            "citations": [],
-            "retrieved_contexts": [],
-        })
+        await graph.ainvoke(
+            {
+                "question": "q",
+                "current_query": "",
+                "kb_docs": [],
+                "web_results": "",
+                "kb_grade": "",
+                "web_grade": "",
+                "answer": "",
+                "source_used": "",
+                "retry_count": 0,
+                "trace": [],
+                "citations": [],
+                "retrieved_contexts": [],
+            }
+        )
         rewrite_call = [
-            c for c in mock_llm.ainvoke.call_args_list
+            c
+            for c in mock_llm.ainvoke.call_args_list
             if c[1].get("config", {}).get("metadata", {}).get("langfuse_prompt") == rewrite_prompt
         ]
         assert len(rewrite_call) >= 1
@@ -300,20 +306,22 @@ async def test_fix_single_llm_nodes_link_active_langfuse_prompt():
         kb_tool.ainvoke = AsyncMock(return_value=("kb content", {"documents": [], "citations": []}))
 
         graph = create_agentic_rag_graph(mock_classifier, model=mock_llm, kb_tool=kb_tool)
-        await graph.ainvoke({
-            "question": "q",
-            "current_query": "",
-            "kb_docs": [],
-            "web_results": "",
-            "kb_grade": "",
-            "web_grade": "",
-            "answer": "",
-            "source_used": "",
-            "retry_count": 0,
-            "trace": [],
-            "citations": [],
-            "retrieved_contexts": [],
-        })
+        await graph.ainvoke(
+            {
+                "question": "q",
+                "current_query": "",
+                "kb_docs": [],
+                "web_results": "",
+                "kb_grade": "",
+                "web_grade": "",
+                "answer": "",
+                "source_used": "",
+                "retry_count": 0,
+                "trace": [],
+                "citations": [],
+                "retrieved_contexts": [],
+            }
+        )
         assert mock_llm.ainvoke.call_count == 1
         args, kwargs = mock_llm.ainvoke.call_args
         assert args[0] == "compiled-rag:generate_kb"
@@ -335,20 +343,22 @@ async def test_fix_single_llm_nodes_link_active_langfuse_prompt():
         web_tool.ainvoke = AsyncMock(return_value=("web content", {"retrieved_contexts": [], "citations": []}))
 
         graph = create_agentic_rag_graph(mock_classifier, model=mock_llm, kb_tool=kb_tool, web_tool=web_tool)
-        await graph.ainvoke({
-            "question": "q",
-            "current_query": "",
-            "kb_docs": [],
-            "web_results": "res",
-            "kb_grade": "",
-            "web_grade": "",
-            "answer": "",
-            "source_used": "",
-            "retry_count": 0,
-            "trace": [],
-            "citations": [],
-            "retrieved_contexts": [],
-        })
+        await graph.ainvoke(
+            {
+                "question": "q",
+                "current_query": "",
+                "kb_docs": [],
+                "web_results": "res",
+                "kb_grade": "",
+                "web_grade": "",
+                "answer": "",
+                "source_used": "",
+                "retry_count": 0,
+                "trace": [],
+                "citations": [],
+                "retrieved_contexts": [],
+            }
+        )
         assert mock_llm.ainvoke.call_count == 1
         args, kwargs = mock_llm.ainvoke.call_args
         assert args[0] == "compiled-rag:generate_web"

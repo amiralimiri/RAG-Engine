@@ -78,6 +78,7 @@ class EvaluationResult(BaseModel):
     scores: dict[str, float] = Field(default_factory=dict)
     details: dict[str, Any] = Field(default_factory=dict)
 
+
 @runtime_checkable
 class Evaluator(Protocol):
     def evaluate(
@@ -120,6 +121,7 @@ class ExecutionResult(BaseModel):
     response: ChatResponse
     eval_context: EvalContext
 
+
 class WorkflowRunner:
     def __init__(
         self,
@@ -129,8 +131,7 @@ class WorkflowRunner:
         callback_factory: Callable[..., Any] | None = None,
         trace_extractor: Callable[[Any], str | None] | None = None,
         telemetry_flusher: Callable[[], None] | None = None,
-    ) -> None:
-        ...
+    ) -> None: ...
 
     def execute_with_context(
         self,

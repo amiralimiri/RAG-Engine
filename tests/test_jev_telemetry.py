@@ -71,13 +71,15 @@ def jev_runner_and_mock_graph():
     """Fixture providing a WorkflowRunner with fix_single_jev graph mocked."""
     registry = get_workflow_registry()
     wf_def = registry.get("fix_single_jev")
-    mock_invoke = MagicMock(return_value={
-        "answer": "mock answer",
-        "source_used": "direct",
-        "trace": [],
-        "citations": [],
-        "retrieved_contexts": [],
-    })
+    mock_invoke = MagicMock(
+        return_value={
+            "answer": "mock answer",
+            "source_used": "direct",
+            "trace": [],
+            "citations": [],
+            "retrieved_contexts": [],
+        }
+    )
     mock_graph = MagicMock()
     mock_graph.invoke = mock_invoke
     wf_def._compiled_graph = mock_graph
@@ -344,6 +346,7 @@ def test_jev_nodes_emit_generation_with_trace_context(monkeypatch):
 def test_jev_nodes_emit_generation_with_trace_context_from_contextvars(monkeypatch):
     """When state has no trace_id, _record_jev_generation pulls active trace_id from structlog contextvars."""
     import structlog
+
     structlog.contextvars.bind_contextvars(trace_id="ctx-trace-abc-123")
 
     mock_jev = MagicMock()
@@ -376,6 +379,7 @@ def test_jev_nodes_emit_generation_with_trace_context_from_contextvars(monkeypat
 def test_jev_nodes_emit_generation_with_trace_context_from_config(monkeypatch):
     """When state has no trace_id, _record_jev_generation extracts trace_id from config callbacks or metadata."""
     import structlog
+
     structlog.contextvars.unbind_contextvars("trace_id")
 
     mock_jev = MagicMock()

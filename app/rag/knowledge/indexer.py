@@ -156,7 +156,7 @@ def get_document_indexer(
             from app.rag.knowledge.vectorstore import get_knowledge_store
 
             resolved_store = get_knowledge_store(settings=settings)
-        except (ImportError, AttributeError):
+        except ImportError, AttributeError:
             resolved_store = InMemoryVectorStoreAdapter()
 
     resolved_parser = parser or CompositeDocumentParser()

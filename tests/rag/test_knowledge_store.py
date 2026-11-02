@@ -63,7 +63,9 @@ def test_in_memory_adapter_sync_add_and_similarity_search() -> None:
     custom_ids = adapter.add_documents([custom_doc], ids=["policy_chunk_1"])
     assert custom_ids == ["policy_chunk_1"]
 
-    updated_doc = Document(page_content="Updated VPN policy content strictly overriding previous", metadata={"source": "policy.md"})
+    updated_doc = Document(
+        page_content="Updated VPN policy content strictly overriding previous", metadata={"source": "policy.md"}
+    )
     adapter.add_documents([updated_doc], ids=["policy_chunk_1"])
     policy_results = adapter.similarity_search("strictly overriding previous", k=1)
     assert len(policy_results) == 1
@@ -148,9 +150,11 @@ async def test_in_memory_retriever_tool_integration() -> None:
     from app.rag.tools.retriever import create_retriever_tool
 
     adapter = InMemoryVectorStoreAdapter()
-    adapter.add_documents([
-        Document(page_content="Global VPN instructions and access procedures", metadata={"source": "vpn.md"}),
-    ])
+    adapter.add_documents(
+        [
+            Document(page_content="Global VPN instructions and access procedures", metadata={"source": "vpn.md"}),
+        ]
+    )
     tool = create_retriever_tool(retriever=adapter.as_retriever(search_kwargs={"k": 1}))
 
     # Sync invocation
@@ -325,8 +329,10 @@ def test_get_knowledge_store_factory() -> None:
     assert mem_store is mem_store_again
 
     # Pinecone store resolution with mocked Pinecone client
-    with patch("app.rag.knowledge.vectorstore.Pinecone") as mock_pc_cls, \
-         patch("app.rag.knowledge.vectorstore.PineconeVectorStore") as mock_pvs_cls:
+    with (
+        patch("app.rag.knowledge.vectorstore.Pinecone") as mock_pc_cls,
+        patch("app.rag.knowledge.vectorstore.PineconeVectorStore") as mock_pvs_cls,
+    ):
         mock_pc = mock_pc_cls.return_value
         mock_pc.has_index.return_value = True
         mock_pc.describe_index.return_value.dimension = 3072
@@ -433,11 +439,3 @@ def test_get_knowledge_store_concurrent_singleton_access() -> None:
     first = results[0]
     for r in results[1:]:
         assert r is first
-
-
-
-
-
-
-
-

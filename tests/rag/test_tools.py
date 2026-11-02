@@ -143,15 +143,17 @@ def test_create_web_search_tool_sync():
 @pytest.mark.asyncio
 async def test_create_web_search_tool_async():
     mock_search = MagicMock()
-    mock_search.ainvoke = AsyncMock(return_value={
-        "results": [
-            {
-                "title": "Python 3.14 Docs",
-                "url": "https://docs.python.org",
-                "content": "Official Python documentation.",
-            }
-        ]
-    })
+    mock_search.ainvoke = AsyncMock(
+        return_value={
+            "results": [
+                {
+                    "title": "Python 3.14 Docs",
+                    "url": "https://docs.python.org",
+                    "content": "Official Python documentation.",
+                }
+            ]
+        }
+    )
 
     tool = create_web_search_tool(search_client=mock_search)
     result = await tool.ainvoke({"query": "python"})
@@ -161,9 +163,7 @@ async def test_create_web_search_tool_async():
     assert "Title: Python 3.14 Docs" in content
     assert "URL: https://docs.python.org" in content
     assert "Content: Official Python documentation." in content
-    assert artifact["citations"] == [
-        {"title": "Python 3.14 Docs", "url": "https://docs.python.org", "type": "web"}
-    ]
+    assert artifact["citations"] == [{"title": "Python 3.14 Docs", "url": "https://docs.python.org", "type": "web"}]
     assert artifact["retrieved_contexts"] == [
         "Title: Python 3.14 Docs\nURL: https://docs.python.org\nContent: Official Python documentation."
     ]
@@ -277,6 +277,7 @@ def test_create_web_search_tool_without_engine_module_reflection(monkeypatch: py
     # Inject a bogus web_search_tool on app.rag.engine if present
     engine_mod = sys.modules.get("app.rag.engine")
     if engine_mod is not None:
+
         def bogus_tool():
             raise AssertionError("Reflection hack was called on app.rag.engine!")
 
@@ -292,5 +293,3 @@ def test_create_web_search_tool_without_engine_module_reflection(monkeypatch: py
     content, artifact = tool.invoke({"query": "test query"})
     assert "Clean search answer" in content
     assert artifact["citations"] == [{"title": "Web Title", "url": "https://example.com", "type": "web"}]
-
-

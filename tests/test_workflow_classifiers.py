@@ -116,6 +116,7 @@ def test_fake_classifier_adapter_mutation():
 # OpenAIClassifierAdapter Tests
 # ==============================================================================
 
+
 def test_openai_classifier_adapter_satisfies_protocol():
     adapter = OpenAIClassifierAdapter(chat_model=MagicMock())
     assert isinstance(adapter, WorkflowClassifier)
@@ -133,9 +134,7 @@ def test_openai_classifier_adapter_route():
 
     assert isinstance(decision, RouteDecision)
     assert decision.route == "kb"
-    mock_chat_model.with_structured_output.assert_called_once_with(
-        RouteDecision, method="json_mode"
-    )
+    mock_chat_model.with_structured_output.assert_called_once_with(RouteDecision, method="json_mode")
 
     call_args = mock_structured.invoke.call_args
     prompt_used = call_args[0][0]
@@ -158,9 +157,7 @@ def test_openai_classifier_adapter_grade_kb():
 
     assert isinstance(grade, EvidenceGrade)
     assert grade.grade == "good"
-    mock_chat_model.with_structured_output.assert_called_once_with(
-        EvidenceGrade, method="json_mode"
-    )
+    mock_chat_model.with_structured_output.assert_called_once_with(EvidenceGrade, method="json_mode")
 
     call_args = mock_structured.invoke.call_args
     prompt_used = call_args[0][0]
@@ -180,9 +177,7 @@ def test_openai_classifier_adapter_grade_web():
 
     assert isinstance(grade, EvidenceGrade)
     assert grade.grade == "weak"
-    mock_chat_model.with_structured_output.assert_called_once_with(
-        EvidenceGrade, method="json_mode"
-    )
+    mock_chat_model.with_structured_output.assert_called_once_with(EvidenceGrade, method="json_mode")
 
     call_args = mock_structured.invoke.call_args
     prompt_used = call_args[0][0]
@@ -194,6 +189,7 @@ def test_openai_classifier_adapter_grade_web():
 # ==============================================================================
 # JevClassifierAdapter Tests
 # ==============================================================================
+
 
 def test_jev_classifier_adapter_satisfies_protocol():
     adapter = JevClassifierAdapter(classifier=MagicMock())

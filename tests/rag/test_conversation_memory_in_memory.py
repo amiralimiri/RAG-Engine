@@ -603,9 +603,3 @@ async def test_in_memory_append_turn_preserves_attachments_citations_and_metadat
     turn.attachments.append({"name": "mutated.txt"})
     fresh_turns = await store.aget_turns(session_id)
     assert len(fresh_turns[0].attachments) == 1
-
-
-
-
-
-

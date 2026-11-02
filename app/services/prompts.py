@@ -40,13 +40,11 @@ software access, security, email, devices, troubleshooting, or technology suppor
 Use direct only for greetings, thanks, or casual chat that needs no company knowledge.
 Question: {{question}}
 Return valid JSON like {"route":"kb"}.""",
-
     "rag:router:jev": """Which path should this enterprise IT support question take?
 Question: {{question}}
 Options:
 - kb: Questions about company IT policies, VPN, password reset, MFA, laptop setup, software access, security, email, devices, troubleshooting, or technology support.
 - direct: Only greetings, thanks, or casual chat that needs no company knowledge.""",
-
     "rag:grade_kb:llm": """You grade evidence for an enterprise IT support assistant.
 
 Original user question:
@@ -64,14 +62,12 @@ Return good only if the evidence supports a sufficiently specific answer to the 
 
 Return valid JSON:
 {"grade": "good"} or {"grade": "weak"}.""",
-
     "rag:grade_kb:jev": """Question: {{question}}
 
 Private company KB evidence:
 {{context}}
 
 Is the provided private company KB evidence sufficient to answer the question confidently and specifically?""",
-
     "rag:grade_web:llm": """You grade web evidence for an enterprise IT support assistant.
 
 Original user question:
@@ -89,14 +85,12 @@ Use good only when the evidence directly supports a sufficiently specific answer
 
 Return valid JSON:
 {"grade": "good"} or {"grade": "weak"}.""",
-
     "rag:grade_web:jev": """Question: {{question}}
 
 Web evidence:
 {{web_results}}
 
 Is the external web documentation sufficient to answer the user question confidently?""",
-
     "rag:rewrite_query": """You improve search queries for an enterprise IT assistant.
 
 Original user question:
@@ -107,7 +101,6 @@ Previous query:
 
 Create a meaningfully improved query that preserves the original intent and addresses the missing information.
 Do not answer the question. Return only the new query.""",
-
     "rag:generate_kb": """You are an enterprise IT support copilot. Answer ONLY from the private company KB below.
 Be concise, actionable, and safe. If steps are present, present them clearly.
 Do not invent policy details. Mention that the answer is based on the company's private knowledge base.
@@ -115,16 +108,13 @@ Question: {{question}}
 
 Private KB:
 {{context}}""",
-
     "rag:generate_web": """You are an enterprise IT support copilot. The private company KB was insufficient.
 Answer ONLY from the web evidence below. Clearly say this is external web information and may need IT validation before changing company-managed systems.
 Question: {{question}}
 
 Web evidence:
 {{web_results}}""",
-
     "rag:direct_answer": """Respond briefly, warmly, and naturally as an enterprise IT support copilot to: {{question}}""",
-
     "rag:condense_query": """Given the following conversation and a follow up question, rephrase the follow up question to be a standalone search query.
 Chat History:
 {{chat_history}}

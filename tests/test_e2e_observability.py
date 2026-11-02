@@ -47,7 +47,9 @@ def test_e2e_flow_with_langfuse_mocked(client, monkeypatch, register_mock_workfl
 
     monkeypatch.setattr("app.core.telemetry.get_langfuse_client", lambda: mock_client)
     monkeypatch.setattr("app.rag.workflows.runner.get_langfuse_callback", lambda **kwargs: mock_handler)
-    monkeypatch.setattr("app.rag.workflows.runner.extract_trace_id", lambda handler: getattr(handler, "last_trace_id", None))
+    monkeypatch.setattr(
+        "app.rag.workflows.runner.extract_trace_id", lambda handler: getattr(handler, "last_trace_id", None)
+    )
     get_workflow_runner().eval_task_fn = mock_eval
 
     register_mock_workflow(
@@ -73,7 +75,9 @@ def test_e2e_flow_with_langfuse_mocked(client, monkeypatch, register_mock_workfl
     assert chat_data["answer"] == "Follow VPN installation guide for your OS."
     assert chat_data["source_used"] == "knowledge_base"
     assert chat_data["trace_id"] == "trace-e2e-llm-101"
-    assert any(c.get("title") == "vpn_setup.md" if isinstance(c, dict) else c == "vpn_setup.md" for c in chat_data["citations"])
+    assert any(
+        c.get("title") == "vpn_setup.md" if isinstance(c, dict) else c == "vpn_setup.md" for c in chat_data["citations"]
+    )
 
     # Verify background online evaluation task enqueued
     mock_eval.assert_called_once_with(
@@ -161,7 +165,9 @@ def test_e2e_flow_with_fix_single_jev_mocked(client, monkeypatch, register_mock_
 
     monkeypatch.setattr("app.core.telemetry.get_langfuse_client", lambda: mock_client)
     monkeypatch.setattr("app.rag.workflows.runner.get_langfuse_callback", lambda **kwargs: mock_handler)
-    monkeypatch.setattr("app.rag.workflows.runner.extract_trace_id", lambda handler: getattr(handler, "last_trace_id", None))
+    monkeypatch.setattr(
+        "app.rag.workflows.runner.extract_trace_id", lambda handler: getattr(handler, "last_trace_id", None)
+    )
     get_workflow_runner().eval_task_fn = mock_eval
 
     mock_graph = MagicMock()
@@ -365,7 +371,9 @@ def test_e2e_switching_all_workflows_sync_and_stream(client, monkeypatch):
 
     monkeypatch.setattr("app.core.telemetry.get_langfuse_client", lambda: mock_client)
     monkeypatch.setattr("app.rag.workflows.runner.get_langfuse_callback", lambda **kwargs: mock_handler)
-    monkeypatch.setattr("app.rag.workflows.runner.extract_trace_id", lambda handler: getattr(handler, "last_trace_id", None))
+    monkeypatch.setattr(
+        "app.rag.workflows.runner.extract_trace_id", lambda handler: getattr(handler, "last_trace_id", None)
+    )
     get_workflow_runner().eval_task_fn = mock_eval
 
     registry = get_workflow_registry()
@@ -446,7 +454,9 @@ def test_e2e_multi_turn_session_persistence_http(client, monkeypatch):
 
     monkeypatch.setattr("app.core.telemetry.get_langfuse_client", lambda: mock_client)
     monkeypatch.setattr("app.rag.workflows.runner.get_langfuse_callback", lambda **kwargs: mock_handler)
-    monkeypatch.setattr("app.rag.workflows.runner.extract_trace_id", lambda handler: getattr(handler, "last_trace_id", None))
+    monkeypatch.setattr(
+        "app.rag.workflows.runner.extract_trace_id", lambda handler: getattr(handler, "last_trace_id", None)
+    )
     get_workflow_runner().eval_task_fn = mock_eval
 
     class MemoryEchoChatModel(SimpleChatModel):
@@ -610,8 +620,15 @@ async def test_e2e_online_evaluation_scores_recorded_for_all_workflows_without_s
                 mock_graph.invoke.return_value = {
                     "messages": [
                         HumanMessage(content=f"Question for {wf_id}"),
-                        AIMessage(content="", tool_calls=[{"name": "knowledge_base_search", "args": {"query": "q"}, "id": "t1"}]),
-                        ToolMessage(content="[Source: doc1.pdf] Extracted context for evaluation.", name="knowledge_base_search", tool_call_id="t1"),
+                        AIMessage(
+                            content="",
+                            tool_calls=[{"name": "knowledge_base_search", "args": {"query": "q"}, "id": "t1"}],
+                        ),
+                        ToolMessage(
+                            content="[Source: doc1.pdf] Extracted context for evaluation.",
+                            name="knowledge_base_search",
+                            tool_call_id="t1",
+                        ),
                         AIMessage(content=f"Answer for {wf_id}"),
                     ],
                     "question": f"Question for {wf_id}",
@@ -663,5 +680,3 @@ async def test_e2e_online_evaluation_scores_recorded_for_all_workflows_without_s
                 value=1.0,
                 comment=f"High quality evaluation score for {wf_id}",
             )
-
-

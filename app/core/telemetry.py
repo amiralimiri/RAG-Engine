@@ -296,5 +296,3 @@ def flush_telemetry() -> None:
                 _langfuse_client.flush()
         except Exception as exc:
             logger.warning("Error flushing Langfuse telemetry: %s", exc)
-
-

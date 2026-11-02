@@ -146,9 +146,9 @@ def run_workflow_benchmark(
             question = inp.get("question", "") if isinstance(inp, dict) else str(inp)
             expected_output = getattr(item, "expected_output", None)
             meta = getattr(item, "metadata", None) or {}
-            expected_source = (
-                meta.get("expected_source") if isinstance(meta, dict) else None
-            ) or getattr(item, "expected_source", None)
+            expected_source = (meta.get("expected_source") if isinstance(meta, dict) else None) or getattr(
+                item, "expected_source", None
+            )
 
         start_t = time.perf_counter()
         wf_input = WorkflowInput(

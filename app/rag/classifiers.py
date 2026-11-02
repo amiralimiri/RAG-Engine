@@ -212,11 +212,7 @@ class FakeClassifierAdapter:
     ) -> RouteDecision:
         self.route_calls.append({"question": question, "config": config})
         if isinstance(self.route_decision, list):
-            res = (
-                self.route_decision.pop(0)
-                if len(self.route_decision) > 1
-                else self.route_decision[0]
-            )
+            res = self.route_decision.pop(0) if len(self.route_decision) > 1 else self.route_decision[0]
         else:
             res = self.route_decision
         return _normalize_route(res)
@@ -237,11 +233,7 @@ class FakeClassifierAdapter:
             }
         )
         if isinstance(self.kb_grade, list):
-            res = (
-                self.kb_grade.pop(0)
-                if len(self.kb_grade) > 1
-                else self.kb_grade[0]
-            )
+            res = self.kb_grade.pop(0) if len(self.kb_grade) > 1 else self.kb_grade[0]
         else:
             res = self.kb_grade
         return _normalize_grade(res)
@@ -262,11 +254,7 @@ class FakeClassifierAdapter:
             }
         )
         if isinstance(self.web_grade, list):
-            res = (
-                self.web_grade.pop(0)
-                if len(self.web_grade) > 1
-                else self.web_grade[0]
-            )
+            res = self.web_grade.pop(0) if len(self.web_grade) > 1 else self.web_grade[0]
         else:
             res = self.web_grade
         return _normalize_grade(res)
@@ -318,10 +306,7 @@ class OpenAIClassifierAdapter:
         config: RunnableConfig | None = None,
     ) -> EvidenceGrade:
         grader = self._get_chat_model().with_structured_output(EvidenceGrade, method="json_mode")
-        context = "\n\n".join(
-            f"Source: {d.metadata.get('source', 'unknown')}\n{d.page_content}"
-            for d in kb_docs
-        )
+        context = "\n\n".join(f"Source: {d.metadata.get('source', 'unknown')}\n{d.page_content}" for d in kb_docs)
         prompt_obj = get_workflow_prompt("rag:grade_kb:llm")
         prompt = prompt_obj.compile(
             question=question,
@@ -396,10 +381,7 @@ class JevClassifierAdapter:
                                 "devices, troubleshooting, or any technology support that "
                                 "requires company knowledge."
                             ),
-                            "direct": (
-                                "Only greetings, thanks, or casual chat that needs no "
-                                "company knowledge."
-                            ),
+                            "direct": ("Only greetings, thanks, or casual chat that needs no company knowledge."),
                         },
                     )
                 },
@@ -423,10 +405,7 @@ class JevClassifierAdapter:
         config: RunnableConfig | None = None,
     ) -> EvidenceGrade:
         prompt_client = get_workflow_prompt("rag:grade_kb:jev")
-        context = "\n\n".join(
-            f"Source: {d.metadata.get('source', 'unknown')}\n{d.page_content}"
-            for d in kb_docs
-        )
+        context = "\n\n".join(f"Source: {d.metadata.get('source', 'unknown')}\n{d.page_content}" for d in kb_docs)
         prompt_state = (
             f"Original user question:\n{question}\n\n"
             f"Query used for retrieval (search aid only):\n{current_query}\n\n"

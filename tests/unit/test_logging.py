@@ -173,10 +173,12 @@ def test_background_task_context_preservation():
     captured = []
 
     def sample_task(val: str):
-        captured.append({
-            "val": val,
-            "context": structlog.contextvars.get_contextvars(),
-        })
+        captured.append(
+            {
+                "val": val,
+                "context": structlog.contextvars.get_contextvars(),
+            }
+        )
 
     structlog.contextvars.bind_contextvars(
         request_id="req-bg-999",
@@ -216,11 +218,13 @@ async def test_langgraph_step_contextvars(monkeypatch):
     }
 
     from unittest.mock import AsyncMock, MagicMock
+
     mock_llm = MagicMock()
     mock_llm.ainvoke = AsyncMock(return_value=MagicMock(content="answer"))
     mock_llm.invoke = MagicMock(return_value=MagicMock(content="answer"))
 
     from app.rag import engine
+
     monkeypatch.setattr(engine, "get_chat_model", lambda: mock_llm)
 
     structlog.contextvars.clear_contextvars()
@@ -322,6 +326,7 @@ def test_rotating_file_handler_plain_text_no_ansi(tmp_path, monkeypatch):
     """Assert RotatingFileHandler writes plain text without ANSI escape sequences."""
     import re
     import sys
+
     log_file = tmp_path / "app.log"
     with patch("app.core.logger.get_settings") as mock_settings:
         mock_settings.return_value = Settings(
@@ -335,9 +340,7 @@ def test_rotating_file_handler_plain_text_no_ansi(tmp_path, monkeypatch):
         configure_logging()
 
     root = logging.getLogger()
-    file_handlers = [
-        h for h in root.handlers if isinstance(h, logging.handlers.RotatingFileHandler)
-    ]
+    file_handlers = [h for h in root.handlers if isinstance(h, logging.handlers.RotatingFileHandler)]
     assert len(file_handlers) == 1
     file_handler = file_handlers[0]
 
@@ -430,5 +433,3 @@ def test_trace_id_present_in_workflow_execution_logs(monkeypatch, capsys, regist
     routing_logs = [l for l in output_lines if l.get("event") == "Routing question to KB"]
     assert len(routing_logs) >= 1
     assert routing_logs[0].get("trace_id") == response_trace_id
-
-

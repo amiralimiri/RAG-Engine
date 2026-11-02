@@ -50,6 +50,7 @@ class ConversationTurn(BaseModel):
     trace_id: str | None = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
+
 class SessionInfo(BaseModel):
     session_id: str
     title: str
@@ -59,6 +60,7 @@ class SessionInfo(BaseModel):
     updated_at: datetime
     turn_count: int = 0
 
+
 @runtime_checkable
 class ConversationMemoryAdapter(Protocol):
     async def aget_messages(self, session_id: str, limit: int | None = None) -> list[BaseMessage]: ...
@@ -66,7 +68,9 @@ class ConversationMemoryAdapter(Protocol):
     async def asave_turn(self, turn: ConversationTurn) -> None: ...
     async def aclear(self, session_id: str) -> None: ...
     async def atruncate_from(self, session_id: str, turn_index: int) -> None: ...
-    async def afork_session(self, source_session_id: str, upto_turn_index: int, new_session_id: str | None = None) -> str: ...
+    async def afork_session(
+        self, source_session_id: str, upto_turn_index: int, new_session_id: str | None = None
+    ) -> str: ...
     async def alist_sessions(self, limit: int = 50) -> list[SessionInfo]: ...
     async def aget_session(self, session_id: str) -> SessionInfo | None: ...
 ```

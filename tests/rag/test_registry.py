@@ -152,6 +152,7 @@ def test_registry_warmup():
 
 def test_register_decorator_and_global_singleton():
     from app.rag.workflows import register_default_workflows
+
     global_reg = get_workflow_registry()
 
     try:

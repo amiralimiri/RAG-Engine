@@ -60,9 +60,7 @@ def client():
         ),
     ],
 )
-def test_static_asset_delivery_contracts(
-    client, asset_path, expected_mimes, expected_content_token
-):
+def test_static_asset_delivery_contracts(client, asset_path, expected_mimes, expected_content_token):
     """Assert all vendored dependencies and core frontend files are delivered with HTTP 200,
 
     valid Content-Type headers, non-empty content payloads, and expected content signatures.
@@ -71,16 +69,14 @@ def test_static_asset_delivery_contracts(
     assert response.status_code == 200, f"Failed to fetch static asset: {asset_path}"
 
     content_type = response.headers.get("content-type", "").split(";")[0].strip()
-    assert (
-        content_type in expected_mimes
-    ), f"Unexpected Content-Type '{content_type}' for asset {asset_path} (expected one of {expected_mimes})"
+    assert content_type in expected_mimes, (
+        f"Unexpected Content-Type '{content_type}' for asset {asset_path} (expected one of {expected_mimes})"
+    )
 
-    assert (
-        len(response.content) > 0
-    ), f"Asset payload is empty for {asset_path}"
-    assert (
-        expected_content_token in response.text
-    ), f"Expected token '{expected_content_token}' missing from {asset_path}"
+    assert len(response.content) > 0, f"Asset payload is empty for {asset_path}"
+    assert expected_content_token in response.text, (
+        f"Expected token '{expected_content_token}' missing from {asset_path}"
+    )
 
 
 # ============================================================================
@@ -144,7 +140,7 @@ def test_html_shell_critical_dom_container_ids(client):
 
     # Verify absence of obsolete legacy stub containers and prototype monkey-patch
     assert 'id="messageInput"' not in html, "Obsolete #messageInput should be replaced with #question"
-    assert 'Document.prototype.getElementById' not in html, "Monkey-patch should be removed"
+    assert "Document.prototype.getElementById" not in html, "Monkey-patch should be removed"
     assert 'id="sourceUsed"' not in html, "Obsolete #sourceUsed stub should be removed"
     assert 'id="workflowUsed"' not in html, "Obsolete #workflowUsed stub should be removed"
 

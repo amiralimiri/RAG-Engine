@@ -41,6 +41,7 @@ Deepen the `ConversationMemoryAdapter` protocol seam in `app/rag/memory/base.py`
       before_turn_index: int | None = None,
   ) -> list[BaseMessage]: ...
 
+
   async def aget_turns(
       self,
       session_id: str,

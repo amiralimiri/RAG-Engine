@@ -68,8 +68,7 @@ Consolidate all enterprise knowledge retrieval and external web search behind La
           "Search the internal company knowledge base and IT documentation for technical policies, "
           "VPN, hardware, software installation, and account setup guidelines."
       ),
-  ) -> BaseTool:
-      ...
+  ) -> BaseTool: ...
   ```
 - **Dual-Output Return Contract**:
   - `content: str`: Formatted markdown text with document content and source headers: `[Source: <filename>]\n<content>`.
@@ -98,16 +97,15 @@ Consolidate all enterprise knowledge retrieval and external web search behind La
           "Search the public web for external technical documentation, official software manuals, "
           "and internet troubleshooting resources when internal documentation is absent or insufficient."
       ),
-  ) -> BaseTool:
-      ...
+  ) -> BaseTool: ...
   ```
 - **Dual-Output Return Contract**:
   - `content: str`: Aggregated search answer and result content snippets.
   - `artifact: dict[str, Any]`: Structured dictionary:
     ```python
     {
-        "citations": list[dict[str, Any]],     # [{"title": str, "url": str, "type": "web"}]
-        "retrieved_contexts": list[str],       # ["Title: ...\nURL: ...\nContent: ...", ...]
+        "citations": list[dict[str, Any]],  # [{"title": str, "url": str, "type": "web"}]
+        "retrieved_contexts": list[str],  # ["Title: ...\nURL: ...\nContent: ...", ...]
     }
     ```
 - **Async & Sync Behavior**:
@@ -130,8 +128,7 @@ def create_agentic_rag_graph(
     *,
     kb_tool: BaseTool | None = None,
     web_tool: BaseTool | None = None,
-) -> Any:
-    ...
+) -> Any: ...
 ```
 
 - **Tool Resolution Logic**:
@@ -141,9 +138,11 @@ def create_agentic_rag_graph(
       active_kb_tool = kb_tool
   elif retriever is not None:
       from app.rag.tools import create_retriever_tool
+
       active_kb_tool = create_retriever_tool(retriever=retriever)
   else:
       from app.rag.tools import create_retriever_tool
+
       active_kb_tool = create_retriever_tool()
 
   # Resolve Web Tool
@@ -151,6 +150,7 @@ def create_agentic_rag_graph(
       active_web_tool = web_tool
   else:
       from app.rag.tools import create_web_search_tool
+
       active_web_tool = create_web_search_tool()
   ```
 

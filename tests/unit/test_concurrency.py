@@ -36,7 +36,6 @@ def test_run_async_safely_propagates_contextvars():
     assert res.get("step") == "test_step"
 
 
-
 def test_wrap_safe_invoke():
     mock_graph = MagicMock()
 
@@ -62,4 +61,3 @@ def test_shutdown_background_loop():
     # Verify that a subsequent call seamlessly re-creates loop
     assert run_async_safely(sample) == 1
     shutdown_background_loop()
-

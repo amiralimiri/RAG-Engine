@@ -281,7 +281,8 @@ def test_react_agent_create_agent_topology_and_no_deprecation_warnings():
 
         # Assert zero LangGraphDeprecatedSinceV10 warnings
         deprecated = [
-            w for w in recorded_warnings
+            w
+            for w in recorded_warnings
             if "LangGraphDeprecatedSinceV10" in type(w.message).__name__
             or "create_react_agent has been moved" in str(w.message)
         ]

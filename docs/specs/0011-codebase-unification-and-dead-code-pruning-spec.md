@@ -187,6 +187,7 @@ def _resolve_workflow(self, workflow_name: str) -> WorkflowDefinition:
     """Resolve workflow definition from registry, auto-registering defaults if empty."""
     if len(self.registry) == 0:
         from app.rag.workflows import register_default_workflows
+
         register_default_workflows(self.registry)
 
     try:
@@ -340,10 +341,12 @@ def clean_registry():
 @pytest.fixture
 def register_mock_workflow(clean_registry: WorkflowRegistry) -> Callable[..., MockWorkflowDefinition]:
     """Helper fixture to create and register a MockWorkflowDefinition into clean_registry."""
+
     def _register(workflow_id: str, **kwargs: Any) -> MockWorkflowDefinition:
         wf = MockWorkflowDefinition(id=workflow_id, **kwargs)
         clean_registry.register(wf, override=True)
         return wf
+
     return _register
 ```
 

@@ -1,7 +1,7 @@
 # Ticket 03: SQLite Adapter Transactional Append & SQL-Level Index Resolution
 
 - **Milestone:** Deepen Conversation Memory Seam (ADR-0017)
-- **Status:** ready-for-agent
+- **Status:** closed
 - **Blocked by:** Ticket 01 (Protocol Seam Deepening & No-Op Adapter)
 - **Estimated Scope:** Medium
 
@@ -52,7 +52,7 @@ Implement `aappend_turn` and bounded queries in `SQLiteConversationStore` (`app/
 ---
 
 ## Acceptance Criteria
-- [ ] `aappend_turn` executes rewind deletion and new turn insertion within a single atomic SQLite transaction.
-- [ ] Non-rewind appends calculate `turn_index` via SQL `MAX(turn_index) + 1` with zero JSON deserialization.
-- [ ] `aget_turns` and `aget_messages` filter `turn_index < before_turn_index` in SQL.
-- [ ] All tests in `tests/rag/test_conversation_memory_sqlite.py` pass cleanly.
+- [x] `aappend_turn` executes rewind deletion and new turn insertion within a single atomic SQLite transaction.
+- [x] Non-rewind appends calculate `turn_index` via SQL `MAX(turn_index) + 1` with zero JSON deserialization.
+- [x] `aget_turns` and `aget_messages` filter `turn_index < before_turn_index` in SQL.
+- [x] All tests in `tests/rag/test_conversation_memory_sqlite.py` pass cleanly.

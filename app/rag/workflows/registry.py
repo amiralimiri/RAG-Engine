@@ -51,10 +51,7 @@ class WorkflowRegistry:
         wf_id = info.id
         with self._lock:
             if wf_id in self._workflows and not override:
-                raise ValueError(
-                    f"Workflow with id '{wf_id}' is already registered. "
-                    f"Use override=True to replace it."
-                )
+                raise ValueError(f"Workflow with id '{wf_id}' is already registered. Use override=True to replace it.")
             self._workflows[wf_id] = workflow
             logger.info("workflow_registered", workflow_id=wf_id, name=info.name)
 
@@ -136,9 +133,7 @@ class WorkflowRegistry:
             raise ValueError(f"Failed to parse manifest.json in '{bundle_dir}': {exc}") from exc
 
         if not isinstance(data, dict):
-            raise ValueError(
-                f"manifest.json in '{bundle_dir}' must contain a JSON object, got {type(data).__name__}."
-            )
+            raise ValueError(f"manifest.json in '{bundle_dir}' must contain a JSON object, got {type(data).__name__}.")
 
         entrypoint = data.get("entrypoint")
         if not entrypoint or not isinstance(entrypoint, str) or not entrypoint.strip():
@@ -275,10 +270,7 @@ class WorkflowRegistry:
         with self._lock:
             if workflow_id not in self._workflows:
                 available = self.list_ids()
-                raise KeyError(
-                    f"Workflow '{workflow_id}' not found in registry. "
-                    f"Available workflows: {available}"
-                )
+                raise KeyError(f"Workflow '{workflow_id}' not found in registry. Available workflows: {available}")
             return self._workflows[workflow_id]
 
     def list_ids(self) -> list[str]:

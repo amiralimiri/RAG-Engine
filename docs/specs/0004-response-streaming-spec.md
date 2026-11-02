@@ -184,6 +184,7 @@ Centralize schemas in `app/api/schemas.py`:
 ```python
 from pydantic import BaseModel, Field
 
+
 class ChatRequest(BaseModel):
     question: str = Field(..., min_length=2, max_length=3000)
     workflow: str = "fix_single_jev"
@@ -191,6 +192,7 @@ class ChatRequest(BaseModel):
     user_id: str | None = None
     trace_id: str | None = None
     stream_steps: bool = Field(default=True, description="Whether to emit intermediate graph step events")
+
 
 class ChatResponse(BaseModel):
     workflow: str
@@ -210,18 +212,21 @@ To prevent blocking the event loop and allow fine-grained token streaming via `a
 # Whitelisted generation node names:
 GENERATION_NODES = {"generate_from_kb", "generate_from_web", "direct_answer"}
 
+
 async def generate_from_kb(state: AgentState):
     structlog.contextvars.bind_contextvars(step="generate_from_kb")
-    context = "\n\n".join(f"[Source: {d.metadata.get('source','unknown')}]\n{d.page_content}" for d in state["kb_docs"])
+    context = "\n\n".join(
+        f"[Source: {d.metadata.get('source', 'unknown')}]\n{d.page_content}" for d in state["kb_docs"]
+    )
     prompt = f"""
 You are an enterprise IT support copilot. Answer ONLY from the private company KB below.
 Be concise, actionable, and safe. If steps are present, present them clearly.
 Do not invent policy details. Mention that the answer is based on the company's private knowledge base.
-Question: {state['question']}\n\nPrivate KB:\n{context}
+Question: {state["question"]}\n\nPrivate KB:\n{context}
 """
     response = await llm().ainvoke(prompt)
     answer = response.content if hasattr(response, "content") else str(response)
-    
+
     citations = []
     seen = set()
     for d in state["kb_docs"]:
@@ -229,7 +234,7 @@ Question: {state['question']}\n\nPrivate KB:\n{context}
         if src not in seen:
             seen.add(src)
             citations.append({"title": src.split("/")[-1], "url": "", "type": "private_kb"})
-            
+
     return {
         "answer": answer,
         "source_used": "private_kb",
@@ -237,12 +242,13 @@ Question: {state['question']}\n\nPrivate KB:\n{context}
         "trace": ["Answer generation → PRIVATE KB"],
     }
 
+
 async def generate_from_web(state: AgentState):
     structlog.contextvars.bind_contextvars(step="generate_from_web")
     prompt = f"""
 You are an enterprise IT support copilot. The private company KB was insufficient.
 Answer ONLY from the web evidence below. Clearly say this is external web information and may need IT validation before changing company-managed systems.
-Question: {state['question']}\n\nWeb evidence:\n{state['web_results']}
+Question: {state["question"]}\n\nWeb evidence:\n{state["web_results"]}
 """
     response = await llm().ainvoke(prompt)
     answer = response.content if hasattr(response, "content") else str(response)
@@ -251,6 +257,7 @@ Question: {state['question']}\n\nWeb evidence:\n{state['web_results']}
         "source_used": "web_search",
         "trace": ["Answer generation → WEB SEARCH"],
     }
+
 
 async def direct_answer(state: AgentState):
     structlog.contextvars.bind_contextvars(step="direct_answer")
@@ -276,8 +283,10 @@ from fastapi.responses import StreamingResponse
 
 GENERATION_NODES = {"generate_from_kb", "generate_from_web", "direct_answer"}
 
+
 def format_sse(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
 
 async def chat_event_generator(
     graph,
@@ -287,7 +296,7 @@ async def chat_event_generator(
     question: str,
     trace_id: str | None,
     stream_steps: bool = True,
-    callback = None,
+    callback=None,
 ) -> AsyncGenerator[str, None]:
     accumulated_trace = []
     final_output = {}
@@ -300,11 +309,14 @@ async def chat_event_generator(
 
             # 1. Step transitions
             if stream_steps and ev_type == "on_chain_start" and node_name in STEP_LABELS:
-                yield format_sse("step", {
-                    "step": node_name,
-                    "label": STEP_LABELS[node_name],
-                    "timestamp": asyncio.get_event_loop().time(),
-                })
+                yield format_sse(
+                    "step",
+                    {
+                        "step": node_name,
+                        "label": STEP_LABELS[node_name],
+                        "timestamp": asyncio.get_event_loop().time(),
+                    },
+                )
 
             # 2. Whitelisted Token Delta Streaming (Strictly isolated from routers and graders)
             elif ev_type == "on_chat_model_stream" and node_name in GENERATION_NODES:
@@ -324,14 +336,17 @@ async def chat_event_generator(
 
         # 4. Terminal Metadata Event
         resolved_tid = extract_trace_id(callback) or trace_id
-        yield format_sse("metadata", {
-            "trace_id": resolved_tid,
-            "workflow": workflow,
-            "source_used": final_output.get("source_used", "direct"),
-            "citations": final_output.get("citations", []),
-            "trace": accumulated_trace or final_output.get("trace", []),
-            "rewritten_query": final_output.get("current_query", question),
-        })
+        yield format_sse(
+            "metadata",
+            {
+                "trace_id": resolved_tid,
+                "workflow": workflow,
+                "source_used": final_output.get("source_used", "direct"),
+                "citations": final_output.get("citations", []),
+                "trace": accumulated_trace or final_output.get("trace", []),
+                "rewritten_query": final_output.get("current_query", question),
+            },
+        )
 
         # Finalize successful audit record
         write_audit(
@@ -581,6 +596,7 @@ import httpx
 from fastapi.testclient import TestClient
 from app.main import app
 
+
 @pytest.mark.asyncio
 async def test_chat_stream_protocol_and_token_isolation():
     """Verify SSE event stream returns correct event sequence and strictly isolates generation tokens."""
@@ -593,25 +609,27 @@ async def test_chat_stream_protocol_and_token_isolation():
         async with ac.stream("POST", "/api/chat/stream", json=payload) as response:
             assert response.status_code == 200
             assert "text/event-stream" in response.headers["content-type"]
-            
+
             events = []
             async for line in response.aiter_lines():
                 if line.startswith("event:"):
                     events.append(line.split("event:")[1].strip())
-            
+
             # Assert proper taxonomy sequence
             assert "step" in events
             assert "token" in events
             assert "metadata" in events
-            
+
             # Ensure no raw JSON router/grader brackets are leaked as single-chunk tokens
             # (e.g., {"route":"kb"})
+
 
 @pytest.mark.asyncio
 async def test_chat_stream_client_cancellation_audit():
     """Verify that disconnecting mid-stream triggers CancelledError and records audit row."""
     # Connect and break loop after receiving 1st token chunk, then verify audit database
     ...
+
 
 def test_chat_sync_backward_compatibility():
     """Verify legacy POST /api/chat remains 100% operational with identical payload."""

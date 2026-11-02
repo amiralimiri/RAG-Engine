@@ -371,6 +371,7 @@ async def test_sqlite_list_sessions(sqlite_store: SQLiteConversationStore) -> No
 @pytest.mark.asyncio
 async def test_sqlite_concurrent_access(sqlite_store: SQLiteConversationStore) -> None:
     """Validate thread-safe concurrent saves and retrievals across multiple sessions."""
+
     async def worker(worker_id: int) -> None:
         session_id = f"session-worker-{worker_id}"
         for turn_idx in range(5):
@@ -425,3 +426,157 @@ async def test_sqlite_factory_resolution(tmp_path: Path) -> None:
     assert len(loaded) == 1
     assert loaded[0].user_query == "Testing factory adapter"
     assert db_file.exists()
+
+
+@pytest.mark.asyncio
+async def test_sqlite_append_turn_monotonic_indexing(sqlite_store: SQLiteConversationStore) -> None:
+    """Validate that sequential aappend_turn calls assign monotonic indices (0, 1, 2)."""
+    session_id = "session-append-monotonic"
+    turn_0 = await sqlite_store.aappend_turn(
+        session_id,
+        "Query 0",
+        "Answer 0",
+        attachments=[{"type": "doc", "id": "1"}],
+        citations=[{"source": "test.txt"}],
+        source_used="vectorstore",
+        trace_id="tr-0",
+    )
+    turn_1 = await sqlite_store.aappend_turn(session_id, "Query 1", "Answer 1")
+    turn_2 = await sqlite_store.aappend_turn(session_id, "Query 2", "Answer 2")
+
+    assert turn_0.turn_index == 0
+    assert turn_0.user_query == "Query 0"
+    assert turn_0.attachments == [{"type": "doc", "id": "1"}]
+    assert turn_0.citations == [{"source": "test.txt"}]
+    assert turn_0.source_used == "vectorstore"
+    assert turn_0.trace_id == "tr-0"
+    assert turn_1.turn_index == 1
+    assert turn_2.turn_index == 2
+
+    turns = await sqlite_store.aget_turns(session_id)
+    assert len(turns) == 3
+    assert [t.turn_index for t in turns] == [0, 1, 2]
+
+    session = await sqlite_store.aget_session(session_id)
+    assert session is not None
+    assert session.turn_count == 3
+    assert session.title == "Query 0"
+
+
+@pytest.mark.asyncio
+async def test_sqlite_append_turn_rewind_truncation(sqlite_store: SQLiteConversationStore) -> None:
+    """Validate that aappend_turn with rewind_turn_index atomically prunes subsequent turns and saves at rewind index."""
+    session_id = "session-rewind-append"
+    await sqlite_store.aappend_turn(session_id, "Q0", "A0")
+    await sqlite_store.aappend_turn(session_id, "Q1", "A1")
+    await sqlite_store.aappend_turn(session_id, "Q2", "A2")
+
+    turns = await sqlite_store.aget_turns(session_id)
+    assert len(turns) == 3
+
+    rewound_turn = await sqlite_store.aappend_turn(
+        session_id,
+        "Q1 Replacement",
+        "A1 Replacement",
+        rewind_turn_index=1,
+    )
+    assert rewound_turn.turn_index == 1
+    assert rewound_turn.user_query == "Q1 Replacement"
+
+    turns_after = await sqlite_store.aget_turns(session_id)
+    assert len(turns_after) == 2
+    assert [t.turn_index for t in turns_after] == [0, 1]
+    assert turns_after[1].user_query == "Q1 Replacement"
+    assert turns_after[1].assistant_answer == "A1 Replacement"
+
+    session = await sqlite_store.aget_session(session_id)
+    assert session is not None
+    assert session.turn_count == 2
+
+
+@pytest.mark.asyncio
+async def test_sqlite_bounded_queries_with_before_turn_index(sqlite_store: SQLiteConversationStore) -> None:
+    """Validate that aget_turns and aget_messages filter turn_index < before_turn_index with limit."""
+    session_id = "session-bounded-before"
+    for i in range(4):
+        await sqlite_store.aappend_turn(session_id, f"Query {i}", f"Answer {i}")
+
+    # before_turn_index=2 and limit=1 should return only turn index 1
+    turns = await sqlite_store.aget_turns(session_id, limit=1, before_turn_index=2)
+    assert len(turns) == 1
+    assert turns[0].turn_index == 1
+    assert turns[0].user_query == "Query 1"
+
+    messages = await sqlite_store.aget_messages(session_id, limit=1, before_turn_index=2)
+    assert len(messages) == 2
+    assert messages[0].content == "Query 1"
+    assert messages[1].content == "Answer 1"
+
+    # before_turn_index=2 with limit=None returns turns 0 and 1
+    turns_all_before = await sqlite_store.aget_turns(session_id, before_turn_index=2)
+    assert len(turns_all_before) == 2
+    assert [t.turn_index for t in turns_all_before] == [0, 1]
+
+
+@pytest.mark.asyncio
+async def test_sqlite_concurrent_append_turn(sqlite_store: SQLiteConversationStore) -> None:
+    """Validate thread-safe concurrent appends to the same session without turn_index collision."""
+    session_id = "session-concurrent-append"
+    num_concurrent = 10
+
+    async def append_worker(idx: int) -> ConversationTurn:
+        return await sqlite_store.aappend_turn(
+            session_id,
+            f"Concurrent query {idx}",
+            f"Concurrent answer {idx}",
+        )
+
+    results = await asyncio.gather(*(append_worker(i) for i in range(num_concurrent)))
+    indices = sorted([turn.turn_index for turn in results])
+    assert indices == list(range(num_concurrent))
+
+    turns = await sqlite_store.aget_turns(session_id)
+    assert len(turns) == num_concurrent
+    assert [t.turn_index for t in turns] == list(range(num_concurrent))
+
+    session = await sqlite_store.aget_session(session_id)
+    assert session is not None
+    assert session.turn_count == num_concurrent
+
+
+@pytest.mark.asyncio
+async def test_sqlite_append_turn_rollback_on_failure(sqlite_store: SQLiteConversationStore) -> None:
+    """Validate atomic rollback: if insert fails during rewind append, previous turns are not permanently lost."""
+    session_id = "session-rollback"
+    await sqlite_store.aappend_turn(session_id, "Q0", "A0")
+    await sqlite_store.aappend_turn(session_id, "Q1", "A1")
+    await sqlite_store.aappend_turn(session_id, "Q2", "A2")
+
+    turns = await sqlite_store.aget_turns(session_id)
+    assert len(turns) == 3
+
+    # Install an abort trigger to simulate a write failure specifically during turn insertion
+    with sqlite_store._connection() as conn:
+        with conn:
+            conn.execute(
+                """
+                CREATE TRIGGER fail_turn_insert BEFORE INSERT ON conversation_turns
+                WHEN NEW.user_query = 'Simulated Fail'
+                BEGIN
+                    SELECT RAISE(ABORT, 'Simulated disk error during insert');
+                END;
+                """
+            )
+
+    with pytest.raises(sqlite3.DatabaseError, match="Simulated disk error during insert"):
+        await sqlite_store.aappend_turn(
+            session_id,
+            "Simulated Fail",
+            "Simulated Fail Answer",
+            rewind_turn_index=1,
+        )
+
+    # After rollback, original turns (0, 1, 2) must still exist intact!
+    turns_after = await sqlite_store.aget_turns(session_id)
+    assert len(turns_after) == 3
+    assert [t.turn_index for t in turns_after] == [0, 1, 2]

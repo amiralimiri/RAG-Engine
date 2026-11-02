@@ -7,9 +7,7 @@ DEFAULT_SYSTEM_PROMPT = (
     "Provide clear, evidence-based answers based on the retrieved contexts."
 )
 
-CONCISE_SYSTEM_PROMPT = (
-    "You are an executive summary assistant. Answer concisely in 2 sentences maximum."
-)
+CONCISE_SYSTEM_PROMPT = "You are an executive summary assistant. Answer concisely in 2 sentences maximum."
 
 PROMPT_VARIANTS: dict[str, str] = {
     "default": DEFAULT_SYSTEM_PROMPT,

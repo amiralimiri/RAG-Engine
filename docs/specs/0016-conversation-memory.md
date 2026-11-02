@@ -245,6 +245,7 @@ from app.rag.memory.sqlite import SQLiteConversationStore
 
 _MEMORY_SINGLETON: ConversationMemoryAdapter | None = None
 
+
 def get_conversation_memory() -> ConversationMemoryAdapter:
     """Resolve and return configured ConversationMemoryAdapter singleton."""
     global _MEMORY_SINGLETON
@@ -263,6 +264,7 @@ def get_conversation_memory() -> ConversationMemoryAdapter:
         _MEMORY_SINGLETON = InMemoryConversationStore()
 
     return _MEMORY_SINGLETON
+
 
 def reset_conversation_memory() -> None:
     """Reset module-level singleton (useful for test isolation)."""
@@ -297,12 +299,13 @@ Update `WorkflowRunner.__init__`:
 
 Expose property:
 ```python
-    @property
-    def memory(self) -> ConversationMemoryAdapter:
-        if self._memory is not None:
-            return self._memory
-        from app.rag.memory import get_conversation_memory
-        return get_conversation_memory()
+@property
+def memory(self) -> ConversationMemoryAdapter:
+    if self._memory is not None:
+        return self._memory
+    from app.rag.memory import get_conversation_memory
+
+    return get_conversation_memory()
 ```
 
 ### 4.2 Pre-Flight Memory Hydration (`_prepare_execution`)
@@ -425,14 +428,16 @@ In `app/rag/workflows/self_corrective.py`:
        structlog.contextvars.bind_contextvars(step="condense_query")
        history = state.get("messages", [])[:-1]
        current_question = state["question"]
-       
+
        prompt_obj = get_workflow_prompt("rag:condense_query")
        # Fallback template if prompt CMS is empty:
        # "Given the following conversation and a follow up question, rephrase the follow up question to be a standalone search query.\nChat History: {chat_history}\nFollow Up: {question}\nStandalone question:"
        run_cfg = _build_prompt_config(prompt_obj, config)
        standalone_query = await active_model.ainvoke(...)
-       cleaned_query = standalone_query.content.strip() if hasattr(standalone_query, "content") else str(standalone_query).strip()
-       
+       cleaned_query = (
+           standalone_query.content.strip() if hasattr(standalone_query, "content") else str(standalone_query).strip()
+       )
+
        return {
            "current_query": cleaned_query,
            "trace": [f"Query contextualized → '{cleaned_query}'"],
@@ -442,10 +447,14 @@ In `app/rag/workflows/self_corrective.py`:
 3. **Graph Compilation**:
    ```python
    graph.add_node("condense_query", node_condense_query)
-   graph.add_conditional_edges(START, route_start, {
-       "condense_query": "condense_query",
-       "route_question": "route_question",
-   })
+   graph.add_conditional_edges(
+       START,
+       route_start,
+       {
+           "condense_query": "condense_query",
+           "route_question": "route_question",
+       },
+   )
    graph.add_edge("condense_query", "route_question")
    ```
 
@@ -476,6 +485,7 @@ Update `ReActAgentWorkflow`:
 ```python
 class ChatTurnResponse(BaseModel):
     """Schema for a completed turn in API responses."""
+
     turn_index: int
     user_query: str
     assistant_answer: str
@@ -488,6 +498,7 @@ class ChatTurnResponse(BaseModel):
 
 class SessionDetailResponse(BaseModel):
     """Schema for session metadata and full turn history."""
+
     session_id: str
     title: str
     parent_session_id: str | None = None
@@ -500,6 +511,7 @@ class SessionDetailResponse(BaseModel):
 
 class SessionSummaryResponse(BaseModel):
     """Schema for session list entries."""
+
     session_id: str
     title: str
     parent_session_id: str | None = None
@@ -511,17 +523,20 @@ class SessionSummaryResponse(BaseModel):
 
 class SessionListResponse(BaseModel):
     """Schema for session enumeration endpoint."""
+
     sessions: list[SessionSummaryResponse]
     total: int
 
 
 class RewindRequest(BaseModel):
     """Request payload for standalone turn truncation."""
+
     turn_index: int = Field(..., ge=0, description="0-based turn index from which to truncate (inclusive)")
 
 
 class ForkRequest(BaseModel):
     """Request payload for branching a session."""
+
     upto_turn_index: int = Field(
         ...,
         ge=-1,

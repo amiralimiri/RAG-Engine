@@ -13,7 +13,7 @@ from app.rag.workflows.base import StandardWorkflowState
 
 try:
     from .prompts import CONCISE_SYSTEM_PROMPT, DEFAULT_SYSTEM_PROMPT, get_prompt_template
-except (ImportError, ValueError):
+except ImportError, ValueError:
     from prompts import (  # type: ignore[no-redef]
         CONCISE_SYSTEM_PROMPT,
         DEFAULT_SYSTEM_PROMPT,
@@ -47,13 +47,9 @@ def mock_search(state: StandardWorkflowState, config: RunnableConfig) -> dict[st
     top_k = configurable.get("top_k", 2)
     question = state.get("question", "")
 
-    contexts = [
-        f"Context chunk #{i + 1}: Verified evidence supporting research on '{question}'."
-        for i in range(top_k)
-    ]
+    contexts = [f"Context chunk #{i + 1}: Verified evidence supporting research on '{question}'." for i in range(top_k)]
     citations = [
-        {"title": f"Studio KB Document {i + 1}", "url": f"https://studio.internal/docs/{i + 1}"}
-        for i in range(top_k)
+        {"title": f"Studio KB Document {i + 1}", "url": f"https://studio.internal/docs/{i + 1}"} for i in range(top_k)
     ]
 
     trace = list(state.get("trace") or [])
@@ -78,8 +74,7 @@ def generate_response(state: StandardWorkflowState, config: RunnableConfig) -> d
     question = state.get("question") or ""
 
     answer_text = (
-        f"[{model_name}:{prompt_version}] Based on {len(contexts)} source(s): "
-        f"Synthesized response for '{question}'."
+        f"[{model_name}:{prompt_version}] Based on {len(contexts)} source(s): Synthesized response for '{question}'."
     )
 
     # Invoke fake streaming chat model to trigger LangGraph on_chat_model_stream events

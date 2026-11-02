@@ -121,42 +121,59 @@ class SQLiteConversationStore(ConversationMemoryAdapter):
             with conn:
                 conn.executescript(SCHEMA_SQL)
 
-    async def aget_messages(self, session_id: str, limit: int | None = None) -> list[BaseMessage]:
+    async def aget_messages(
+        self,
+        session_id: str,
+        limit: int | None = None,
+        before_turn_index: int | None = None,
+    ) -> list[BaseMessage]:
         """Retrieve bounded LangChain messages for LLM prompting."""
-        turns = await self.aget_turns(session_id, limit=limit)
+        turns = await self.aget_turns(session_id, limit=limit, before_turn_index=before_turn_index)
         messages: list[BaseMessage] = []
         for turn in turns:
             messages.extend(turn.to_messages())
         return messages
 
-    async def aget_turns(self, session_id: str, limit: int | None = None) -> list[ConversationTurn]:
+    async def aget_turns(
+        self,
+        session_id: str,
+        limit: int | None = None,
+        before_turn_index: int | None = None,
+    ) -> list[ConversationTurn]:
         """Retrieve rich domain turn models sorted chronologically (turn_index ASC)."""
         if limit is not None and limit <= 0:
             return []
 
         def _sync_get_turns() -> list[ConversationTurn]:
             with self._connection() as conn:
+                params: list[Any] = [session_id]
+                before_clause = ""
+                if before_turn_index is not None:
+                    before_clause = " AND turn_index < ?"
+                    params.append(before_turn_index)
+
                 if limit is not None:
                     query = f"""
                     SELECT {_TURN_COLUMNS}
                     FROM (
                         SELECT {_TURN_COLUMNS}
                         FROM conversation_turns
-                        WHERE session_id = ?
+                        WHERE session_id = ?{before_clause}
                         ORDER BY turn_index DESC
                         LIMIT ?
                     )
                     ORDER BY turn_index ASC;
                     """
-                    cursor = conn.execute(query, (session_id, limit))
+                    params.append(limit)
+                    cursor = conn.execute(query, tuple(params))
                 else:
                     query = f"""
                     SELECT {_TURN_COLUMNS}
                     FROM conversation_turns
-                    WHERE session_id = ?
+                    WHERE session_id = ?{before_clause}
                     ORDER BY turn_index ASC;
                     """
-                    cursor = conn.execute(query, (session_id,))
+                    cursor = conn.execute(query, tuple(params))
 
                 rows = cursor.fetchall()
                 turns: list[ConversationTurn] = []
@@ -164,9 +181,7 @@ class SQLiteConversationStore(ConversationMemoryAdapter):
                     attachments: list[dict[str, Any]] = (
                         json.loads(row["attachments_json"]) if row["attachments_json"] else []
                     )
-                    citations: list[dict[str, Any]] = (
-                        json.loads(row["citations_json"]) if row["citations_json"] else []
-                    )
+                    citations: list[dict[str, Any]] = json.loads(row["citations_json"]) if row["citations_json"] else []
                     turns.append(
                         ConversationTurn(
                             session_id=row["session_id"],
@@ -183,6 +198,87 @@ class SQLiteConversationStore(ConversationMemoryAdapter):
                 return turns
 
         return await run_in_threadpool(_sync_get_turns)
+
+    async def aappend_turn(
+        self,
+        session_id: str,
+        user_query: str,
+        assistant_answer: str,
+        *,
+        rewind_turn_index: int | None = None,
+        attachments: list[dict[str, Any]] | None = None,
+        citations: list[dict[str, Any]] | None = None,
+        source_used: str = "direct",
+        trace_id: str | None = None,
+    ) -> ConversationTurn:
+        """Atomically append a completed conversational turn, handling truncation on rewind."""
+        async with self._write_lock:
+
+            def _sync_append() -> ConversationTurn:
+                now_iso = datetime.now(UTC).isoformat()
+                title = user_query[:60].strip() or "Untitled Session"
+                attachments_clean = attachments or []
+                citations_clean = citations or []
+                attachments_json = json.dumps(attachments_clean) if attachments_clean else None
+                citations_json = json.dumps(citations_clean) if citations_clean else None
+
+                with self._connection() as conn:
+                    with conn:
+                        if rewind_turn_index is not None:
+                            conn.execute(
+                                "DELETE FROM conversation_turns WHERE session_id = ? AND turn_index >= ?;",
+                                (session_id, rewind_turn_index),
+                            )
+                            turn_index = rewind_turn_index
+                        else:
+                            cursor = conn.execute(
+                                "SELECT COALESCE(MAX(turn_index) + 1, 0) AS next_idx FROM conversation_turns WHERE session_id = ?;",
+                                (session_id,),
+                            )
+                            turn_index = int(cursor.fetchone()["next_idx"])
+
+                        conn.execute(
+                            """
+                            INSERT INTO conversation_sessions (session_id, title, created_at, updated_at)
+                            VALUES (?, ?, ?, ?)
+                            ON CONFLICT(session_id) DO UPDATE SET updated_at = excluded.updated_at;
+                            """,
+                            (session_id, title, now_iso, now_iso),
+                        )
+
+                        conn.execute(
+                            """
+                            INSERT INTO conversation_turns (
+                                session_id, turn_index, user_query, assistant_answer,
+                                attachments_json, citations_json, source_used, trace_id, created_at
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
+                            """,
+                            (
+                                session_id,
+                                turn_index,
+                                user_query,
+                                assistant_answer,
+                                attachments_json,
+                                citations_json,
+                                source_used,
+                                trace_id,
+                                now_iso,
+                            ),
+                        )
+
+                        return ConversationTurn(
+                            session_id=session_id,
+                            turn_index=turn_index,
+                            user_query=user_query,
+                            assistant_answer=assistant_answer,
+                            attachments=attachments_clean,
+                            citations=citations_clean,
+                            source_used=source_used,
+                            trace_id=trace_id,
+                            created_at=_parse_iso_datetime(now_iso),
+                        )
+
+            return await run_in_threadpool(_sync_append)
 
     async def asave_turn(self, turn: ConversationTurn) -> None:
         """Persist or upsert a completed conversational turn."""

@@ -47,9 +47,7 @@ def _is_sensitive_key(key: Any) -> bool:
     return bool(SENSITIVE_KEY_PATTERNS.search(key_str))
 
 
-def _scrub_value(
-    value: Any, depth: int = 0, max_depth: int = 10, seen: set[int] | None = None
-) -> Any:
+def _scrub_value(value: Any, depth: int = 0, max_depth: int = 10, seen: set[int] | None = None) -> Any:
     """Recursively scrub strings, mappings, and sequences with bounded recursion depth."""
     if depth >= max_depth:
         return value
@@ -70,11 +68,7 @@ def _scrub_value(
 
     if isinstance(value, Mapping):
         return {
-            k: (
-                REDACTED_STR
-                if _is_sensitive_key(k)
-                else _scrub_value(v, depth + 1, max_depth, seen)
-            )
+            k: (REDACTED_STR if _is_sensitive_key(k) else _scrub_value(v, depth + 1, max_depth, seen))
             for k, v in value.items()
         }
 
@@ -100,9 +94,7 @@ def _scrub_value(
     return value
 
 
-def scrub_sensitive_data(
-    logger: WrappedLogger, method_name: str, event_dict: EventDict
-) -> EventDict:
+def scrub_sensitive_data(logger: WrappedLogger, method_name: str, event_dict: EventDict) -> EventDict:
     """Structlog processor to scrub credentials and PII from keys and string values."""
     try:
         for key, value in list(event_dict.items()):
@@ -129,9 +121,8 @@ def configure_logging() -> None:
     settings = get_settings()
     log_level = getattr(logging, settings.log_level.upper(), logging.INFO)
 
-    render_as_json = (
-        settings.log_format == "json"
-        or (settings.log_format == "auto" and settings.app_env != "development")
+    render_as_json = settings.log_format == "json" or (
+        settings.log_format == "auto" and settings.app_env != "development"
     )
 
     renderer: structlog.types.Processor

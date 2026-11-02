@@ -123,10 +123,12 @@ class ReActAgentWorkflow:
 
     def _get_default_llm(self) -> Any:
         from app.rag.engine import get_chat_model
+
         return get_chat_model()
 
     def _get_default_tools(self) -> list[BaseTool]:
         from app.rag.tools import create_retriever_tool, create_web_search_tool
+
         return [create_retriever_tool(), create_web_search_tool()]
 
     def get_compiled_graph(self, variant_id: str | None = None) -> Any:

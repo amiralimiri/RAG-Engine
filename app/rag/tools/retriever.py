@@ -57,6 +57,7 @@ def create_retriever_tool(
                 return retriever()
             return retriever
         from app.rag.knowledge import get_knowledge_store
+
         return get_knowledge_store().as_retriever()
 
     def _run(query: str, config: RunnableConfig | None = None) -> tuple[str, dict[str, Any]]:

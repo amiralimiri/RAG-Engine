@@ -10,8 +10,10 @@ from typing_extensions import TypedDict
 class RouteDecision(BaseModel):
     route: Literal["kb", "direct"] = Field(description="kb for IT/support questions; direct for greetings/simple chat")
 
+
 class EvidenceGrade(BaseModel):
     grade: Literal["good", "weak"] = Field(description="Whether evidence is sufficient to answer")
+
 
 class AgentState(TypedDict):
     question: str

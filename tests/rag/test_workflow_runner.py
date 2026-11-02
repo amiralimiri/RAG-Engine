@@ -1339,7 +1339,9 @@ async def test_finalize_execution_delegates_to_evaluator_aevaluate_in_execute():
 
     fake_eval = FakeEvaluator()
     runner = WorkflowRunner(registry=custom_registry, evaluator=fake_eval)
-    request = WorkflowInput(question="Evaluator injection test?", workflow="eval_inject_wf", trace_id="trace-eval-inject")
+    request = WorkflowInput(
+        question="Evaluator injection test?", workflow="eval_inject_wf", trace_id="trace-eval-inject"
+    )
 
     response = runner.execute(request)
     assert response.answer == "Mock Answer"
@@ -1548,6 +1550,7 @@ def test_runner_bridges_chat_request_to_workflow_input(clean_registry):
 @pytest.mark.asyncio
 async def test_runner_bridges_workflow_output_in_stream(clean_registry):
     """Verify WorkflowRunner transforms WorkflowOutput to ChatResponse metadata in stream."""
+
     class StreamPureDomainWorkflow:
         info = WorkflowInfo(
             id="stream_pure_wf",
@@ -1992,6 +1995,7 @@ def test_runner_executes_variant_cached_graph():
 @pytest.mark.asyncio
 async def test_stream_propagates_variant_id_in_terminal_metadata():
     """Verify stream delivers variant_id in final metadata SSE event."""
+
     class StreamVariantWorkflow:
         info = WorkflowInfo(
             id="stream_variant_wf",

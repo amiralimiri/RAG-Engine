@@ -115,8 +115,10 @@ logger = logging.getLogger(__name__)
 
 _langfuse_client: Optional[Langfuse] = None
 
+
 class LangfuseCallbackHandler(CallbackHandler):
     """Langfuse v5 CallbackHandler extended with workflow trace metadata and tags."""
+
     def __init__(
         self,
         *,
@@ -169,6 +171,7 @@ class LangfuseCallbackHandler(CallbackHandler):
             **kwargs,
         )
 
+
 def get_langfuse_client() -> Optional[Langfuse]:
     global _langfuse_client
     settings = get_settings()
@@ -187,6 +190,7 @@ def get_langfuse_client() -> Optional[Langfuse]:
             logger.warning(f"Failed to initialize Langfuse client: {exc}")
             return None
     return _langfuse_client
+
 
 def get_langfuse_callback(
     workflow_name: str,
@@ -230,6 +234,7 @@ def get_langfuse_callback(
         logger.warning(f"Failed to create Langfuse callback handler: {exc}")
         return None
 
+
 def extract_trace_id(handler: Optional[CallbackHandler]) -> Optional[str]:
     if handler is None:
         return None
@@ -248,6 +253,7 @@ def extract_trace_id(handler: Optional[CallbackHandler]) -> Optional[str]:
     except Exception as exc:
         logger.debug(f"Unable to extract trace_id from handler: {exc}")
     return None
+
 
 def flush_telemetry() -> None:
     client = get_langfuse_client()
@@ -409,6 +415,7 @@ class ChatRequest(BaseModel):
     session_id: str | None = None
     user_id: str | None = None
 
+
 class FeedbackRequest(BaseModel):
     trace_id: str = Field(..., min_length=1, description="Langfuse Trace ID")
     score: float = Field(..., ge=0.0, le=1.0, description="Score normalized from 0.0 to 1.0")
@@ -488,6 +495,7 @@ def _submit_feedback_task(trace_id: str, score: float, name: str, comment: str |
         except Exception as exc:
             logger.warning(f"Failed to submit score to Langfuse: {exc}")
 
+
 @router.post("/feedback")
 def feedback(payload: FeedbackRequest, background_tasks: BackgroundTasks):
     background_tasks.add_task(
@@ -512,6 +520,7 @@ from app.core.telemetry import get_langfuse_client
 from evaluation.judge import judge
 
 logger = logging.getLogger(__name__)
+
 
 def score_trace_faithfulness(
     trace_id: str,
@@ -557,6 +566,7 @@ Use FastAPI's async lifespan context manager to guarantee clean initialization a
 from contextlib import asynccontextmanager
 from app.core.telemetry import flush_telemetry
 
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
@@ -565,6 +575,7 @@ async def lifespan(app: FastAPI):
     yield
     # Shutdown
     flush_telemetry()
+
 
 app = FastAPI(title=settings.app_name, version="1.0.0", lifespan=lifespan)
 ```

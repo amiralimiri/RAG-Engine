@@ -198,9 +198,7 @@ async def test_aindex_batch_empty_list():
     assert await indexer.aindex_batch([]) == []
 
 
-def test_unhandled_parsing_errors_captured_without_crashing_batch(
-    sample_docs: dict[str, Path], tmp_path: Path
-):
+def test_unhandled_parsing_errors_captured_without_crashing_batch(sample_docs: dict[str, Path], tmp_path: Path):
     """Assert unhandled parsing errors return success=False and captured error message without crashing batch."""
     store = InMemoryVectorStoreAdapter()
     indexer = DocumentIndexer(store=store, batch_size=2)
@@ -237,9 +235,7 @@ def test_unhandled_parsing_errors_captured_without_crashing_batch(
 
 
 @pytest.mark.asyncio
-async def test_aindex_batch_error_resilience(
-    sample_docs: dict[str, Path], tmp_path: Path
-):
+async def test_aindex_batch_error_resilience(sample_docs: dict[str, Path], tmp_path: Path):
     """Assert aindex_batch handles individual file errors gracefully in concurrent slices."""
     store = InMemoryVectorStoreAdapter()
     indexer = DocumentIndexer(store=store, batch_size=2)

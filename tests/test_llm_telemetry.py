@@ -12,13 +12,15 @@ def runner_and_mock_graph():
     """Fixture providing a WorkflowRunner with fix_single_llm graph mocked."""
     registry = get_workflow_registry()
     wf_def = registry.get("fix_single_llm")
-    mock_invoke = MagicMock(return_value={
-        "answer": "mock answer",
-        "source_used": "direct",
-        "trace": [],
-        "citations": [],
-        "retrieved_contexts": [],
-    })
+    mock_invoke = MagicMock(
+        return_value={
+            "answer": "mock answer",
+            "source_used": "direct",
+            "trace": [],
+            "citations": [],
+            "retrieved_contexts": [],
+        }
+    )
     mock_graph = MagicMock()
     mock_graph.invoke = mock_invoke
     wf_def._compiled_graph = mock_graph

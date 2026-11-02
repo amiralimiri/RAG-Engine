@@ -125,9 +125,7 @@ class InMemoryConversationStore(ConversationMemoryAdapter):
                 )
             else:
                 existing_session = self._sessions[session_id]
-                self._sessions[session_id] = existing_session.model_copy(
-                    update={"updated_at": now}
-                )
+                self._sessions[session_id] = existing_session.model_copy(update={"updated_at": now})
 
             turns = self._turns.setdefault(session_id, [])
             replaced = False
@@ -141,9 +139,7 @@ class InMemoryConversationStore(ConversationMemoryAdapter):
                 turns.append(turn)
                 turns.sort(key=lambda t: t.turn_index)
 
-            self._sessions[session_id] = self._sessions[session_id].model_copy(
-                update={"turn_count": len(turns)}
-            )
+            self._sessions[session_id] = self._sessions[session_id].model_copy(update={"turn_count": len(turns)})
 
     async def aclear(self, session_id: str) -> None:
         """Delete all turns and session metadata for a session."""
@@ -156,9 +152,7 @@ class InMemoryConversationStore(ConversationMemoryAdapter):
         with self._lock:
             if session_id not in self._turns:
                 return
-            self._turns[session_id] = [
-                turn for turn in self._turns[session_id] if turn.turn_index < turn_index
-            ]
+            self._turns[session_id] = [turn for turn in self._turns[session_id] if turn.turn_index < turn_index]
             if session_id in self._sessions:
                 self._sessions[session_id] = self._sessions[session_id].model_copy(
                     update={

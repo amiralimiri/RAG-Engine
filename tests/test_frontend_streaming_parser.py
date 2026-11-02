@@ -98,4 +98,3 @@ def test_node_ticket6_streaming_ui_js_verification_suite():
 
     assert result.returncode == 0, f"Node test suite failed with code {result.returncode}:\n{result.stderr}"
     assert "ALL 8 TICKET 6 STREAMING UI VERIFICATION CHECKS PASSED" in result.stdout
-

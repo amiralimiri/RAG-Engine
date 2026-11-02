@@ -83,16 +83,15 @@ Deepen the `ConversationMemoryAdapter` protocol seam and its concrete implementa
       session_id: str,
       limit: int | None = None,
       before_turn_index: int | None = None,
-  ) -> list[BaseMessage]:
-      ...
+  ) -> list[BaseMessage]: ...
+
 
   async def aget_turns(
       self,
       session_id: str,
       limit: int | None = None,
       before_turn_index: int | None = None,
-  ) -> list[ConversationTurn]:
-      ...
+  ) -> list[ConversationTurn]: ...
   ```
 - Retain `asave_turn(turn: ConversationTurn) -> None` on the protocol seam.
 - Retain `atruncate_from(session_id: str, turn_index: int) -> None` on the protocol seam.

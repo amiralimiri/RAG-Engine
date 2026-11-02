@@ -77,10 +77,15 @@ def create_web_search_tool(
 
     def _get_active_client():
         if search_client is not None:
-            if callable(search_client) and not hasattr(search_client, "invoke") and not hasattr(search_client, "ainvoke"):
+            if (
+                callable(search_client)
+                and not hasattr(search_client, "invoke")
+                and not hasattr(search_client, "ainvoke")
+            ):
                 return search_client()
             return search_client
         from langchain_tavily import TavilySearch
+
         settings = get_settings()
         api_key = settings.tavily_api_key.get_secret_value() if settings.tavily_api_key else ""
         return TavilySearch(

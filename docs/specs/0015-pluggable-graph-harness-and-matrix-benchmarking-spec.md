@@ -57,6 +57,7 @@ class WorkflowInput(BaseModel):
     variant_id: str | None = None
     parameters: dict[str, Any] = Field(default_factory=dict)
 
+
 class WorkflowOutput(BaseModel):
     workflow: str
     answer: str

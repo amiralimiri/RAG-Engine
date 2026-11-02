@@ -257,7 +257,8 @@ class TestPromptCMSWiringAcrossJEVNodes:
             current_query="VPN broken",
         )
         rewrite_calls = [
-            c for c in mock_llm.ainvoke.call_args_list
+            c
+            for c in mock_llm.ainvoke.call_args_list
             if c[1].get("config", {}).get("metadata", {}).get("langfuse_prompt") == mock_rewrite_prompt
         ]
         assert len(rewrite_calls) >= 1

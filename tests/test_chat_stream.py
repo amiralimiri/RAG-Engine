@@ -47,9 +47,9 @@ def parse_sse_lines(lines: list[str]) -> list[dict[str, Any]]:
 
     for line in lines:
         if line.startswith("event:"):
-            current_event = line[len("event:"):].strip()
+            current_event = line[len("event:") :].strip()
         elif line.startswith("data:"):
-            current_data.append(line[len("data:"):].strip())
+            current_data.append(line[len("data:") :].strip())
         elif line == "" and current_event is not None:
             raw = "\n".join(current_data)
             try:
@@ -133,6 +133,7 @@ class DisconnectableASGITransport(httpx.AsyncBaseTransport):
 
         async def run_app():
             try:
+
                 async def send(msg):
                     nonlocal status_code, headers
                     if msg["type"] == "http.response.start":
@@ -183,7 +184,9 @@ def mock_telemetry_defaults(monkeypatch):
     """Prevent real network telemetry calls during tests."""
     mock_handler = get_mock_handler()
     monkeypatch.setattr("app.rag.workflows.runner.get_langfuse_callback", lambda **kwargs: mock_handler)
-    monkeypatch.setattr("app.rag.workflows.runner.extract_trace_id", lambda handler: getattr(handler, "last_trace_id", "trace-default"))
+    monkeypatch.setattr(
+        "app.rag.workflows.runner.extract_trace_id", lambda handler: getattr(handler, "last_trace_id", "trace-default")
+    )
     monkeypatch.setattr("app.rag.workflows.runner.flush_telemetry", lambda: None)
     get_workflow_runner().eval_task_fn = AsyncMock()
     monkeypatch.setattr("app.services.prompts.get_langfuse_client", lambda: None)
@@ -238,9 +241,18 @@ class TestBoundaryValidation:
 
     def test_missing_workflow_key_defaults_to_fix_single_jev(self, client, monkeypatch, register_mock_workflow):
         """Missing workflow defaults to fix_single_jev without 422 error."""
+
         async def dummy_events(*args, **kwargs):
-            yield {"event": "on_chat_model_stream", "metadata": {"langgraph_node": "direct_answer"}, "data": {"chunk": {"content": "ok"}}}
-            yield {"event": "on_chain_end", "metadata": {"langgraph_node": "direct_answer"}, "data": {"output": {"source_used": "direct"}}}
+            yield {
+                "event": "on_chat_model_stream",
+                "metadata": {"langgraph_node": "direct_answer"},
+                "data": {"chunk": {"content": "ok"}},
+            }
+            yield {
+                "event": "on_chain_end",
+                "metadata": {"langgraph_node": "direct_answer"},
+                "data": {"output": {"source_used": "direct"}},
+            }
 
         mock_graph = MagicMock()
         mock_graph.astream_events = dummy_events
@@ -264,8 +276,13 @@ class TestHeadersAndContentType:
 
     def test_streaming_headers(self, client, monkeypatch, register_mock_workflow):
         """Valid request returns HTTP 200 with text/event-stream, no-cache, and X-Accel-Buffering: no."""
+
         async def dummy_events(*args, **kwargs):
-            yield {"event": "on_chain_end", "metadata": {"langgraph_node": "direct_answer"}, "data": {"output": {"source_used": "direct"}}}
+            yield {
+                "event": "on_chain_end",
+                "metadata": {"langgraph_node": "direct_answer"},
+                "data": {"output": {"source_used": "direct"}},
+            }
 
         mock_graph = MagicMock()
         mock_graph.astream_events = dummy_events
@@ -296,10 +313,32 @@ class TestWireEventSequence:
         """Simulate realistic sequence of LangGraph astream_events v2."""
         yield {"event": "on_chain_start", "metadata": {"langgraph_node": "route_question"}, "data": {}}
         yield {"event": "on_chain_start", "metadata": {"langgraph_node": "retrieve_kb"}, "data": {}}
-        yield {"event": "on_chain_end", "metadata": {"langgraph_node": "retrieve_kb"}, "data": {"output": {"trace": ["route_question", "retrieve_kb"]}}}
-        yield {"event": "on_chat_model_stream", "metadata": {"langgraph_node": "direct_answer"}, "data": {"chunk": {"content": "Hello"}}}
-        yield {"event": "on_chat_model_stream", "metadata": {"langgraph_node": "direct_answer"}, "data": {"chunk": {"content": " world!\n\nHere is code:\n  return 42"}}}
-        yield {"event": "on_chain_end", "metadata": {"langgraph_node": "direct_answer"}, "data": {"output": {"source_used": "direct", "citations": [{"title": "guide.md"}], "current_query": "rewritten query"}}}
+        yield {
+            "event": "on_chain_end",
+            "metadata": {"langgraph_node": "retrieve_kb"},
+            "data": {"output": {"trace": ["route_question", "retrieve_kb"]}},
+        }
+        yield {
+            "event": "on_chat_model_stream",
+            "metadata": {"langgraph_node": "direct_answer"},
+            "data": {"chunk": {"content": "Hello"}},
+        }
+        yield {
+            "event": "on_chat_model_stream",
+            "metadata": {"langgraph_node": "direct_answer"},
+            "data": {"chunk": {"content": " world!\n\nHere is code:\n  return 42"}},
+        }
+        yield {
+            "event": "on_chain_end",
+            "metadata": {"langgraph_node": "direct_answer"},
+            "data": {
+                "output": {
+                    "source_used": "direct",
+                    "citations": [{"title": "guide.md"}],
+                    "current_query": "rewritten query",
+                }
+            },
+        }
 
     async def test_event_sequence_and_payloads(self, monkeypatch, register_mock_workflow):
         """Verify step, token, and metadata events are formatted as valid JSON data blocks."""
@@ -311,9 +350,7 @@ class TestWireEventSequence:
         mock_graph.astream_events = self._mock_astream_events
         register_mock_workflow("fix_single_llm", graph=mock_graph)
 
-        async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url="http://test"
-        ) as ac:
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as ac:
             async with ac.stream(
                 "POST",
                 "/api/chat/stream",
@@ -415,9 +452,7 @@ class TestWireEventSequence:
         mock_graph.astream_events = mock_events
         register_mock_workflow("fix_single_llm", graph=mock_graph)
 
-        async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url="http://test"
-        ) as ac:
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as ac:
             async with ac.stream(
                 "POST",
                 "/api/chat/stream",
@@ -435,6 +470,7 @@ class TestWireEventSequence:
 
         # Ensure background task reference is cleaned up after completion
         from app.rag.workflows.runner import _background_tasks
+
         # Give event loop a cycle for task done callback
         await asyncio.sleep(0.05)
         assert len(_background_tasks) == 0
@@ -464,9 +500,7 @@ class TestWireEventSequence:
         mock_graph.astream_events = mock_insufficient_stream
         register_mock_workflow("fix_single_llm", graph=mock_graph)
 
-        async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url="http://test"
-        ) as ac:
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as ac:
             async with ac.stream(
                 "POST",
                 "/api/chat/stream",
@@ -493,19 +527,37 @@ class TestWireEventSequence:
 
         async def mock_events(*args, **kwargs):
             # Router node emits structured json chunk -> must be ignored
-            yield {"event": "on_chat_model_stream", "metadata": {"langgraph_node": "route_question"}, "data": {"chunk": {"content": '{"route": "kb"}'}}}
+            yield {
+                "event": "on_chat_model_stream",
+                "metadata": {"langgraph_node": "route_question"},
+                "data": {"chunk": {"content": '{"route": "kb"}'}},
+            }
             # Grader node emits binary score json chunk -> must be ignored
-            yield {"event": "on_chat_model_stream", "metadata": {"langgraph_node": "grade_kb"}, "data": {"chunk": {"content": '{"binary_score": "yes"}'}}}
+            yield {
+                "event": "on_chat_model_stream",
+                "metadata": {"langgraph_node": "grade_kb"},
+                "data": {"chunk": {"content": '{"binary_score": "yes"}'}},
+            }
             # Whitelisted generation node emits real token delta -> must be yielded
-            yield {"event": "on_chat_model_stream", "metadata": {"langgraph_node": "generate_from_kb"}, "data": {"chunk": {"content": "Verified knowledge base content."}}}
-            yield {"event": "on_chain_end", "metadata": {"langgraph_node": "generate_from_kb"}, "data": {"output": {"source_used": "knowledge_base"}}}
+            yield {
+                "event": "on_chat_model_stream",
+                "metadata": {"langgraph_node": "generate_from_kb"},
+                "data": {"chunk": {"content": "Verified knowledge base content."}},
+            }
+            yield {
+                "event": "on_chain_end",
+                "metadata": {"langgraph_node": "generate_from_kb"},
+                "data": {"output": {"source_used": "knowledge_base"}},
+            }
 
         mock_graph = MagicMock()
         mock_graph.astream_events = mock_events
         register_mock_workflow("fix_single_llm", graph=mock_graph)
 
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as ac:
-            async with ac.stream("POST", "/api/chat/stream", json={"question": "test isolation", "workflow": "fix_single_llm"}) as resp:
+            async with ac.stream(
+                "POST", "/api/chat/stream", json={"question": "test isolation", "workflow": "fix_single_llm"}
+            ) as resp:
                 lines = [line async for line in resp.aiter_lines()]
 
         events = parse_sse_lines(lines)
@@ -529,8 +581,16 @@ class TestStreamStepsFeatureFlag:
     async def _mock_astream_events(self, *args, **kwargs):
         yield {"event": "on_chain_start", "metadata": {"langgraph_node": "route_question"}, "data": {}}
         yield {"event": "on_chain_start", "metadata": {"langgraph_node": "retrieve_kb"}, "data": {}}
-        yield {"event": "on_chat_model_stream", "metadata": {"langgraph_node": "direct_answer"}, "data": {"chunk": {"content": "Direct reply"}}}
-        yield {"event": "on_chain_end", "metadata": {"langgraph_node": "direct_answer"}, "data": {"output": {"source_used": "direct"}}}
+        yield {
+            "event": "on_chat_model_stream",
+            "metadata": {"langgraph_node": "direct_answer"},
+            "data": {"chunk": {"content": "Direct reply"}},
+        }
+        yield {
+            "event": "on_chain_end",
+            "metadata": {"langgraph_node": "direct_answer"},
+            "data": {"output": {"source_used": "direct"}},
+        }
 
     async def test_no_step_events_when_stream_steps_false(self, monkeypatch, register_mock_workflow):
         """When stream_steps=False, no event: step frames are emitted before tokens."""
@@ -574,10 +634,18 @@ class TestClientDisconnection:
         monkeypatch.setattr("app.rag.workflows.runner.extract_trace_id", lambda handler: "trace-disc-004")
 
         async def mock_astream_events_long(*args, **kwargs):
-            yield {"event": "on_chat_model_stream", "metadata": {"langgraph_node": "direct_answer"}, "data": {"chunk": {"content": "First token"}}}
+            yield {
+                "event": "on_chat_model_stream",
+                "metadata": {"langgraph_node": "direct_answer"},
+                "data": {"chunk": {"content": "First token"}},
+            }
             # Simulate long wait where client drops out
             await asyncio.sleep(10.0)
-            yield {"event": "on_chain_end", "metadata": {"langgraph_node": "direct_answer"}, "data": {"output": {"source_used": "direct"}}}
+            yield {
+                "event": "on_chain_end",
+                "metadata": {"langgraph_node": "direct_answer"},
+                "data": {"output": {"source_used": "direct"}},
+            }
 
         mock_graph = MagicMock()
         mock_graph.astream_events = mock_astream_events_long
@@ -732,7 +800,11 @@ class TestMultiWorkflowStreamingE2E:
                 "data": {
                     "output": {
                         "messages": [
-                            ToolMessage(content="[Source: react_tool.pdf] Tool output", name="knowledge_base_search", tool_call_id="call_1"),
+                            ToolMessage(
+                                content="[Source: react_tool.pdf] Tool output",
+                                name="knowledge_base_search",
+                                tool_call_id="call_1",
+                            ),
                             AIMessage(content="ReAct agent reply"),
                         ]
                     }
@@ -798,7 +870,9 @@ class TestMultiWorkflowStreamingE2E:
 
         mock_handler = get_mock_handler(f"trace-react-stream-{node_name}")
         monkeypatch.setattr("app.rag.workflows.runner.get_langfuse_callback", lambda **kwargs: mock_handler)
-        monkeypatch.setattr("app.rag.workflows.runner.extract_trace_id", lambda handler: f"trace-react-stream-{node_name}")
+        monkeypatch.setattr(
+            "app.rag.workflows.runner.extract_trace_id", lambda handler: f"trace-react-stream-{node_name}"
+        )
 
         async def mock_events(*args, **kwargs):
             # Step 1: LLM node starts
@@ -808,7 +882,9 @@ class TestMultiWorkflowStreamingE2E:
             tool_chunk = AIMessageChunk(
                 content="",
                 tool_call_chunks=[
-                    ToolCallChunk(name="knowledge_base_search", args='{"query": "vpn password"}', id="call_abc", index=0)
+                    ToolCallChunk(
+                        name="knowledge_base_search", args='{"query": "vpn password"}', id="call_abc", index=0
+                    )
                 ],
             )
             yield {
@@ -825,7 +901,13 @@ class TestMultiWorkflowStreamingE2E:
                         "messages": [
                             AIMessage(
                                 content="",
-                                tool_calls=[{"name": "knowledge_base_search", "args": {"query": "vpn password"}, "id": "call_abc"}],
+                                tool_calls=[
+                                    {
+                                        "name": "knowledge_base_search",
+                                        "args": {"query": "vpn password"},
+                                        "id": "call_abc",
+                                    }
+                                ],
                             )
                         ]
                     }
@@ -1006,7 +1088,9 @@ class TestUnifiedBaseToolStreamingRegression:
 
         get_workflow_runner().eval_task_fn = fake_eval
 
-        kb_doc = Document(page_content="Official company VPN setup guide.", metadata={"source": "docs/network/vpn_setup.md"})
+        kb_doc = Document(
+            page_content="Official company VPN setup guide.", metadata={"source": "docs/network/vpn_setup.md"}
+        )
         kb_tool = MagicMock(spec=BaseTool)
         kb_tool.ainvoke = AsyncMock(
             return_value=(
@@ -1091,8 +1175,12 @@ class TestUnifiedBaseToolStreamingRegression:
             return_value=(
                 "Tavily search answer: Run apt-get install docker-ce.",
                 {
-                    "citations": [{"title": "Docker Install Docs", "url": "https://docs.docker.com/engine/install", "type": "web"}],
-                    "retrieved_contexts": ["Title: Docker Install Docs\nURL: https://docs.docker.com/engine/install\nContent: Run apt-get install docker-ce."],
+                    "citations": [
+                        {"title": "Docker Install Docs", "url": "https://docs.docker.com/engine/install", "type": "web"}
+                    ],
+                    "retrieved_contexts": [
+                        "Title: Docker Install Docs\nURL: https://docs.docker.com/engine/install\nContent: Run apt-get install docker-ce."
+                    ],
                 },
             )
         )
@@ -1137,12 +1225,16 @@ class TestUnifiedBaseToolStreamingRegression:
         meta = [e["data"] for e in events if e["event"] == "metadata"][0]
         assert meta["workflow"] == "stream_web_seam_wf"
         assert meta["source_used"] == "web_search"
-        assert meta["citations"] == [{"title": "Docker Install Docs", "url": "https://docs.docker.com/engine/install", "type": "web"}]
+        assert meta["citations"] == [
+            {"title": "Docker Install Docs", "url": "https://docs.docker.com/engine/install", "type": "web"}
+        ]
         assert any("Web fallback" in t for t in meta["trace"])
 
         # 4. Evaluation context contains web retrieved_contexts
         await asyncio.wait_for(eval_task_called.wait(), timeout=2.0)
-        assert captured_eval["retrieved_contexts"] == ["Title: Docker Install Docs\nURL: https://docs.docker.com/engine/install\nContent: Run apt-get install docker-ce."]
+        assert captured_eval["retrieved_contexts"] == [
+            "Title: Docker Install Docs\nURL: https://docs.docker.com/engine/install\nContent: Run apt-get install docker-ce."
+        ]
         assert captured_eval["source_used"] == "web_search"
 
     async def test_streaming_transparent_tool_error_propagation(self, monkeypatch):
@@ -1204,7 +1296,11 @@ class TestUnifiedBaseToolStreamingRegression:
             async with ac.stream(
                 "POST",
                 "/api/chat/stream",
-                json={"question": "Legacy adapter question", "workflow": "stream_legacy_adapter_wf", "stream_steps": True},
+                json={
+                    "question": "Legacy adapter question",
+                    "workflow": "stream_legacy_adapter_wf",
+                    "stream_steps": True,
+                },
             ) as resp:
                 assert resp.status_code == 200
                 lines = [line async for line in resp.aiter_lines()]

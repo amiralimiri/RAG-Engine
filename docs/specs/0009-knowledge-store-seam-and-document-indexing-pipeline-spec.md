@@ -79,6 +79,7 @@ Establish a unified knowledge subsystem in `app/rag/knowledge/` providing clean 
 from typing import Any, Protocol, runtime_checkable
 from langchain_core.documents import Document
 
+
 @runtime_checkable
 class VectorStoreAdapter(Protocol):
     """Protocol seam defining storage and similarity retrieval for knowledge documents."""
@@ -108,8 +109,10 @@ class VectorStoreAdapter(Protocol):
 ```python
 from pydantic import BaseModel, Field
 
+
 class IndexingResult(BaseModel):
     """Normalized outcome returned by DocumentIndexer operations."""
+
     source: str = Field(..., description="File path or source identifier")
     document_count: int = Field(default=1, description="Number of parsed parent documents")
     chunk_count: int = Field(default=0, description="Total chunks created")

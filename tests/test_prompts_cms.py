@@ -90,8 +90,10 @@ class TestGetWorkflowPrompt:
             assert "hello" in rendered
 
     def test_get_workflow_prompt_langfuse_client_none_returns_fallback(self):
-        with patch("app.services.prompts.get_settings") as mock_settings, \
-             patch("app.services.prompts.get_langfuse_client", return_value=None):
+        with (
+            patch("app.services.prompts.get_settings") as mock_settings,
+            patch("app.services.prompts.get_langfuse_client", return_value=None),
+        ):
             mock_settings.return_value.langfuse_enabled = True
             mock_settings.return_value.langfuse_prompt_cache_ttl_seconds = 300
 
@@ -105,8 +107,10 @@ class TestGetWorkflowPrompt:
         mock_client = MagicMock()
         mock_client.get_prompt.side_effect = ConnectionError("Langfuse unreachable")
 
-        with patch("app.services.prompts.get_settings") as mock_settings, \
-             patch("app.services.prompts.get_langfuse_client", return_value=mock_client):
+        with (
+            patch("app.services.prompts.get_settings") as mock_settings,
+            patch("app.services.prompts.get_langfuse_client", return_value=mock_client),
+        ):
             mock_settings.return_value.langfuse_enabled = True
             mock_settings.return_value.langfuse_prompt_cache_ttl_seconds = 300
 
@@ -123,8 +127,10 @@ class TestGetWorkflowPrompt:
         mock_langfuse_prompt.version = 4
         mock_client.get_prompt.return_value = mock_langfuse_prompt
 
-        with patch("app.services.prompts.get_settings") as mock_settings, \
-             patch("app.services.prompts.get_langfuse_client", return_value=mock_client):
+        with (
+            patch("app.services.prompts.get_settings") as mock_settings,
+            patch("app.services.prompts.get_langfuse_client", return_value=mock_client),
+        ):
             mock_settings.return_value.langfuse_enabled = True
             mock_settings.return_value.langfuse_prompt_cache_ttl_seconds = 300
 
@@ -155,6 +161,7 @@ class TestPromptAutoSeeding:
 
     def test_seed_prompt_skips_create_when_prompt_already_exists(self, monkeypatch):
         from app.services import prompts
+
         prompts._seeded_prompts.clear()
 
         mock_client = MagicMock()
@@ -181,6 +188,7 @@ class TestPromptAutoSeeding:
 
     def test_seed_prompt_calls_create_when_not_found(self, monkeypatch):
         from app.services import prompts
+
         prompts._seeded_prompts.clear()
 
         mock_client = MagicMock()
@@ -216,6 +224,7 @@ class TestPromptAutoSeeding:
 
     def test_seed_all_prompts_seeds_missing_prompts(self, monkeypatch):
         from app.services import prompts
+
         prompts._seeded_prompts.clear()
 
         mock_client = MagicMock()
@@ -234,6 +243,7 @@ class TestPromptAutoSeeding:
 
     def test_seed_all_prompts_skips_when_already_on_server(self, monkeypatch):
         from app.services import prompts
+
         prompts._seeded_prompts.clear()
 
         mock_client = MagicMock()
@@ -254,6 +264,7 @@ class TestPromptAutoSeeding:
 
     def test_get_workflow_prompt_auto_seeds_when_fallback_returned(self, monkeypatch):
         from app.services import prompts
+
         prompts._seeded_prompts.clear()
 
         mock_client = MagicMock()
@@ -285,6 +296,7 @@ class TestPromptAutoSeeding:
 
     def test_get_workflow_prompt_does_not_create_if_already_on_server(self, monkeypatch):
         from app.services import prompts
+
         prompts._seeded_prompts.clear()
 
         mock_client = MagicMock()
@@ -305,6 +317,7 @@ class TestPromptAutoSeeding:
 
     def test_get_workflow_prompt_auto_seeds_on_404_exception(self, monkeypatch):
         from app.services import prompts
+
         prompts._seeded_prompts.clear()
 
         mock_client = MagicMock()
@@ -325,4 +338,3 @@ class TestPromptAutoSeeding:
             labels=["production"],
             type="text",
         )
-

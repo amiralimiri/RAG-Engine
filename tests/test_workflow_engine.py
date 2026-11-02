@@ -77,6 +77,7 @@ def test_generation_nodes_set():
 
 def test_get_chat_model_returns_chat_openai(monkeypatch):
     from langchain_openai import ChatOpenAI
+
     model = get_chat_model()
     assert isinstance(model, ChatOpenAI)
     assert model.temperature == 0.0
@@ -182,6 +183,7 @@ def test_branch_retry_rewrite_then_kb_good(mock_llm, mock_kb_tool, mock_web_tool
 
 def test_branch_insufficient_evidence(mock_llm, mock_kb_tool, mock_web_tool, monkeypatch):
     from app.core.config import Settings
+
     monkeypatch.setattr("app.rag.engine.get_settings", lambda: Settings(max_retries=1, _env_file=None))
 
     classifier = FakeClassifierAdapter(
@@ -287,9 +289,7 @@ async def test_create_agentic_rag_graph_accepts_injected_kb_and_web_tools(mock_l
 @pytest.mark.asyncio
 async def test_create_agentic_rag_graph_injected_web_tool_fallback(mock_llm):
     custom_kb_tool = MagicMock(spec=BaseTool)
-    custom_kb_tool.ainvoke = AsyncMock(
-        return_value=("No docs", {"documents": [], "citations": []})
-    )
+    custom_kb_tool.ainvoke = AsyncMock(return_value=("No docs", {"documents": [], "citations": []}))
 
     custom_web_tool = MagicMock(spec=BaseTool)
     custom_web_tool.ainvoke = AsyncMock(
@@ -315,9 +315,7 @@ async def test_create_agentic_rag_graph_injected_web_tool_fallback(mock_llm):
     assert result["source_used"] == "web_search"
     assert result["web_results"] == "Injected web snippet"
     assert result["citations"] == [{"title": "Custom Web", "url": "https://custom.com", "type": "web"}]
-    assert result["retrieved_contexts"] == [
-        "Title: Custom Web\nURL: https://custom.com\nContent: Injected web snippet"
-    ]
+    assert result["retrieved_contexts"] == ["Title: Custom Web\nURL: https://custom.com\nContent: Injected web snippet"]
 
 
 def test_graph_nodes_are_native_async_coroutines():
@@ -327,11 +325,15 @@ def test_graph_nodes_are_native_async_coroutines():
     search_web_node = graph.nodes["search_web"]
 
     assert retrieve_kb_node.bound.func is None, "retrieve_kb must not have a sync fallback runner"
-    assert not isinstance(retrieve_kb_node.bound.afunc, functools.partial), "retrieve_kb must not be wrapped in run_in_executor"
+    assert not isinstance(retrieve_kb_node.bound.afunc, functools.partial), (
+        "retrieve_kb must not be wrapped in run_in_executor"
+    )
     assert inspect.iscoroutinefunction(retrieve_kb_node.bound.afunc), "retrieve_kb afunc must be a coroutine function"
 
     assert search_web_node.bound.func is None, "search_web must not have a sync fallback runner"
-    assert not isinstance(search_web_node.bound.afunc, functools.partial), "search_web must not be wrapped in run_in_executor"
+    assert not isinstance(search_web_node.bound.afunc, functools.partial), (
+        "search_web must not be wrapped in run_in_executor"
+    )
     assert inspect.iscoroutinefunction(search_web_node.bound.afunc), "search_web afunc must be a coroutine function"
 
 
