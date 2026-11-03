@@ -660,6 +660,14 @@ class WorkflowRunner:
         """Centralized lifecycle event dispatcher awaiting listeners with fail-open fault isolation."""
         resolved_event = event_type.lower().removeprefix("on_")
 
+        if resolved_event not in {"completed", "error", "cancelled"}:
+            logger.warning(
+                "unknown_listener_event_skipped",
+                event_type=event_type,
+                resolved_event=resolved_event,
+            )
+            return
+
         if output is not None:
             raw_contexts = getattr(output, "retrieved_contexts", None)
             if raw_contexts is None:
@@ -670,8 +678,13 @@ class WorkflowRunner:
                     if isinstance(chunk_item, str):
                         normalized.append(chunk_item)
                     elif isinstance(chunk_item, dict):
-                        content = chunk_item.get("content") or chunk_item.get("text")
-                        normalized.append(str(content) if content is not None else "")
+                        content = None
+                        for key in ("content", "text", "snippet", "page_content"):
+                            val = chunk_item.get(key)
+                            if val is not None:
+                                content = val
+                                break
+                        normalized.append(str(content) if content is not None else str(chunk_item))
                     else:
                         normalized.append(str(chunk_item))
                 output.retrieved_contexts = normalized

@@ -90,6 +90,9 @@ async def test_adispatch_listeners_normalizes_retrieved_contexts() -> None:
         retrieved_contexts=[
             {"content": "chunk from dict content"},
             {"text": "chunk from dict text"},
+            {"snippet": "chunk from dict snippet"},
+            {"page_content": "chunk from dict page_content"},
+            {"custom_meta": 123},
             "chunk string",
             12345,
         ],
@@ -102,6 +105,9 @@ async def test_adispatch_listeners_normalizes_retrieved_contexts() -> None:
     assert received_output.retrieved_contexts == [
         "chunk from dict content",
         "chunk from dict text",
+        "chunk from dict snippet",
+        "chunk from dict page_content",
+        "{'custom_meta': 123}",
         "chunk string",
         "12345",
     ]
@@ -257,3 +263,18 @@ async def test_adispatch_listeners_guards_missing_error() -> None:
 
     await runner._adispatch_listeners("error", request, error=None)
     assert len(spy.error_calls) == 0
+
+
+@pytest.mark.asyncio
+async def test_adispatch_listeners_guards_unknown_event() -> None:
+    """Verify unsupported event type logs warning and skips listener invocation."""
+    spy = SpyListener()
+    runner = WorkflowRunner(listeners=[spy])
+    request = WorkflowInput(question="Unknown event test")
+    output = WorkflowOutput(workflow="mock_wf", answer="Some answer")
+
+    await runner._adispatch_listeners("unknown_lifecycle_event", request, output=output)
+    assert len(spy.completed_calls) == 0
+    assert len(spy.error_calls) == 0
+    assert len(spy.cancelled_calls) == 0
+    assert len(spy.background_calls) == 0
