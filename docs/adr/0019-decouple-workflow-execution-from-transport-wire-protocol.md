@@ -30,9 +30,7 @@ Isolate all SSE framing, ping keepalives, and wire serialization in `SseStreamAd
 ```python
 class SseStreamAdapter:
     @classmethod
-    async def format(
-        cls, events: AsyncGenerator[WorkflowExecutionEvent, None]
-    ) -> AsyncGenerator[str, None]:
+    async def format(cls, events: AsyncGenerator[WorkflowExecutionEvent, None]) -> AsyncGenerator[str, None]:
         async for event in events:
             if isinstance(event, StepTransitionEvent):
                 yield format_sse("step", {"step": event.step})

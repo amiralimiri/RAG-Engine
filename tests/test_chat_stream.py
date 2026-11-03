@@ -1409,4 +1409,3 @@ class TestRunnerStreamWithSseStreamAdapter:
         assert err_data["code"] == 500
         assert "Connection unexpectedly severed by upstream LLM" in err_data["message"]
         assert "Connection unexpectedly severed by upstream LLM" in err_data["error"]
-
