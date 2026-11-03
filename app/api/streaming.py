@@ -23,7 +23,7 @@ def format_sse(event: str, data: dict[str, Any] | BaseModel) -> str:
         payload = data.model_dump(mode="json")
     else:
         payload = data
-    return f"event: {event}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
+    return f"event: {event}\ndata: {json.dumps(payload, ensure_ascii=False, default=str)}\n\n"
 
 
 def _serialize_citation(citation: Any) -> Any:
@@ -56,15 +56,21 @@ class SseStreamAdapter:
                     "session_id": output.session_id,
                     "workflow": output.workflow,
                     "source_used": output.source_used,
-                    "citations": [_serialize_citation(c) for c in output.citations],
+                    "citations": [_serialize_citation(c) for c in (output.citations or [])],
                     "trace": output.trace,
                     "rewritten_query": output.rewritten_query,
                     "variant_id": output.variant_id,
                 }
                 yield format_sse("metadata", metadata_payload)
             elif isinstance(event, ExecutionFailedEvent):
-                yield format_sse("error", {"error": event.error, "code": event.code})
-
+                yield format_sse(
+                    "error",
+                    {
+                        "error": event.error,
+                        "message": event.error,
+                        "code": event.code,
+                    },
+                )
 
 
 __all__ = ["SseStreamAdapter", "format_sse"]

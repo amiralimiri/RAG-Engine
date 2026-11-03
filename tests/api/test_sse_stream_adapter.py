@@ -50,9 +50,20 @@ def test_format_sse_unicode_preservation():
     assert "\\u" not in frame
 
 
+def test_format_sse_default_str_fallback():
+    """Verify format_sse uses default=str for non-standard serializable types."""
+    from datetime import UTC, datetime
+
+    now = datetime(2026, 11, 3, 12, 0, tzinfo=UTC)
+    payload = {"timestamp": now}
+    frame = format_sse("time_event", payload)
+    assert 'data: {"timestamp": "2026-11-03 12:00:00+00:00"}\n\n' in frame
+
+
 @pytest.mark.asyncio
 async def test_adapter_step_transition_event():
     """Verify StepTransitionEvent maps to 'step' SSE frame."""
+
     async def event_generator():
         yield StepTransitionEvent(step="retrieve")
 
@@ -64,6 +75,7 @@ async def test_adapter_step_transition_event():
 @pytest.mark.asyncio
 async def test_adapter_token_delta_event():
     """Verify TokenDeltaEvent maps to 'token' SSE frame."""
+
     async def event_generator():
         yield TokenDeltaEvent(delta="Hello world")
 
@@ -146,16 +158,48 @@ async def test_adapter_execution_completed_event_with_model_citations():
     ]
 
 
+@pytest.mark.asyncio
+async def test_adapter_execution_completed_event_with_none_citations():
+    """Verify execution completed event safely handles output.citations=None."""
+    output = WorkflowOutput.model_construct(
+        workflow="fix_single_jev",
+        answer="Paris is the capital.",
+        source_used="rag",
+        citations=None,
+        trace=["retrieve"],
+        rewritten_query=None,
+        trace_id="tr-123",
+        variant_id=None,
+        session_id=None,
+    )
+
+    async def event_generator():
+        yield ExecutionCompletedEvent(output=output)
+
+    frames = [frame async for frame in SseStreamAdapter.format(event_generator())]
+    assert len(frames) == 1
+    json_str = frames[0].split("data: ", 1)[1].rstrip("\n")
+    metadata = json.loads(json_str)
+    assert metadata["citations"] == []
+
 
 @pytest.mark.asyncio
 async def test_adapter_execution_failed_event():
-    """Verify ExecutionFailedEvent maps to 'error' SSE frame with error message and code."""
+    """Verify ExecutionFailedEvent maps to 'error' SSE frame with both error and message fields."""
+
     async def event_generator():
         yield ExecutionFailedEvent(error="Upstream LLM timeout", code="LLM_TIMEOUT")
 
     frames = [frame async for frame in SseStreamAdapter.format(event_generator())]
     assert len(frames) == 1
-    expected = json.dumps({"error": "Upstream LLM timeout", "code": "LLM_TIMEOUT"}, ensure_ascii=False)
+    expected = json.dumps(
+        {
+            "error": "Upstream LLM timeout",
+            "message": "Upstream LLM timeout",
+            "code": "LLM_TIMEOUT",
+        },
+        ensure_ascii=False,
+    )
     assert frames[0] == f"event: error\ndata: {expected}\n\n"
 
 
@@ -191,4 +235,3 @@ def test_app_api_package_exports():
 
     assert hasattr(api, "SseStreamAdapter")
     assert hasattr(api, "format_sse")
-
