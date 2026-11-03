@@ -11,6 +11,13 @@ from app.rag.workflows.base import (
     WorkflowInput,
     WorkflowOutput,
 )
+from app.rag.workflows.events import (
+    ExecutionCompletedEvent,
+    ExecutionFailedEvent,
+    StepTransitionEvent,
+    TokenDeltaEvent,
+    WorkflowExecutionEvent,
+)
 from app.rag.workflows.react_agent import ReActAgentWorkflow
 from app.rag.workflows.registry import (
     WorkflowRegistry,
@@ -63,6 +70,11 @@ __all__ = [
     "EvalContext",
     "WorkflowInput",
     "WorkflowOutput",
+    "StepTransitionEvent",
+    "TokenDeltaEvent",
+    "ExecutionCompletedEvent",
+    "ExecutionFailedEvent",
+    "WorkflowExecutionEvent",
     "ExecutionProfile",
     "ExecutionResult",
     "WorkflowDefinition",
