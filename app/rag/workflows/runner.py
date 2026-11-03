@@ -656,6 +656,7 @@ class WorkflowRunner:
         request: WorkflowInput,
         output: WorkflowOutput | None = None,
         error: Exception | None = None,
+        skip_background_tasks: bool = False,
     ) -> None:
         """Centralized lifecycle event dispatcher awaiting listeners with fail-open fault isolation."""
         resolved_event = event_type.lower().removeprefix("on_")
@@ -716,7 +717,7 @@ class WorkflowRunner:
                     error=str(exc),
                 )
 
-        if resolved_event == "completed" and output is not None:
+        if resolved_event == "completed" and output is not None and not skip_background_tasks:
             for listener in self.listeners:
                 try:
                     task = asyncio.create_task(listener.on_background_task(request, output))
@@ -749,9 +750,10 @@ class WorkflowRunner:
         request: WorkflowInput,
         output: WorkflowOutput | None = None,
         error: Exception | None = None,
+        skip_background_tasks: bool = False,
     ) -> None:
         """Synchronously dispatch lifecycle events via persistent background event loop."""
-        run_async_safely(self._adispatch_listeners, event_type, request, output, error)
+        run_async_safely(self._adispatch_listeners, event_type, request, output, error, skip_background_tasks)
 
     def _finalize_execution(
         self,
@@ -761,7 +763,7 @@ class WorkflowRunner:
         trace_id: str | None,
         handler: Any,
         background_tasks: BackgroundTasks | None = None,
-        persist_turn: bool = True,
+        dispatch_listeners: bool = True,
     ) -> WorkflowOutput:
         """Convert final state to domain WorkflowOutput, bind resolved trace context, and schedule online evaluation."""
         tr_extractor = self.trace_extractor
@@ -793,66 +795,13 @@ class WorkflowRunner:
             variant_id=domain_output.variant_id,
         )
 
-        if resolved_tid:
-            eval_ctx = wf_def.extract_eval_context(final_state)
-            source_used = (
-                getattr(eval_ctx, "source_used", None)
-                or (eval_ctx.get("source_used") if isinstance(eval_ctx, dict) else None)
-                or domain_output.source_used
-                or "direct"
-            )
-            retrieved_contexts = (
-                getattr(eval_ctx, "retrieved_contexts", None)
-                or (eval_ctx.get("retrieved_contexts") if isinstance(eval_ctx, dict) else None)
-                or []
-            )
-            domain_output.retrieved_contexts = retrieved_contexts
-
-            if background_tasks is not None:
-                try:
-                    background_tasks.add_task(
-                        self._safe_evaluate,
-                        trace_id=resolved_tid,
-                        question=request.question,
-                        answer=domain_output.answer,
-                        source_used=source_used,
-                        retrieved_contexts=retrieved_contexts,
-                    )
-                except Exception as exc:
-                    logger.warning(
-                        "online_evaluation_scheduling_failed",
-                        trace_id=resolved_tid,
-                        error=str(exc),
-                    )
-            else:
-                try:
-                    loop = asyncio.get_running_loop()
-                except RuntimeError:
-                    loop = None
-
-                if loop is not None and loop.is_running():
-                    try:
-                        task = loop.create_task(
-                            self._safe_evaluate(
-                                trace_id=resolved_tid,
-                                question=request.question,
-                                answer=domain_output.answer,
-                                source_used=source_used,
-                                retrieved_contexts=retrieved_contexts,
-                            )
-                        )
-                        _background_tasks.add(task)
-                        task.add_done_callback(_background_tasks.discard)
-                        self._background_tasks.add(task)
-                        task.add_done_callback(self._background_tasks.discard)
-                    except Exception as exc:
-                        logger.warning(
-                            "online_evaluation_scheduling_failed",
-                            trace_id=resolved_tid,
-                            error=str(exc),
-                        )
-                else:
-                    logger.debug("No active event loop for background evaluation scheduling")
+        eval_ctx = wf_def.extract_eval_context(final_state)
+        retrieved_contexts = (
+            getattr(eval_ctx, "retrieved_contexts", None)
+            or (eval_ctx.get("retrieved_contexts") if isinstance(eval_ctx, dict) else None)
+            or []
+        )
+        domain_output.retrieved_contexts = retrieved_contexts
 
         if handler is not None and hasattr(handler, "flush") and callable(handler.flush):
             try:
@@ -860,22 +809,30 @@ class WorkflowRunner:
             except Exception:
                 pass
 
-        if (
-            persist_turn
-            and self._memory is not None
-            and not isinstance(self._memory, NoOpMemoryStore)
-            and getattr(request, "session_id", None)
-            and domain_output.answer
-            and domain_output.answer.strip()
-        ):
+        if background_tasks is not None and resolved_tid:
             try:
-                self._persist_turn_sync(request, domain_output, resolved_tid)
+                background_tasks.add_task(
+                    self._safe_evaluate,
+                    trace_id=resolved_tid,
+                    question=request.question,
+                    answer=domain_output.answer,
+                    source_used=domain_output.source_used,
+                    retrieved_contexts=retrieved_contexts,
+                )
             except Exception as exc:
                 logger.warning(
-                    "turn_persistence_failed",
-                    session_id=getattr(request, "session_id", None),
+                    "online_evaluation_scheduling_failed",
+                    trace_id=resolved_tid,
                     error=str(exc),
                 )
+
+        if dispatch_listeners:
+            self._dispatch_listeners(
+                "completed",
+                request,
+                domain_output,
+                skip_background_tasks=(background_tasks is not None),
+            )
 
         return domain_output
 
@@ -896,24 +853,14 @@ class WorkflowRunner:
             trace_id=trace_id,
             handler=handler,
             background_tasks=background_tasks,
-            persist_turn=False,
+            dispatch_listeners=False,
         )
-        resolved_tid = domain_output.trace_id or trace_id
-        if (
-            self._memory is not None
-            and not isinstance(self._memory, NoOpMemoryStore)
-            and getattr(request, "session_id", None)
-            and domain_output.answer
-            and domain_output.answer.strip()
-        ):
-            try:
-                await self._apersist_turn(request, domain_output, resolved_tid)
-            except Exception as exc:
-                logger.warning(
-                    "turn_persistence_failed",
-                    session_id=getattr(request, "session_id", None),
-                    error=str(exc),
-                )
+        await self._adispatch_listeners(
+            "completed",
+            request,
+            domain_output,
+            skip_background_tasks=(background_tasks is not None),
+        )
         return domain_output
 
     def _execute_with_state(
@@ -947,6 +894,7 @@ class WorkflowRunner:
                 if not isinstance(final_state, dict):
                     final_state = {"answer": str(final_state)}
             except Exception as exc:
+                self._dispatch_listeners("error", request, error=exc)
                 logger.exception("Error executing workflow %s: %s", getattr(request, "workflow", "unknown"), exc)
                 final_state = wf_def.handle_error(exc, initial_state)
 
@@ -959,9 +907,11 @@ class WorkflowRunner:
                 background_tasks=background_tasks,
             )
             return response, final_state
-        except HTTPException:
+        except HTTPException as exc:
+            self._dispatch_listeners("error", request, error=exc)
             raise
         except Exception as exc:
+            self._dispatch_listeners("error", request, error=exc)
             logger.exception("Error in chat pipeline: %s", exc)
             raise HTTPException(status_code=500, detail=f"Inference error: {exc}") from exc
         finally:
@@ -1060,6 +1010,7 @@ class WorkflowRunner:
                 if not isinstance(final_state, dict):
                     final_state = {"answer": str(final_state)}
             except Exception as exc:
+                await self._adispatch_listeners("error", request, error=exc)
                 logger.exception("Error executing workflow %s: %s", getattr(request, "workflow", "unknown"), exc)
                 final_state = wf_def.handle_error(exc, initial_state)
 
@@ -1072,9 +1023,11 @@ class WorkflowRunner:
                 background_tasks=background_tasks,
             )
             return response, final_state
-        except HTTPException:
+        except HTTPException as exc:
+            await self._adispatch_listeners("error", request, error=exc)
             raise
         except Exception as exc:
+            await self._adispatch_listeners("error", request, error=exc)
             logger.exception("Error in chat pipeline: %s", exc)
             raise HTTPException(status_code=500, detail=f"Inference error: {exc}") from exc
         finally:
@@ -1275,24 +1228,8 @@ class WorkflowRunner:
                 }
             )
 
-            # Invoke on_completed lifecycle listeners (awaited before terminal event)
-            for listener in self.listeners:
-                try:
-                    await listener.on_completed(request, domain_output)
-                except Exception as exc:
-                    logger.warning("listener_on_completed_failed", error=str(exc))
-
-            # Dispatch on_background_task listeners concurrently
-            for listener in self.listeners:
-                try:
-                    loop = asyncio.get_running_loop()
-                    task = loop.create_task(listener.on_background_task(request, domain_output))
-                    _background_tasks.add(task)
-                    task.add_done_callback(_background_tasks.discard)
-                    self._background_tasks.add(task)
-                    task.add_done_callback(self._background_tasks.discard)
-                except Exception as exc:
-                    logger.warning("listener_background_task_scheduling_failed", error=str(exc))
+            # Invoke lifecycle listeners (awaited before terminal event)
+            await self._adispatch_listeners("completed", request, domain_output)
 
             # Yield canonical execution completed event
             yield ExecutionCompletedEvent(output=domain_output)
@@ -1321,11 +1258,7 @@ class WorkflowRunner:
                 session_id=getattr(request, "session_id", None),
                 trace_id=tr_extractor(handler) or trace_id,
             )
-            for listener in self.listeners:
-                try:
-                    await listener.on_cancelled(request, partial_output)
-                except Exception as listener_exc:
-                    logger.warning("listener_on_cancelled_failed", error=str(listener_exc))
+            await self._adispatch_listeners("cancelled", request, partial_output)
 
             logger.warning(
                 "Streaming cancelled by client disconnect",
@@ -1338,6 +1271,7 @@ class WorkflowRunner:
             raise
 
         except Exception as exc:
+            await self._adispatch_listeners("error", request, error=exc)
             logger.exception("Error during graph execution stream: %s", exc)
             # In the domain event model, graph failures directly emit ExecutionFailedEvent;
             # wf_def.handle_error() is invoked strictly for workflow telemetry/cleanup rather
@@ -1347,12 +1281,6 @@ class WorkflowRunner:
                     wf_def.handle_error(exc, final_output or initial_state)
                 except Exception as fallback_exc:
                     logger.error("Error in workflow.handle_error: %s", fallback_exc)
-
-            for listener in self.listeners:
-                try:
-                    await listener.on_error(request, exc)
-                except Exception as listener_exc:
-                    logger.warning("listener_on_error_failed", error=str(listener_exc))
 
             yield ExecutionFailedEvent(error=str(exc))
 
