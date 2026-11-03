@@ -3,7 +3,7 @@
 - **ADR Reference:** `docs/adr/0020-unify-workflow-execution-lifecycle-and-side-effect-dispatch.md`
 - **Target Subsystems:** `app/rag/workflows/`, `app/api/`, `tests/rag/`, `tests/api/`, `tests/test_online_evaluation.py`, `tests/test_workflow_runner.py`
 - **Specification Document:** `docs/spec.md` & `docs/specs/0020-unify-workflow-execution-lifecycle-and-side-effect-dispatch-spec.md`
-- **Status:** Draft / Ready for Implementation
+- **Status:** Implemented / Verified
 
 ---
 

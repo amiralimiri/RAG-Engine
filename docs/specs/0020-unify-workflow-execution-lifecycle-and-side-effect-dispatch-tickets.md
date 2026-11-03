@@ -3,7 +3,7 @@
 - **Specification Reference:** [`docs/specs/0020-unify-workflow-execution-lifecycle-and-side-effect-dispatch-spec.md`](./0020-unify-workflow-execution-lifecycle-and-side-effect-dispatch-spec.md)
 - **ADR Reference:** [`docs/adr/0020-unify-workflow-execution-lifecycle-and-side-effect-dispatch.md`](../adr/0020-unify-workflow-execution-lifecycle-and-side-effect-dispatch.md)
 - **Domain Guidelines:** [`GLOSSARY.md`](../../GLOSSARY.md) | [`docs/agents/workflow-execution.md`](../agents/workflow-execution.md)
-- **Status:** Ready for Implementation (4 Tickets)
+- **Status:** Completed (4 Tickets)
 
 ---
 

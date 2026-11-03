@@ -30,6 +30,10 @@ Guidelines and patterns established in ADR-0011 (Comprehensive Codebase Unificat
    - All prompt resolution, templating, and observation configuration live in `app.rag.prompts`.
    - `PromptStore` protocol seam and `RenderedPrompt` model replace procedural prompt fetching. Legacy `app/services/prompts.py` is permanently retired with zero backward-compatibility shims.
 
+7. **Pure Transport HTTP Routes (No Leaked Framework Objects)**:
+   - HTTP route functions (such as `POST /api/chat`) must declare clean signatures accepting domain schemas (`ChatRequest`) and returning domain response schemas (`ChatResponse`).
+   - Never pass framework concurrency primitives (such as Starlette/FastAPI `BackgroundTasks`) across domain seams into `WorkflowRunner` execution methods. Background tasks are scheduled via native Python asyncio concurrency loops.
+
 ---
 
 ## 2. Test Suite Standards & Fixture Architecture
@@ -38,8 +42,9 @@ Guidelines and patterns established in ADR-0011 (Comprehensive Codebase Unificat
    - An autouse `clean_registry` fixture resets `WorkflowRegistry` before and after every test, ensuring zero inter-test leakage.
    - Do not write manual teardown logic in individual test files.
 
-2. **Standardized Mock Registration**:
-   - Never monkeypatch module dictionaries.
+2. **Standardized Mock Registration & Zero Singleton Monkeypatching**:
+   - Never monkeypatch module dictionaries or private module singletons (`_default_runner`).
+   - Configure customized runners via canonical factory functions (`get_workflow_runner(...)`) or reset the global instance using `reset_workflow_runner()` in test harnesses.
    - When mocking a workflow or graph execution, register a lightweight `WorkflowDefinition` double directly into `WorkflowRegistry`:
      ```python
      registry.register(mock_workflow_def, override=True)
