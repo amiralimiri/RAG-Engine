@@ -27,9 +27,11 @@ from langchain_core.messages import AIMessage, AIMessageChunk, ToolMessage
 from langchain_core.messages.tool import ToolCallChunk
 from langchain_core.tools import BaseTool
 
+from app.api.streaming import SseStreamAdapter
 from app.main import app
 from app.rag.classifiers import FakeClassifierAdapter
 from app.rag.workflows import get_workflow_registry
+from app.rag.workflows.base import WorkflowInput
 from app.rag.workflows.runner import get_workflow_runner
 from app.rag.workflows.self_corrective import SelfCorrectiveRagWorkflow
 
@@ -98,7 +100,10 @@ class DisconnectableASGITransport(httpx.AsyncBaseTransport):
         self.asgi_app = asgi_app
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
-        body_bytes = b"".join([chunk async for chunk in request.stream])
+        if hasattr(request.stream, "__aiter__"):
+            body_bytes = b"".join([chunk async for chunk in request.stream])  # type: ignore[union-attr]
+        else:
+            body_bytes = b"".join(chunk for chunk in request.stream)  # type: ignore[union-attr]
         disconnect_event = asyncio.Event()
 
         scope = {
@@ -1315,3 +1320,93 @@ class TestUnifiedBaseToolStreamingRegression:
         assert meta["workflow"] == "stream_legacy_adapter_wf"
         assert meta["source_used"] == "vectorstore"
         assert meta["citations"] == [{"title": "legacy_stream.pdf", "url": "", "type": "private_kb"}]
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 11. Presentation Seam & Runner Direct Stream to SseStreamAdapter Tests
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+@pytest.mark.asyncio
+class TestRunnerStreamWithSseStreamAdapter:
+    """Validate direct runner.stream() pipe through SseStreamAdapter.format() wire strings."""
+
+    async def test_direct_runner_stream_piped_through_sse_adapter(self, monkeypatch, register_mock_workflow):
+        """Piping runner.stream(request) through SseStreamAdapter.format() yields discrete SSE wire strings."""
+        mock_handler = get_mock_handler("trace-direct-sse-001")
+        monkeypatch.setattr("app.rag.workflows.runner.get_langfuse_callback", lambda **kwargs: mock_handler)
+        monkeypatch.setattr("app.rag.workflows.runner.extract_trace_id", lambda handler: "trace-direct-sse-001")
+
+        async def dummy_events(*args, **kwargs):
+            yield {"event": "on_chain_start", "metadata": {"langgraph_node": "route_question"}, "data": {}}
+            yield {
+                "event": "on_chat_model_stream",
+                "metadata": {"langgraph_node": "direct_answer"},
+                "data": {"chunk": {"content": "Direct SSE token response."}},
+            }
+            yield {
+                "event": "on_chain_end",
+                "metadata": {"langgraph_node": "direct_answer"},
+                "data": {
+                    "output": {
+                        "source_used": "direct",
+                        "citations": [],
+                    }
+                },
+            }
+
+        mock_graph = MagicMock()
+        mock_graph.astream_events = dummy_events
+        register_mock_workflow("fix_single_llm", graph=mock_graph)
+
+        runner = get_workflow_runner()
+        request = WorkflowInput(question="Direct test question", workflow="fix_single_llm")
+
+        custom_labels = {"route_question": "Analyzing incoming question..."}
+        raw_sse_frames = [
+            frame async for frame in SseStreamAdapter.format(runner.stream(request), step_labels=custom_labels)
+        ]
+
+        assert len(raw_sse_frames) == 3
+        # 1. Step frame
+        assert raw_sse_frames[0].startswith("event: step\ndata: ")
+        step_data = json.loads(raw_sse_frames[0].split("data: ", 1)[1].rstrip("\n"))
+        assert step_data["step"] == "route_question"
+        assert step_data["label"] == "Analyzing incoming question..."
+        assert "timestamp" in step_data
+
+        # 2. Token frame
+        assert raw_sse_frames[1] == 'event: token\ndata: {"delta": "Direct SSE token response."}\n\n'
+
+        # 3. Metadata frame
+        assert raw_sse_frames[2].startswith("event: metadata\ndata: ")
+        meta_data = json.loads(raw_sse_frames[2].split("data: ", 1)[1].rstrip("\n"))
+        assert meta_data["trace_id"] == "trace-direct-sse-001"
+        assert meta_data["workflow"] == "fix_single_llm"
+        assert meta_data["source_used"] == "direct"
+
+    async def test_direct_runner_stream_error_piped_through_sse_adapter(self, monkeypatch, register_mock_workflow):
+        """Piping runner.stream(request) when graph raises unhandled error formats event: error SSE frame."""
+        mock_handler = get_mock_handler("trace-direct-err-002")
+        monkeypatch.setattr("app.rag.workflows.runner.get_langfuse_callback", lambda **kwargs: mock_handler)
+        monkeypatch.setattr("app.rag.workflows.runner.extract_trace_id", lambda handler: "trace-direct-err-002")
+
+        async def failing_events(*args, **kwargs):
+            yield {"event": "on_chain_start", "metadata": {"langgraph_node": "route_question"}, "data": {}}
+            raise ConnectionResetError("Connection unexpectedly severed by upstream LLM")
+
+        mock_graph = MagicMock()
+        mock_graph.astream_events = failing_events
+        register_mock_workflow("fix_single_llm", graph=mock_graph)
+
+        runner = get_workflow_runner()
+        request = WorkflowInput(question="Will fail", workflow="fix_single_llm")
+
+        raw_sse_frames = [frame async for frame in SseStreamAdapter.format(runner.stream(request))]
+        error_frames = [f for f in raw_sse_frames if f.startswith("event: error")]
+        assert len(error_frames) == 1
+        err_data = json.loads(error_frames[0].split("data: ", 1)[1].rstrip("\n"))
+        assert err_data["code"] == 500
+        assert "Connection unexpectedly severed by upstream LLM" in err_data["message"]
+        assert "Connection unexpectedly severed by upstream LLM" in err_data["error"]
+

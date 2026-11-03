@@ -25,7 +25,7 @@ from app.rag.evaluation import get_evaluator
 from app.rag.knowledge import SUPPORTED_EXTENSIONS, get_document_indexer
 from app.rag.memory import get_conversation_memory
 from app.rag.workflows import get_workflow_registry
-from app.rag.workflows.runner import get_workflow_runner
+from app.rag.workflows.runner import DEFAULT_STEP_LABELS, get_workflow_runner
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/api")
@@ -81,8 +81,6 @@ async def chat_stream(payload: ChatRequest):
         except Exception:
             pass
     if step_labels is None:
-        from app.rag.workflows.runner import DEFAULT_STEP_LABELS
-
         step_labels = DEFAULT_STEP_LABELS
 
     return StreamingResponse(
