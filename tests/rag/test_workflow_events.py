@@ -238,8 +238,9 @@ class TestWorkflowExecutionEventDiscriminatedUnion:
     def test_invalid_type_tag_raises_validation_error(
         self, adapter: TypeAdapter[WorkflowExecutionEvent]
     ) -> None:
-        with pytest.raises(ValidationError):
+        with pytest.raises(ValidationError) as exc_info:
             adapter.validate_python({"type": "unknown_event_type", "data": 123})
+        assert any(err["type"] == "union_tag_invalid" for err in exc_info.value.errors())
 
     def test_missing_required_fields_for_tag(self, adapter: TypeAdapter[WorkflowExecutionEvent]) -> None:
         with pytest.raises(ValidationError):

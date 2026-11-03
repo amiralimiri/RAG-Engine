@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field
 
@@ -38,12 +38,13 @@ class ExecutionFailedEvent(BaseModel):
     code: str = Field(default="EXECUTION_ERROR", description="Machine-readable error code")
 
 
-WorkflowExecutionEvent = (
+WorkflowExecutionEvent = Annotated[
     StepTransitionEvent
     | TokenDeltaEvent
     | ExecutionCompletedEvent
-    | ExecutionFailedEvent
-)
+    | ExecutionFailedEvent,
+    Field(discriminator="type"),
+]
 
 __all__ = [
     "StepTransitionEvent",
