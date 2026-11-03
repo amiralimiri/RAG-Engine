@@ -226,18 +226,14 @@ class TestWorkflowExecutionEventDiscriminatedUnion:
         assert event.code == "EXECUTION_ERROR"
         assert event.type == "failed"
 
-    def test_discriminated_matching_failed_with_custom_code(
-        self, adapter: TypeAdapter[WorkflowExecutionEvent]
-    ) -> None:
+    def test_discriminated_matching_failed_with_custom_code(self, adapter: TypeAdapter[WorkflowExecutionEvent]) -> None:
         raw = {"type": "failed", "error": "Quota exceeded", "code": "QUOTA_EXCEEDED"}
         event = adapter.validate_python(raw)
         assert isinstance(event, ExecutionFailedEvent)
         assert event.error == "Quota exceeded"
         assert event.code == "QUOTA_EXCEEDED"
 
-    def test_invalid_type_tag_raises_validation_error(
-        self, adapter: TypeAdapter[WorkflowExecutionEvent]
-    ) -> None:
+    def test_invalid_type_tag_raises_validation_error(self, adapter: TypeAdapter[WorkflowExecutionEvent]) -> None:
         with pytest.raises(ValidationError) as exc_info:
             adapter.validate_python({"type": "unknown_event_type", "data": 123})
         assert any(err["type"] == "union_tag_invalid" for err in exc_info.value.errors())
@@ -259,9 +255,7 @@ class TestWorkflowExecutionEventDiscriminatedUnion:
         events = [
             StepTransitionEvent(step="retrieve"),
             TokenDeltaEvent(delta="First chunk"),
-            ExecutionCompletedEvent(
-                output=WorkflowOutput(workflow="test", answer="Done", source_used="direct")
-            ),
+            ExecutionCompletedEvent(output=WorkflowOutput(workflow="test", answer="Done", source_used="direct")),
             ExecutionFailedEvent(error="Fatal", code="500"),
         ]
 

@@ -39,10 +39,7 @@ class ExecutionFailedEvent(BaseModel):
 
 
 WorkflowExecutionEvent = Annotated[
-    StepTransitionEvent
-    | TokenDeltaEvent
-    | ExecutionCompletedEvent
-    | ExecutionFailedEvent,
+    StepTransitionEvent | TokenDeltaEvent | ExecutionCompletedEvent | ExecutionFailedEvent,
     Field(discriminator="type"),
 ]
 

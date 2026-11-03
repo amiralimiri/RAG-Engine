@@ -145,6 +145,9 @@ class OnlineEvaluationListener(BaseExecutionLifecycleListener):
         if self._context_extractor is not None:
             return self._context_extractor(output)
 
+        if getattr(output, "retrieved_contexts", None):
+            return list(output.retrieved_contexts)
+
         contexts: list[str] = []
         for c in output.citations:
             if isinstance(c, dict):

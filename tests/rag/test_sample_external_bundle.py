@@ -2,9 +2,6 @@
 
 from __future__ import annotations
 
-import json
-from typing import Any
-
 import pytest
 
 from app.rag.workflows.base import (
@@ -13,27 +10,14 @@ from app.rag.workflows.base import (
     WorkflowInput,
     WorkflowOutput,
 )
+from app.rag.workflows.events import (
+    ExecutionCompletedEvent,
+    StepTransitionEvent,
+    TokenDeltaEvent,
+)
 from app.rag.workflows.registry import WorkflowRegistry
 from app.rag.workflows.runner import WorkflowRunner
 from tests.rag.test_workflow_contracts import BaseWorkflowContractTest
-
-
-def _parse_sse_frames(frames: list[str]) -> list[tuple[str, dict[str, Any]]]:
-    """Parse raw SSE string chunks into (event_type, payload_dict) tuples."""
-    parsed: list[tuple[str, dict[str, Any]]] = []
-    for frame in frames:
-        event_type = ""
-        data_payload: dict[str, Any] = {}
-        for line in frame.strip().split("\n"):
-            line = line.strip()
-            if line.startswith("event: "):
-                event_type = line[len("event: ") :].strip()
-            elif line.startswith("data: "):
-                data_str = line[len("data: ") :].strip()
-                data_payload = json.loads(data_str)
-        if event_type:
-            parsed.append((event_type, data_payload))
-    return parsed
 
 
 @pytest.fixture(scope="module")
@@ -161,40 +145,30 @@ async def test_sample_studio_agent_streaming_pipeline(mounted_registry: Workflow
         trace_id="stream-studio-trace-789",
     )
 
-    raw_frames = [frame async for frame in runner.stream(request)]
-    assert len(raw_frames) > 0, "Stream must emit frames"
+    events = [event async for event in runner.stream(request)]
+    assert len(events) > 0, "Stream must emit events"
 
-    parsed_events = _parse_sse_frames(raw_frames)
-    event_types = [event_type for event_type, _ in parsed_events]
-
-    # Verify all expected event types exist
-    assert "step" in event_types
-    assert "token" in event_types
-    assert "metadata" in event_types
+    # Verify event classification
+    step_events = [e for e in events if isinstance(e, StepTransitionEvent)]
+    token_events = [e for e in events if isinstance(e, TokenDeltaEvent)]
+    completed_events = [e for e in events if isinstance(e, ExecutionCompletedEvent)]
 
     # Verify step progression
-    step_events = [data for event_type, data in parsed_events if event_type == "step"]
-    step_names = [s["step"] for s in step_events]
-    assert step_names == ["analyze_intent", "mock_search", "generate_response"]
-
-    assert step_events[0]["label"] == "Analyzing inquiry intent..."
-    assert step_events[1]["label"] == "Querying domain knowledge base..."
-    assert step_events[2]["label"] == "Synthesizing final findings..."
+    assert len(step_events) == 3
+    assert [s.step for s in step_events] == ["analyze_intent", "mock_search", "generate_response"]
 
     # Verify token deltas
-    token_events = [data for event_type, data in parsed_events if event_type == "token"]
     assert len(token_events) > 0
-    streamed_answer = "".join(t["delta"] for t in token_events)
+    streamed_answer = "".join(t.delta for t in token_events)
     assert "[mock-studio-concise:concise]" in streamed_answer
     assert query in streamed_answer
 
-    # Verify terminal metadata event
-    metadata_events = [data for event_type, data in parsed_events if event_type == "metadata"]
-    assert len(metadata_events) == 1
-    meta = metadata_events[0]
-    assert meta["workflow"] == "sample_studio_agent"
-    assert meta["variant_id"] == "studio-concise"
-    assert meta["source_used"] == "knowledge_base"
-    assert len(meta["citations"]) == 2
-    assert meta["rewritten_query"] == query
-    assert len(meta["trace"]) == 3
+    # Verify terminal completion event
+    assert len(completed_events) == 1
+    meta = completed_events[0].output
+    assert meta.workflow == "sample_studio_agent"
+    assert meta.variant_id == "studio-concise"
+    assert meta.source_used == "knowledge_base"
+    assert len(meta.citations) == 2
+    assert meta.rewritten_query == query
+    assert len(meta.trace) == 3

@@ -115,6 +115,10 @@ class WorkflowOutput(BaseModel):
     trace_id: str | None = Field(default=None, description="Telemetry trace identifier")
     variant_id: str | None = Field(default=None, description="Execution variant identifier")
     session_id: str | None = Field(default=None, description="Conversational session identifier")
+    retrieved_contexts: list[str] = Field(
+        default_factory=list,
+        description="List of text chunks or document excerpts retrieved by the workflow",
+    )
 
 
 @runtime_checkable

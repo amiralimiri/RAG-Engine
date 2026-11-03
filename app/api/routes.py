@@ -19,6 +19,7 @@ from app.api.schemas import (
     SessionSummaryResponse,
     WorkflowListResponse,
 )
+from app.api.streaming import SseStreamAdapter
 from app.core.config import get_settings
 from app.rag.evaluation import get_evaluator
 from app.rag.knowledge import SUPPORTED_EXTENSIONS, get_document_indexer
@@ -71,8 +72,21 @@ def chat(payload: ChatRequest, background_tasks: BackgroundTasks):
 @router.post("/chat/stream")
 async def chat_stream(payload: ChatRequest):
     wf_input = payload.to_workflow_input()
+    runner = get_workflow_runner()
+    step_labels = None
+    if wf_input.workflow:
+        try:
+            wf_def = runner.resolve_workflow(wf_input.workflow)
+            step_labels = wf_def.info.step_labels if wf_def and wf_def.info else None
+        except Exception:
+            pass
+    if step_labels is None:
+        from app.rag.workflows.runner import DEFAULT_STEP_LABELS
+
+        step_labels = DEFAULT_STEP_LABELS
+
     return StreamingResponse(
-        get_workflow_runner().stream(wf_input),
+        SseStreamAdapter.format(runner.stream(wf_input), step_labels=step_labels),
         media_type="text/event-stream; charset=utf-8",
         headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
     )

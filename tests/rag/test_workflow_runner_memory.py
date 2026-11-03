@@ -17,6 +17,12 @@ from app.rag.workflows.base import (
     WorkflowInput,
     WorkflowOutput,
 )
+from app.rag.workflows.events import (
+    ExecutionCompletedEvent,
+    ExecutionFailedEvent,
+    StepTransitionEvent,
+    TokenDeltaEvent,
+)
 from app.rag.workflows.registry import WorkflowRegistry
 from app.rag.workflows.runner import WorkflowRunner
 
@@ -143,9 +149,9 @@ async def test_runner_memory_injection():
     runner = WorkflowRunner(memory=memory)
     assert runner.memory is memory
 
-    # Default memory fallback
+    # Default memory fallback is None (explicit memory injection per ADR-0019)
     default_runner = WorkflowRunner()
-    assert default_runner.memory is not None
+    assert default_runner.memory is None
 
 
 @pytest.mark.asyncio
@@ -363,12 +369,10 @@ async def test_runner_streaming_persists_on_success():
         workflow=mock_wf.info.id,
     )
 
-    events: list[str] = []
-    async for frame in runner.stream(req):
-        events.append(frame)
+    events = [frame async for frame in runner.stream(req)]
 
-    assert any("event: token" in f for f in events)
-    assert any("event: metadata" in f for f in events)
+    assert any(isinstance(f, TokenDeltaEvent) for f in events)
+    assert any(isinstance(f, ExecutionCompletedEvent) for f in events)
 
     # Verify turn persisted to memory
     turns = await memory.aget_turns(session_id)
@@ -398,7 +402,7 @@ async def test_runner_streaming_aborts_persistence_on_client_cancel():
     gen = runner.stream(req)
     # Read only the first frame (step event) then close generator (client disconnect)
     first_frame = await anext(gen)
-    assert "event: step" in first_frame
+    assert isinstance(first_frame, StepTransitionEvent)
     await gen.aclose()
 
     # Verify NO turn persisted to memory
@@ -501,13 +505,11 @@ async def test_runner_streaming_resilient_to_persistence_failure():
         workflow=mock_wf.info.id,
     )
 
-    events: list[str] = []
-    async for frame in runner.stream(req):
-        events.append(frame)
+    events = [frame async for frame in runner.stream(req)]
 
-    assert any("event: token" in f for f in events)
-    assert any("event: metadata" in f for f in events)
-    assert not any("event: error" in f for f in events)
+    assert any(isinstance(f, TokenDeltaEvent) for f in events)
+    assert any(isinstance(f, ExecutionCompletedEvent) for f in events)
+    assert not any(isinstance(f, ExecutionFailedEvent) for f in events)
 
 
 @pytest.mark.asyncio

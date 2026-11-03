@@ -3,10 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import uuid
 from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
-from datetime import UTC, datetime
 from typing import Any, cast
 
 import structlog
@@ -26,7 +24,7 @@ from app.rag.evaluation import Evaluator, get_evaluator
 from app.rag.memory import (
     ConversationMemoryAdapter,
     ConversationTurn,
-    get_conversation_memory,
+    NoOpMemoryStore,
 )
 from app.rag.workflows.base import (
     EvalContext,
@@ -34,6 +32,18 @@ from app.rag.workflows.base import (
     WorkflowDefinition,
     WorkflowInput,
     WorkflowOutput,
+)
+from app.rag.workflows.events import (
+    ExecutionCompletedEvent,
+    ExecutionFailedEvent,
+    StepTransitionEvent,
+    TokenDeltaEvent,
+    WorkflowExecutionEvent,
+)
+from app.rag.workflows.listeners import (
+    ExecutionLifecycleListener,
+    MemoryPersistenceListener,
+    OnlineEvaluationListener,
 )
 from app.rag.workflows.registry import WorkflowRegistry, get_workflow_registry
 
@@ -63,15 +73,6 @@ class ExecutionResult(BaseModel):
 
     response: WorkflowOutput
     eval_context: EvalContext
-
-
-def format_sse(event: str, data: dict[str, Any] | BaseModel) -> str:
-    """Format SSE frame with event name and JSON data payload."""
-    if isinstance(data, BaseModel):
-        payload = data.model_dump(mode="json")
-    else:
-        payload = data
-    return f"event: {event}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
 
 def is_tool_call_chunk(chunk: Any) -> bool:
@@ -109,6 +110,7 @@ class WorkflowRunner:
         *,
         evaluator: Evaluator | None = None,
         memory: ConversationMemoryAdapter | None = None,
+        listeners: list[ExecutionLifecycleListener] | None = None,
         callback_factory: Callable[..., Any] | None = None,
         trace_extractor: Callable[[Any], str | None] | None = None,
         telemetry_flusher: Callable[[], None] | None = None,
@@ -117,6 +119,8 @@ class WorkflowRunner:
         self.registry = registry if registry is not None else get_workflow_registry()
         self._evaluator = evaluator
         self._memory = memory
+        self._explicit_listeners = listeners is not None
+        self._listeners = list(listeners) if listeners is not None else None
         self._settings: Any = None
         self._callback_factory = callback_factory
         self._trace_extractor = trace_extractor
@@ -125,14 +129,36 @@ class WorkflowRunner:
         self._background_tasks: set[asyncio.Task[Any]] = set()
 
     @property
-    def memory(self) -> ConversationMemoryAdapter:
-        if self._memory is None:
-            return get_conversation_memory()
+    def memory(self) -> ConversationMemoryAdapter | None:
         return self._memory
 
     @memory.setter
     def memory(self, val: ConversationMemoryAdapter | None) -> None:
         self._memory = val
+        if not self._explicit_listeners:
+            self._listeners = None
+
+    @property
+    def listeners(self) -> list[ExecutionLifecycleListener]:
+        if self._listeners is not None:
+            return self._listeners
+        defaults: list[ExecutionLifecycleListener] = []
+        if self._memory is not None and not isinstance(self._memory, NoOpMemoryStore):
+            defaults.append(MemoryPersistenceListener(memory=self._memory))
+        if self._evaluator is not None or self._eval_task_fn is not None:
+            defaults.append(
+                OnlineEvaluationListener(
+                    evaluator=self._evaluator,
+                    eval_task_fn=self._eval_task_fn,
+                )
+            )
+        self._listeners = defaults
+        return self._listeners
+
+    @listeners.setter
+    def listeners(self, val: list[ExecutionLifecycleListener] | None) -> None:
+        self._explicit_listeners = val is not None
+        self._listeners = list(val) if val is not None else None
 
     @property
     def settings(self) -> Any:
@@ -159,6 +185,8 @@ class WorkflowRunner:
     @evaluator.setter
     def evaluator(self, val: Evaluator | None) -> None:
         self._evaluator = val
+        if not self._explicit_listeners:
+            self._listeners = None
 
     @property
     def callback_factory(self) -> Callable[..., Any]:
@@ -184,13 +212,13 @@ class WorkflowRunner:
     def telemetry_flusher(self, val: Callable[[], None] | None) -> None:
         self._telemetry_flusher = val
 
-    def format_sse(self, event: str, data: dict[str, Any] | BaseModel) -> str:
-        """Format an event frame into SSE string protocol."""
-        return format_sse(event, data)
-
     def is_tool_call_chunk(self, chunk: Any) -> bool:
         """Filter out token deltas when chunk contains tool call chunks or structured calls."""
         return is_tool_call_chunk(chunk)
+
+    def resolve_workflow(self, workflow_name: str) -> WorkflowDefinition:
+        """Resolve workflow definition from registry, auto-registering defaults if empty."""
+        return self._resolve_workflow(workflow_name)
 
     def _resolve_workflow(self, workflow_name: str) -> WorkflowDefinition:
         """Resolve workflow definition from registry, auto-registering defaults if empty."""
@@ -259,16 +287,19 @@ class WorkflowRunner:
 
     async def _ahydrate_memory(self, request: WorkflowInput) -> list[BaseMessage] | None:
         """Hydrate bounded historical messages from conversation memory store."""
+        if self._memory is None or isinstance(self._memory, NoOpMemoryStore):
+            return getattr(request, "messages", None)
+
         session_id = getattr(request, "session_id", None)
         if not session_id or not str(session_id).strip() or str(session_id).strip().lower() in ("undefined", "null"):
-            return None
+            return getattr(request, "messages", None)
         session_id = str(session_id).strip()
 
         rewind_turn_index = getattr(request, "rewind_turn_index", None)
         settings = self.settings
         max_turns = getattr(settings, "memory_max_turns", 10)
 
-        hydrated = await self.memory.aget_messages(
+        hydrated = await self._memory.aget_messages(
             session_id,
             limit=max_turns,
             before_turn_index=rewind_turn_index,
@@ -287,6 +318,8 @@ class WorkflowRunner:
 
     def _hydrate_memory_sync(self, request: WorkflowInput) -> list[BaseMessage] | None:
         """Synchronous wrapper for conversation memory hydration."""
+        if self._memory is None or isinstance(self._memory, NoOpMemoryStore):
+            return getattr(request, "messages", None)
         return run_async_safely(self._ahydrate_memory, request)
 
     async def _apersist_turn(
@@ -296,6 +329,9 @@ class WorkflowRunner:
         resolved_tid: str | None = None,
     ) -> ConversationTurn | None:
         """Atomically truncate prior turns if rewinding and persist new completed semantic turn."""
+        if self._memory is None or isinstance(self._memory, NoOpMemoryStore):
+            return None
+
         session_id = getattr(request, "session_id", None)
         if not session_id or not str(session_id).strip() or str(session_id).strip().lower() in ("undefined", "null"):
             return None
@@ -305,7 +341,7 @@ class WorkflowRunner:
             return None
 
         tid = resolved_tid or domain_output.trace_id or getattr(request, "trace_id", None)
-        turn = await self.memory.aappend_turn(
+        turn = await self._memory.aappend_turn(
             session_id=session_id,
             user_query=request.question,
             assistant_answer=domain_output.answer,
@@ -665,6 +701,7 @@ class WorkflowRunner:
                 or (eval_ctx.get("retrieved_contexts") if isinstance(eval_ctx, dict) else None)
                 or []
             )
+            domain_output.retrieved_contexts = retrieved_contexts
 
             if background_tasks is not None:
                 try:
@@ -720,6 +757,8 @@ class WorkflowRunner:
 
         if (
             persist_turn
+            and self._memory is not None
+            and not isinstance(self._memory, NoOpMemoryStore)
             and getattr(request, "session_id", None)
             and domain_output.answer
             and domain_output.answer.strip()
@@ -755,7 +794,13 @@ class WorkflowRunner:
             persist_turn=False,
         )
         resolved_tid = domain_output.trace_id or trace_id
-        if getattr(request, "session_id", None) and domain_output.answer and domain_output.answer.strip():
+        if (
+            self._memory is not None
+            and not isinstance(self._memory, NoOpMemoryStore)
+            and getattr(request, "session_id", None)
+            and domain_output.answer
+            and domain_output.answer.strip()
+        ):
             try:
                 await self._apersist_turn(request, domain_output, resolved_tid)
             except Exception as exc:
@@ -957,8 +1002,8 @@ class WorkflowRunner:
     def stream(
         self,
         request: WorkflowInput,
-    ) -> AsyncGenerator[str]:
-        """Validate workflow and return an asynchronous generator yielding pre-formatted SSE frames."""
+    ) -> AsyncGenerator[WorkflowExecutionEvent]:
+        """Validate workflow and return an asynchronous generator yielding typed WorkflowExecutionEvent instances."""
         wf_name = (request.workflow if hasattr(request, "workflow") and request.workflow else None) or "fix_single_jev"
         self._resolve_workflow(wf_name)
         return self._stream_generator(request)
@@ -966,8 +1011,8 @@ class WorkflowRunner:
     async def _stream_generator(
         self,
         request: WorkflowInput,
-    ) -> AsyncGenerator[str]:
-        """Consume LangGraph astream_events v2 and yield pre-formatted SSE event strings."""
+    ) -> AsyncGenerator[WorkflowExecutionEvent]:
+        """Consume LangGraph astream_events v2 and yield typed domain events."""
         cb_factory = self.callback_factory
         tr_extractor = self.trace_extractor
         tel_flusher = self.telemetry_flusher
@@ -1008,14 +1053,7 @@ class WorkflowRunner:
 
                 # 1. Step transitions
                 if stream_steps and ev_type == "on_chain_start" and node_name in step_labels:
-                    yield self.format_sse(
-                        "step",
-                        {
-                            "step": node_name,
-                            "label": step_labels[node_name],
-                            "timestamp": datetime.now(UTC).timestamp(),
-                        },
-                    )
+                    yield StepTransitionEvent(step=node_name)
 
                 # 2. Whitelisted Token Delta Streaming (Filtered: tool calls & empty strings suppressed)
                 elif ev_type == "on_chat_model_stream" and node_name in generation_nodes:
@@ -1039,7 +1077,7 @@ class WorkflowRunner:
                     if delta_content:
                         tokens_delivered += 1
                         answer_chunks.append(delta_content)
-                        yield self.format_sse("token", {"delta": delta_content})
+                        yield TokenDeltaEvent(delta=delta_content)
 
                 # 3. State capture on node completion
                 elif ev_type == "on_chain_end":
@@ -1072,11 +1110,12 @@ class WorkflowRunner:
                     static_answer = str(fallback_answer)
                     tokens_delivered += 1
                     answer_chunks.append(static_answer)
-                    yield self.format_sse("token", {"delta": static_answer})
+                    yield TokenDeltaEvent(delta=static_answer)
 
-            # 5. Terminal Metadata Event
+            # 5. Build canonical WorkflowOutput
             resolved_tid = tr_extractor(handler) or trace_id
             domain_output: WorkflowOutput | None = None
+            final_retrieved_contexts: list[str] = []
             if wf_def is not None:
                 domain_output = wf_def.to_workflow_output(final_output, trace_id=resolved_tid)
                 eval_ctx = wf_def.extract_eval_context(final_output)
@@ -1103,76 +1142,64 @@ class WorkflowRunner:
                 final_rewritten_query = final_output.get("current_query", request.question)
                 final_answer = str(final_output.get("answer") or "".join(answer_chunks))
                 final_retrieved_contexts = final_output.get("retrieved_contexts") or []
+                domain_output = WorkflowOutput(
+                    workflow=getattr(request, "workflow", None) or "fix_single_jev",
+                    answer=final_answer,
+                    source_used=final_source_used,
+                    trace=final_trace,
+                    citations=final_citations,
+                    rewritten_query=final_rewritten_query,
+                    trace_id=resolved_tid,
+                    session_id=getattr(request, "session_id", None),
+                    variant_id=variant_id,
+                    retrieved_contexts=final_retrieved_contexts,
+                )
 
-            # Persist turn before yielding terminal metadata frame
-            if getattr(request, "session_id", None) and final_answer and final_answer.strip():
-                if domain_output is not None:
-                    turn_output = domain_output
-                    if not turn_output.answer:
-                        turn_output = turn_output.model_copy(update={"answer": final_answer})
-                else:
-                    turn_output = WorkflowOutput(
-                        workflow=getattr(request, "workflow", None) or (wf_def.info.id if wf_def else "fix_single_jev"),
-                        answer=final_answer,
-                        source_used=final_source_used,
-                        trace=final_trace,
-                        citations=final_citations,
-                        rewritten_query=final_rewritten_query,
-                        trace_id=resolved_tid,
-                        session_id=getattr(request, "session_id", None),
-                    )
+            # Ensure canonical domain_output has all resolved fields
+            domain_output = domain_output.model_copy(
+                update={
+                    "answer": final_answer,
+                    "source_used": final_source_used,
+                    "trace": final_trace,
+                    "citations": final_citations,
+                    "rewritten_query": final_rewritten_query,
+                    "trace_id": resolved_tid or domain_output.trace_id,
+                    "session_id": getattr(request, "session_id", None) or domain_output.session_id,
+                    "variant_id": domain_output.variant_id or variant_id,
+                    "retrieved_contexts": final_retrieved_contexts,
+                }
+            )
+
+            # Invoke on_completed lifecycle listeners (awaited before terminal event)
+            for listener in self.listeners:
                 try:
-                    await self._apersist_turn(request, turn_output, resolved_tid)
+                    await listener.on_completed(request, domain_output)
                 except Exception as exc:
-                    logger.warning(
-                        "turn_persistence_failed",
-                        session_id=getattr(request, "session_id", None),
-                        error=str(exc),
-                    )
+                    logger.warning("listener_on_completed_failed", error=str(exc))
 
-            metadata_dict = {
-                "trace_id": resolved_tid,
-                "session_id": getattr(request, "session_id", None),
-                "workflow": getattr(request, "workflow", None) or (wf_def.info.id if wf_def else "fix_single_jev"),
-                "source_used": final_source_used,
-                "citations": final_citations,
-                "trace": final_trace,
-                "rewritten_query": final_rewritten_query,
-                "variant_id": (domain_output.variant_id if domain_output is not None else None) or variant_id,
-            }
-            yield self.format_sse("metadata", metadata_dict)
-
-            # Safeguard background evaluation task
-            if resolved_tid:
+            # Dispatch on_background_task listeners concurrently
+            for listener in self.listeners:
                 try:
-                    eval_task = asyncio.create_task(
-                        self._safe_evaluate(
-                            trace_id=resolved_tid,
-                            question=request.question,
-                            answer=final_answer,
-                            source_used=final_source_used,
-                            retrieved_contexts=final_retrieved_contexts,
-                        )
-                    )
-                    _background_tasks.add(eval_task)
-                    eval_task.add_done_callback(_background_tasks.discard)
-                    self._background_tasks.add(eval_task)
-                    eval_task.add_done_callback(self._background_tasks.discard)
+                    loop = asyncio.get_running_loop()
+                    task = loop.create_task(listener.on_background_task(request, domain_output))
+                    _background_tasks.add(task)
+                    task.add_done_callback(_background_tasks.discard)
+                    self._background_tasks.add(task)
+                    task.add_done_callback(self._background_tasks.discard)
                 except Exception as exc:
-                    logger.warning(
-                        "online_evaluation_scheduling_failed",
-                        trace_id=resolved_tid,
-                        error=str(exc),
-                    )
+                    logger.warning("listener_background_task_scheduling_failed", error=str(exc))
+
+            # Yield canonical execution completed event
+            yield ExecutionCompletedEvent(output=domain_output)
 
             logger.info(
                 "chat_query_completed",
-                workflow=getattr(request, "workflow", "fix_single_jev"),
+                workflow=getattr(request, "workflow", None) or (wf_def.info.id if wf_def else "fix_single_jev"),
                 question=request.question,
-                source_used=final_source_used,
-                trace=final_trace,
-                trace_id=resolved_tid,
-                variant_id=metadata_dict.get("variant_id"),
+                source_used=domain_output.source_used,
+                trace=domain_output.trace,
+                trace_id=domain_output.trace_id,
+                variant_id=domain_output.variant_id,
             )
 
         except (asyncio.CancelledError, GeneratorExit):  # fmt: skip
@@ -1181,10 +1208,24 @@ class WorkflowRunner:
                 or (final_output.get("trace") if isinstance(final_output.get("trace"), list) else [])
                 or []
             )
+            partial_output = WorkflowOutput(
+                workflow=getattr(request, "workflow", None) or (wf_def.info.id if wf_def else "unknown"),
+                answer="".join(answer_chunks),
+                source_used="client_disconnected",
+                trace=disconnect_trace + ["Stream aborted by client disconnect"],
+                session_id=getattr(request, "session_id", None),
+                trace_id=tr_extractor(handler) or trace_id,
+            )
+            for listener in self.listeners:
+                try:
+                    await listener.on_cancelled(request, partial_output)
+                except Exception as listener_exc:
+                    logger.warning("listener_on_cancelled_failed", error=str(listener_exc))
+
             logger.warning(
                 "Streaming cancelled by client disconnect",
                 trace_id=trace_id,
-                workflow=request.workflow,
+                workflow=getattr(request, "workflow", None),
                 question=request.question,
                 source_used="client_disconnected",
                 trace=disconnect_trace + ["Stream aborted by client disconnect"],
@@ -1193,38 +1234,19 @@ class WorkflowRunner:
 
         except Exception as exc:
             logger.exception("Error during graph execution stream: %s", exc)
-            fallback_state: dict[str, Any] | None = None
             if wf_def is not None:
                 try:
-                    fallback_state = wf_def.handle_error(exc, final_output or initial_state)
-                    logger.info(
-                        "workflow_error_fallback_invoked",
-                        workflow=request.workflow,
-                        fallback_answer=fallback_state.get("answer") if isinstance(fallback_state, dict) else None,
-                    )
+                    wf_def.handle_error(exc, final_output or initial_state)
                 except Exception as fallback_exc:
                     logger.error("Error in workflow.handle_error: %s", fallback_exc)
 
-            if isinstance(fallback_state, dict):
-                fallback_answer = fallback_state.get("answer")
-                if fallback_answer and tokens_delivered == 0:
-                    yield self.format_sse("token", {"delta": str(fallback_answer)})
-                    tokens_delivered += 1
+            for listener in self.listeners:
+                try:
+                    await listener.on_error(request, exc)
+                except Exception as listener_exc:
+                    logger.warning("listener_on_error_failed", error=str(listener_exc))
 
-                resolved_tid = tr_extractor(handler) or trace_id or fallback_state.get("trace_id")
-                err_trace = (accumulated_trace or []) + fallback_state.get("trace", [f"Error: {str(exc)}"])
-                err_metadata = {
-                    "trace_id": resolved_tid,
-                    "workflow": request.workflow,
-                    "source_used": fallback_state.get("source_used", "error_fallback"),
-                    "citations": fallback_state.get("citations", []),
-                    "trace": err_trace,
-                    "rewritten_query": fallback_state.get("current_query", request.question),
-                }
-                yield self.format_sse("metadata", err_metadata)
-
-            err_dict = {"message": f"Inference stream failed: {str(exc)}", "code": 500}
-            yield self.format_sse("error", err_dict)
+            yield ExecutionFailedEvent(error=str(exc))
 
         finally:
             if handler and hasattr(handler, "flush") and callable(handler.flush):
@@ -1246,6 +1268,7 @@ def get_workflow_runner(
     *,
     evaluator: Evaluator | None = None,
     memory: ConversationMemoryAdapter | None = None,
+    listeners: list[ExecutionLifecycleListener] | None = None,
     callback_factory: Callable[..., Any] | None = None,
     trace_extractor: Callable[[Any], str | None] | None = None,
     telemetry_flusher: Callable[[], None] | None = None,
@@ -1255,12 +1278,22 @@ def get_workflow_runner(
     global _default_runner
     if any(
         arg is not None
-        for arg in (registry, evaluator, memory, callback_factory, trace_extractor, telemetry_flusher, eval_task_fn)
+        for arg in (
+            registry,
+            evaluator,
+            memory,
+            listeners,
+            callback_factory,
+            trace_extractor,
+            telemetry_flusher,
+            eval_task_fn,
+        )
     ):
         return WorkflowRunner(
             registry=registry,
             evaluator=evaluator,
             memory=memory,
+            listeners=listeners,
             callback_factory=callback_factory,
             trace_extractor=trace_extractor,
             telemetry_flusher=telemetry_flusher,
@@ -1283,7 +1316,6 @@ __all__ = [
     "ExecutionResult",
     "WorkflowRunner",
     "_background_tasks",
-    "format_sse",
     "get_workflow_runner",
     "is_tool_call_chunk",
     "reset_workflow_runner",

@@ -229,6 +229,24 @@ async def test_adapter_full_lifecycle_sequence():
     assert frames[4].startswith("event: metadata\ndata: ")
 
 
+@pytest.mark.asyncio
+async def test_adapter_step_transition_with_step_labels_enrichment():
+    """Verify SseStreamAdapter enriches StepTransitionEvent with label and timestamp when step_labels is provided."""
+
+    async def event_generator():
+        yield StepTransitionEvent(step="retrieve_kb")
+
+    labels = {"retrieve_kb": "Retrieving documents..."}
+    frames = [frame async for frame in SseStreamAdapter.format(event_generator(), step_labels=labels)]
+    assert len(frames) == 1
+    frame = frames[0]
+    assert frame.startswith("event: step\ndata: ")
+    data = json.loads(frame.split("data: ", 1)[1].rstrip("\n"))
+    assert data["step"] == "retrieve_kb"
+    assert data["label"] == "Retrieving documents..."
+    assert isinstance(data["timestamp"], (int, float))
+
+
 def test_app_api_package_exports():
     """Verify SseStreamAdapter and format_sse are exported from app.api."""
     import app.api as api

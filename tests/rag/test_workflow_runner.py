@@ -14,8 +14,8 @@ from fastapi import BackgroundTasks, HTTPException
 from app.api.schemas import (
     ChatRequest,
     StreamStepEvent,
-    StreamTokenEvent,
 )
+from app.api.streaming import format_sse
 from app.core.telemetry import (
     extract_trace_id,
     flush_telemetry,
@@ -30,12 +30,17 @@ from app.rag.workflows.base import (
     WorkflowInput,
     WorkflowOutput,
 )
+from app.rag.workflows.events import (
+    ExecutionCompletedEvent,
+    ExecutionFailedEvent,
+    StepTransitionEvent,
+    TokenDeltaEvent,
+)
 from app.rag.workflows.registry import WorkflowRegistry, get_workflow_registry
 from app.rag.workflows.runner import (
     ExecutionResult,
     WorkflowRunner,
     _background_tasks,
-    format_sse,
     get_workflow_runner,
     is_tool_call_chunk,
     reset_workflow_runner,
@@ -459,24 +464,57 @@ def test_online_evaluation_no_event_loop_sync_safe():
     assert response.answer == "Mock Answer"
 
 
-def parse_sse_events(raw_chunks: list[str]) -> list[dict[str, Any]]:
-    """Parse raw SSE chunks into list of dicts with event and data."""
+def parse_sse_events(raw_chunks: list[Any]) -> list[dict[str, Any]]:
+    """Parse raw SSE chunks or domain events into list of dicts with event and data."""
     events = []
     for chunk in raw_chunks:
-        ev_name = None
-        data_lines = []
-        for line in chunk.splitlines():
-            if line.startswith("event:"):
-                ev_name = line[len("event:") :].strip()
-            elif line.startswith("data:"):
-                data_lines.append(line[len("data:") :].strip())
-        if ev_name:
-            payload_str = "\n".join(data_lines)
-            try:
-                data = json.loads(payload_str)
-            except json.JSONDecodeError:
-                data = payload_str
-            events.append({"event": ev_name, "data": data})
+        if isinstance(chunk, StepTransitionEvent):
+            events.append({"event": "step", "data": {"step": chunk.step, "label": chunk.step, "timestamp": 0.0}})
+        elif isinstance(chunk, TokenDeltaEvent):
+            events.append({"event": "token", "data": {"delta": chunk.delta}})
+        elif isinstance(chunk, ExecutionCompletedEvent):
+            output = chunk.output
+            events.append(
+                {
+                    "event": "metadata",
+                    "data": {
+                        "trace_id": output.trace_id,
+                        "session_id": output.session_id,
+                        "workflow": output.workflow,
+                        "source_used": output.source_used,
+                        "citations": output.citations,
+                        "trace": output.trace,
+                        "rewritten_query": output.rewritten_query,
+                        "variant_id": output.variant_id,
+                    },
+                }
+            )
+        elif isinstance(chunk, ExecutionFailedEvent):
+            events.append(
+                {
+                    "event": "error",
+                    "data": {
+                        "error": chunk.error,
+                        "message": chunk.error,
+                        "code": 500 if chunk.code == "EXECUTION_ERROR" else chunk.code,
+                    },
+                }
+            )
+        elif isinstance(chunk, str):
+            ev_name = None
+            data_lines = []
+            for line in chunk.splitlines():
+                if line.startswith("event:"):
+                    ev_name = line[len("event:") :].strip()
+                elif line.startswith("data:"):
+                    data_lines.append(line[len("data:") :].strip())
+            if ev_name:
+                payload_str = "\n".join(data_lines)
+                try:
+                    data = json.loads(payload_str)
+                except json.JSONDecodeError:
+                    data = payload_str
+                events.append({"event": ev_name, "data": data})
     return events
 
 
@@ -498,11 +536,6 @@ def test_format_sse_helper():
     assert '"step": "retrieve_kb"' in res_model
     assert '"label": "Searching internal knowledge base..."' in res_model
     assert res_model.endswith("\n\n")
-
-    # WorkflowRunner method delegation
-    runner = WorkflowRunner()
-    res_runner = runner.format_sse("token", StreamTokenEvent(delta="test token"))
-    assert res_runner == 'event: token\ndata: {"delta": "test token"}\n\n'
 
 
 def test_is_tool_call_chunk_filtering():
@@ -669,8 +702,6 @@ async def test_stream_emits_whitelisted_steps_filtered_tokens_and_metadata():
     step_events = [e for e in events if e["event"] == "step"]
     assert len(step_events) == 1
     assert step_events[0]["data"]["step"] == "step_1"
-    assert step_events[0]["data"]["label"] == "Analyzing question..."
-    assert "timestamp" in step_events[0]["data"]
 
     # 2. Token events verification
     token_events = [e for e in events if e["event"] == "token"]
@@ -1170,7 +1201,7 @@ async def test_online_evaluation_task_exception_shielded_in_stream():
         trace_id="stream-failing-trace",
     )
 
-    with patch("app.rag.workflows.runner.logger.warning") as mock_log_warn:
+    with patch("app.rag.workflows.listeners.logger.warning") as mock_log_warn:
         frames = [frame async for frame in runner.stream(request)]
         events = parse_sse_events(frames)
         assert len(events) >= 1
@@ -1469,7 +1500,7 @@ async def test_evaluator_exception_shielded_in_finalize_and_stream():
     failing_eval.aevaluate.reset_mock()
 
     # 2. Test in stream
-    with patch("app.rag.workflows.runner.logger.warning") as mock_warn:
+    with patch("app.rag.workflows.listeners.logger.warning") as mock_warn:
         frames = [
             frame
             async for frame in runner.stream(
@@ -1610,14 +1641,14 @@ async def test_runner_bridges_workflow_output_in_stream(clean_registry):
     req = ChatRequest(question="Streaming question?", workflow="stream_pure_wf", trace_id="trace_stream_1")
     events = [event async for event in runner.stream(req)]  # type: ignore[arg-type]
 
-    # Final event must be metadata containing StreamMetadataEvent payload
-    meta_event = [e for e in events if "event: metadata" in e]
-    assert len(meta_event) == 1
-    meta_data = json.loads(meta_event[0].replace("event: metadata\ndata: ", "").strip())
-    assert meta_data["workflow"] == "stream_pure_wf"
-    assert meta_data["source_used"] == "vectorstore"
-    assert meta_data["citations"] == [{"title": "guide.pdf"}]
-    assert meta_data["trace_id"] == "trace_stream_1"
+    # Final event must be ExecutionCompletedEvent containing WorkflowOutput
+    completed_events = [e for e in events if isinstance(e, ExecutionCompletedEvent)]
+    assert len(completed_events) == 1
+    meta_output = completed_events[0].output
+    assert meta_output.workflow == "stream_pure_wf"
+    assert meta_output.source_used == "vectorstore"
+    assert meta_output.citations == [{"title": "guide.pdf"}]
+    assert meta_output.trace_id == "trace_stream_1"
 
 
 # ==============================================================================
@@ -2057,8 +2088,7 @@ async def test_stream_propagates_variant_id_in_terminal_metadata():
     )
     events = [event async for event in runner.stream(req)]
 
-    meta_events = [e for e in events if "event: metadata" in e]
-    assert len(meta_events) == 1
-    meta_payload = json.loads(meta_events[0].replace("event: metadata\ndata: ", "").strip())
-    assert meta_payload["workflow"] == "stream_variant_wf"
-    assert meta_payload["variant_id"] == "stream_v1"
+    completed_events = [e for e in events if isinstance(e, ExecutionCompletedEvent)]
+    assert len(completed_events) == 1
+    assert completed_events[0].output.workflow == "stream_variant_wf"
+    assert completed_events[0].output.variant_id == "stream_v1"
