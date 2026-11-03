@@ -119,46 +119,27 @@ class WorkflowRunner:
         self.registry = registry if registry is not None else get_workflow_registry()
         self._evaluator = evaluator
         self._memory = memory
-        self._explicit_listeners = listeners is not None
-        self._listeners = list(listeners) if listeners is not None else None
-        self._settings: Any = None
         self._callback_factory = callback_factory
         self._trace_extractor = trace_extractor
         self._telemetry_flusher = telemetry_flusher
         self._eval_task_fn = eval_task_fn
+        self._settings: Any = None
         self._background_tasks: set[asyncio.Task[Any]] = set()
 
-    @property
-    def memory(self) -> ConversationMemoryAdapter | None:
-        return self._memory
-
-    @memory.setter
-    def memory(self, val: ConversationMemoryAdapter | None) -> None:
-        self._memory = val
-        if not self._explicit_listeners:
-            self._listeners = None
-
-    @property
-    def listeners(self) -> list[ExecutionLifecycleListener]:
-        if self._listeners is not None:
-            return self._listeners
-        defaults: list[ExecutionLifecycleListener] = []
-        if self._memory is not None and not isinstance(self._memory, NoOpMemoryStore):
-            defaults.append(MemoryPersistenceListener(memory=self._memory))
-        if self._evaluator is not None or self._eval_task_fn is not None:
-            defaults.append(
-                OnlineEvaluationListener(
-                    evaluator=self._evaluator,
-                    eval_task_fn=self._eval_task_fn,
+        if listeners is not None:
+            self._listeners: list[ExecutionLifecycleListener] = list(listeners)
+        else:
+            defaults: list[ExecutionLifecycleListener] = []
+            if memory is not None and not isinstance(memory, NoOpMemoryStore):
+                defaults.append(MemoryPersistenceListener(memory=memory))
+            if evaluator is not None or eval_task_fn is not None:
+                defaults.append(
+                    OnlineEvaluationListener(
+                        evaluator=evaluator,
+                        eval_task_fn=eval_task_fn,
+                    )
                 )
-            )
-        self._listeners = defaults
-        return self._listeners
-
-    @listeners.setter
-    def listeners(self, val: list[ExecutionLifecycleListener] | None) -> None:
-        self._explicit_listeners = val is not None
-        self._listeners = list(val) if val is not None else None
+            self._listeners = defaults
 
     @property
     def settings(self) -> Any:
@@ -171,24 +152,24 @@ class WorkflowRunner:
         self._settings = val
 
     @property
-    def eval_task_fn(self) -> Callable[..., Any] | None:
-        return self._eval_task_fn
+    def memory(self) -> ConversationMemoryAdapter | None:
+        """The read-path conversation memory adapter."""
+        return self._memory
 
-    @eval_task_fn.setter
-    def eval_task_fn(self, val: Callable[..., Any] | None) -> None:
-        self._eval_task_fn = val
-        if not self._explicit_listeners:
-            self._listeners = None
+    @property
+    def listeners(self) -> list[ExecutionLifecycleListener]:
+        """Registered execution lifecycle listeners."""
+        return self._listeners
+
+    @property
+    def eval_task_fn(self) -> Callable[..., Any] | None:
+        """Injected evaluation task function if configured."""
+        return self._eval_task_fn
 
     @property
     def evaluator(self) -> Evaluator:
+        """Injected evaluator or canonical default."""
         return self._evaluator or get_evaluator()
-
-    @evaluator.setter
-    def evaluator(self, val: Evaluator | None) -> None:
-        self._evaluator = val
-        if not self._explicit_listeners:
-            self._listeners = None
 
     @property
     def callback_factory(self) -> Callable[..., Any]:
@@ -323,53 +304,6 @@ class WorkflowRunner:
         if self._memory is None or isinstance(self._memory, NoOpMemoryStore):
             return getattr(request, "messages", None)
         return run_async_safely(self._ahydrate_memory, request)
-
-    async def _apersist_turn(
-        self,
-        request: WorkflowInput,
-        domain_output: WorkflowOutput,
-        resolved_tid: str | None = None,
-    ) -> ConversationTurn | None:
-        """Atomically truncate prior turns if rewinding and persist new completed semantic turn."""
-        if self._memory is None or isinstance(self._memory, NoOpMemoryStore):
-            return None
-
-        session_id = getattr(request, "session_id", None)
-        if not session_id or not str(session_id).strip() or str(session_id).strip().lower() in ("undefined", "null"):
-            return None
-        session_id = str(session_id).strip()
-
-        if not domain_output.answer or not domain_output.answer.strip():
-            return None
-
-        tid = resolved_tid or domain_output.trace_id or getattr(request, "trace_id", None)
-        turn = await self._memory.aappend_turn(
-            session_id=session_id,
-            user_query=request.question,
-            assistant_answer=domain_output.answer,
-            rewind_turn_index=getattr(request, "rewind_turn_index", None),
-            attachments=getattr(request, "attachments", None) or [],
-            citations=domain_output.citations,
-            source_used=domain_output.source_used,
-            trace_id=tid,
-        )
-        logger.info(
-            "conversation_turn_persisted",
-            session_id=session_id,
-            turn_index=turn.turn_index,
-            source_used=domain_output.source_used,
-            trace_id=tid,
-        )
-        return turn
-
-    def _persist_turn_sync(
-        self,
-        request: WorkflowInput,
-        domain_output: WorkflowOutput,
-        resolved_tid: str | None = None,
-    ) -> ConversationTurn | None:
-        """Synchronous wrapper for conversation turn persistence."""
-        return run_async_safely(self._apersist_turn, request, domain_output, resolved_tid)
 
     def _prepare_execution(
         self,
@@ -614,49 +548,12 @@ class WorkflowRunner:
 
         return wf_def, trace_id, handler, initial_state, run_config
 
-    async def _safe_evaluate(
-        self,
-        *,
-        trace_id: str,
-        question: str,
-        answer: str,
-        source_used: str,
-        retrieved_contexts: list[str],
-    ) -> None:
-        """Shielded online evaluation execution delegating to injected evaluator or hooks."""
-        try:
-            if self.eval_task_fn is not None:
-                res = self.eval_task_fn(
-                    trace_id=trace_id,
-                    question=question,
-                    answer=answer,
-                    source_used=source_used,
-                    retrieved_contexts=retrieved_contexts,
-                )
-            else:
-                res = self.evaluator.aevaluate(
-                    question=question,
-                    answer=answer,
-                    source_used=source_used,
-                    retrieved_contexts=retrieved_contexts,
-                    trace_id=trace_id,
-                )
-            if asyncio.iscoroutine(res) or hasattr(res, "__await__"):
-                await res
-        except Exception as exc:
-            logger.warning(
-                "online_evaluation_failed_shielded",
-                trace_id=trace_id,
-                error=str(exc),
-            )
-
     async def _adispatch_listeners(
         self,
         event_type: str,
         request: WorkflowInput,
         output: WorkflowOutput | None = None,
         error: Exception | None = None,
-        skip_background_tasks: bool = False,
     ) -> None:
         """Centralized lifecycle event dispatcher awaiting listeners with fail-open fault isolation."""
         resolved_event = event_type.lower().removeprefix("on_")
@@ -717,7 +614,7 @@ class WorkflowRunner:
                     error=str(exc),
                 )
 
-        if resolved_event == "completed" and output is not None and not skip_background_tasks:
+        if resolved_event == "completed" and output is not None:
             for listener in self.listeners:
                 try:
                     task = asyncio.create_task(listener.on_background_task(request, output))
@@ -750,10 +647,9 @@ class WorkflowRunner:
         request: WorkflowInput,
         output: WorkflowOutput | None = None,
         error: Exception | None = None,
-        skip_background_tasks: bool = False,
     ) -> None:
         """Synchronously dispatch lifecycle events via persistent background event loop."""
-        run_async_safely(self._adispatch_listeners, event_type, request, output, error, skip_background_tasks)
+        run_async_safely(self._adispatch_listeners, event_type, request, output, error)
 
     def _finalize_execution(
         self,
@@ -809,29 +705,11 @@ class WorkflowRunner:
             except Exception:
                 pass
 
-        if background_tasks is not None and resolved_tid:
-            try:
-                background_tasks.add_task(
-                    self._safe_evaluate,
-                    trace_id=resolved_tid,
-                    question=request.question,
-                    answer=domain_output.answer,
-                    source_used=domain_output.source_used,
-                    retrieved_contexts=retrieved_contexts,
-                )
-            except Exception as exc:
-                logger.warning(
-                    "online_evaluation_scheduling_failed",
-                    trace_id=resolved_tid,
-                    error=str(exc),
-                )
-
         if dispatch_listeners:
             self._dispatch_listeners(
                 "completed",
                 request,
                 domain_output,
-                skip_background_tasks=(background_tasks is not None),
             )
 
         return domain_output
@@ -859,7 +737,6 @@ class WorkflowRunner:
             "completed",
             request,
             domain_output,
-            skip_background_tasks=(background_tasks is not None),
         )
         return domain_output
 
@@ -1339,8 +1216,7 @@ def get_workflow_runner(
             telemetry_flusher=telemetry_flusher,
             eval_task_fn=eval_task_fn,
         )
-        if _default_runner is None:
-            _default_runner = runner
+        _default_runner = runner
         return runner
     if _default_runner is None:
         _default_runner = WorkflowRunner()

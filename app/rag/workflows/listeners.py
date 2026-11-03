@@ -166,7 +166,9 @@ class OnlineEvaluationListener(BaseExecutionLifecycleListener):
         if not output.answer or not output.answer.strip():
             return
 
-        trace_id = output.trace_id or request.trace_id
+        trace_id = output.trace_id or getattr(request, "trace_id", None)
+        if not trace_id:
+            return
         question = request.question
         answer = output.answer
         source_used = output.source_used or "direct"

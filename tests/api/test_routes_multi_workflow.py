@@ -142,7 +142,7 @@ class TestPostChatMultiWorkflow:
         def mock_eval_task(**kwargs):
             captured_eval.update(kwargs)
 
-        get_workflow_runner().eval_task_fn = mock_eval_task
+        get_workflow_runner(eval_task_fn=mock_eval_task)
 
         resp = client.post(
             "/api/chat",
@@ -191,7 +191,7 @@ class TestPostChatMultiWorkflow:
         }
 
         monkeypatch.setattr(workflow, "get_compiled_graph", lambda: mock_graph)
-        get_workflow_runner().eval_task_fn = MagicMock()
+        get_workflow_runner(eval_task_fn=MagicMock())
 
         resp = client.post(
             "/api/chat",

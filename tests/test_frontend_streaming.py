@@ -31,7 +31,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 @pytest.fixture(autouse=True)
 def mock_online_evaluation_defaults():
     """Prevent unawaited background evaluation tasks during frontend streaming tests."""
-    get_workflow_runner().eval_task_fn = AsyncMock()
+    get_workflow_runner(eval_task_fn=AsyncMock())
 
 
 @pytest.fixture

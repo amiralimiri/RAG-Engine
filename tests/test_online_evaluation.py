@@ -642,11 +642,12 @@ class TestRouteIntegration:
     """Verify POST /api/chat and POST /api/chat/stream dispatch background evaluation via Evaluator seam."""
 
     def test_sync_chat_enqueues_background_evaluation(self, register_mock_workflow):
-        client = TestClient(app)
         fake_evaluator = FakeEvaluator()
-        runner = get_workflow_runner()
-        runner.evaluator = fake_evaluator
-        runner.trace_extractor = lambda handler: "trace-sync-123"
+        get_workflow_runner(
+            evaluator=fake_evaluator,
+            trace_extractor=lambda handler: "trace-sync-123",
+        )
+        client = TestClient(app)
 
         register_mock_workflow(
             "fix_single_llm",
@@ -701,9 +702,10 @@ class TestRouteIntegration:
                 return await super().aevaluate(question, answer, source_used, retrieved_contexts, trace_id)
 
         evaluator = RecordingEvaluator()
-        runner = get_workflow_runner()
-        runner.evaluator = evaluator
-        runner.trace_extractor = lambda handler: "trace-stream-456"
+        get_workflow_runner(
+            evaluator=evaluator,
+            trace_extractor=lambda handler: "trace-stream-456",
+        )
 
         async def mock_astream_events(*args, **kwargs):
             yield {"event": "on_chain_start", "metadata": {"langgraph_node": "retrieve_kb"}, "data": {}}

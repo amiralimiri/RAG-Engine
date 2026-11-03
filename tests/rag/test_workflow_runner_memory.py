@@ -23,6 +23,7 @@ from app.rag.workflows.events import (
     StepTransitionEvent,
     TokenDeltaEvent,
 )
+from app.rag.workflows.listeners import MemoryPersistenceListener
 from app.rag.workflows.registry import WorkflowRegistry
 from app.rag.workflows.runner import WorkflowRunner
 
@@ -608,6 +609,7 @@ async def test_runner_persist_turn_delegates_to_aappend_turn():
     memory.asave_turn = AsyncMock()
 
     runner = WorkflowRunner(memory=memory)
+    listener = next(l for l in runner.listeners if isinstance(l, MemoryPersistenceListener))
 
     req = WorkflowInput(
         question="How does auth work?",
@@ -623,9 +625,8 @@ async def test_runner_persist_turn_delegates_to_aappend_turn():
         trace_id="tid-persist-123",
     )
 
-    persisted = await runner._apersist_turn(req, output, resolved_tid="tid-persist-123")
+    await listener.on_completed(req, output)
 
-    assert persisted == expected_turn
     memory.aappend_turn.assert_awaited_once_with(
         session_id="test-session-delegate",
         user_query="How does auth work?",
@@ -758,6 +759,7 @@ async def test_runner_persist_turn_rejects_sentinel_session_ids(sentinel_id: str
     memory.aappend_turn = AsyncMock()
 
     runner = WorkflowRunner(memory=memory)
+    listener = next(l for l in runner.listeners if isinstance(l, MemoryPersistenceListener))
     req = WorkflowInput(
         question="How does auth work?",
         session_id=sentinel_id,
@@ -768,6 +770,5 @@ async def test_runner_persist_turn_rejects_sentinel_session_ids(sentinel_id: str
         source_used="vectorstore",
     )
 
-    result = await runner._apersist_turn(req, output)
-    assert result is None
+    await listener.on_completed(req, output)
     memory.aappend_turn.assert_not_called()

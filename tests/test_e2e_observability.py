@@ -64,7 +64,7 @@ def test_e2e_flow_with_langfuse_mocked(client, monkeypatch, register_mock_workfl
     monkeypatch.setattr(
         "app.rag.workflows.runner.extract_trace_id", lambda handler: getattr(handler, "last_trace_id", None)
     )
-    get_workflow_runner().eval_task_fn = mock_eval
+    get_workflow_runner(eval_task_fn=mock_eval)
 
     register_mock_workflow(
         "fix_single_llm",
@@ -127,7 +127,7 @@ def test_e2e_flow_with_langfuse_disabled(client, monkeypatch, register_mock_work
     settings = get_settings()
     monkeypatch.setattr(settings, "langfuse_enabled", False)
     mock_eval = AsyncMock()
-    get_workflow_runner().eval_task_fn = mock_eval
+    get_workflow_runner(eval_task_fn=mock_eval)
 
     mock_graph = MagicMock()
     mock_graph.invoke.return_value = {
@@ -182,7 +182,7 @@ def test_e2e_flow_with_fix_single_jev_mocked(client, monkeypatch, register_mock_
     monkeypatch.setattr(
         "app.rag.workflows.runner.extract_trace_id", lambda handler: getattr(handler, "last_trace_id", None)
     )
-    get_workflow_runner().eval_task_fn = mock_eval
+    get_workflow_runner(eval_task_fn=mock_eval)
 
     mock_graph = MagicMock()
     mock_graph.invoke.return_value = {
@@ -282,7 +282,7 @@ async def test_e2e_streaming_flow_with_observability_and_evaluation(monkeypatch,
         eval_kwargs = kwargs
         eval_called.set()
 
-    get_workflow_runner().eval_task_fn = mock_eval_task
+    get_workflow_runner(eval_task_fn=mock_eval_task)
 
     async def mock_astream_events(*args, **kwargs):
         yield {"event": "on_chain_start", "metadata": {"langgraph_node": "retrieve_kb"}, "data": {}}
@@ -388,7 +388,7 @@ def test_e2e_switching_all_workflows_sync_and_stream(client, monkeypatch):
     monkeypatch.setattr(
         "app.rag.workflows.runner.extract_trace_id", lambda handler: getattr(handler, "last_trace_id", None)
     )
-    get_workflow_runner().eval_task_fn = mock_eval
+    get_workflow_runner(eval_task_fn=mock_eval)
 
     registry = get_workflow_registry()
     jev_wf = registry.get("fix_single_jev")
@@ -471,7 +471,7 @@ def test_e2e_multi_turn_session_persistence_http(client, monkeypatch):
     monkeypatch.setattr(
         "app.rag.workflows.runner.extract_trace_id", lambda handler: getattr(handler, "last_trace_id", None)
     )
-    get_workflow_runner().eval_task_fn = mock_eval
+    get_workflow_runner(eval_task_fn=mock_eval)
 
     class MemoryEchoChatModel(SimpleChatModel):
         @property
@@ -544,7 +544,7 @@ def test_e2e_langfuse_trace_spans_for_fixed_dag_and_react(client, monkeypatch):
     mock_client = MagicMock()
     monkeypatch.setattr("app.core.telemetry.get_langfuse_client", lambda: mock_client)
     monkeypatch.setattr("app.rag.workflows.runner.get_langfuse_callback", mock_get_langfuse_callback)
-    get_workflow_runner().eval_task_fn = AsyncMock()
+    get_workflow_runner(eval_task_fn=AsyncMock())
 
     registry = get_workflow_registry()
     jev_wf = registry.get("fix_single_jev")
@@ -620,12 +620,11 @@ async def test_e2e_online_evaluation_scores_recorded_for_all_workflows_without_s
     def mock_run_online_eval(**kwargs):
         captured_eval_tasks.append(kwargs)
 
-    get_workflow_runner().eval_task_fn = mock_run_online_eval
-
     registry = get_workflow_registry()
     workflows_to_test = ["fix_single_llm", "fix_single_jev", "react_agent"]
 
     with TestClient(app) as test_client:
+        get_workflow_runner(eval_task_fn=mock_run_online_eval)
         for wf_id in workflows_to_test:
             wf = registry.get(wf_id)
             mock_graph = MagicMock()
@@ -665,6 +664,7 @@ async def test_e2e_online_evaluation_scores_recorded_for_all_workflows_without_s
                 json={"question": f"Question for {wf_id}", "workflow": wf_id},
             )
             assert resp.status_code == 200
+            await asyncio.sleep(0.05)
 
             # 2. Check online evaluation task enqueued with valid schema
             eval_call = [c for c in captured_eval_tasks if c.get("question") == f"Question for {wf_id}"]

@@ -36,6 +36,10 @@ from app.rag.workflows.events import (
     StepTransitionEvent,
     TokenDeltaEvent,
 )
+from app.rag.workflows.listeners import (
+    MemoryPersistenceListener,
+    OnlineEvaluationListener,
+)
 from app.rag.workflows.registry import WorkflowRegistry, get_workflow_registry
 from app.rag.workflows.runner import (
     ExecutionResult,
@@ -428,13 +432,15 @@ async def test_aexecute_error_fallback_handling():
 # ==============================================================================
 
 
-def test_online_evaluation_scheduled_via_background_tasks():
-    """Verify online evaluation task is added to FastAPI BackgroundTasks when provided."""
+@pytest.mark.asyncio
+async def test_online_evaluation_scheduled_via_listener():
+    """Verify online evaluation task is dispatched via OnlineEvaluationListener when evaluator is configured."""
     custom_registry = WorkflowRegistry()
     mock_wf = MockWorkflow("eval_wf")
     custom_registry.register(mock_wf)
 
-    runner = WorkflowRunner(registry=custom_registry)
+    fake_eval = FakeEvaluator()
+    runner = WorkflowRunner(registry=custom_registry, evaluator=fake_eval)
     bg_tasks = BackgroundTasks()
 
     request = WorkflowInput(
@@ -446,14 +452,15 @@ def test_online_evaluation_scheduled_via_background_tasks():
     response = runner.execute(request, background_tasks=bg_tasks)
     assert response.workflow == "eval_wf"
 
-    # Verify task was enqueued on BackgroundTasks
-    assert len(bg_tasks.tasks) == 1
-    enqueued_task = bg_tasks.tasks[0]
-    assert enqueued_task.kwargs["trace_id"] == "evaltrace123"
-    assert enqueued_task.kwargs["question"] == "How do I configure evaluation?"
-    assert enqueued_task.kwargs["answer"] == "Mock Answer"
-    assert enqueued_task.kwargs["source_used"] == "vectorstore"
-    assert enqueued_task.kwargs["retrieved_contexts"] == ["chunk context 1"]
+    # Verify task was registered in runner._background_tasks or dispatched
+    await asyncio.sleep(0.05)
+    assert len(fake_eval.evaluate_calls) == 1
+    call = fake_eval.evaluate_calls[0]
+    assert call["trace_id"] == "evaltrace123"
+    assert call["question"] == "How do I configure evaluation?"
+    assert call["answer"] == "Mock Answer"
+    assert call["source_used"] == "vectorstore"
+    assert call["retrieved_contexts"] == ["chunk context 1"]
 
 
 @pytest.mark.asyncio
@@ -1157,29 +1164,28 @@ async def test_constructor_hook_injection_stream():
 
 
 def test_online_evaluation_scheduling_exception_shielded_with_warning():
-    """Verify exceptions in BackgroundTasks.add_task are logged as warnings and never abort execute()."""
+    """Verify exceptions in listener background task scheduling are logged as warnings and never abort execute()."""
     custom_registry = WorkflowRegistry()
     mock_wf = MockWorkflow("failing_bg_task_wf")
     custom_registry.register(mock_wf)
 
-    runner = WorkflowRunner(registry=custom_registry)
+    fake_eval = FakeEvaluator()
+    runner = WorkflowRunner(registry=custom_registry, evaluator=fake_eval)
     request = WorkflowInput(
         question="Will bg_task error crash execute?",
         workflow="failing_bg_task_wf",
         trace_id="eval-crash-trace",
     )
 
-    failing_bg_tasks = MagicMock()
-    failing_bg_tasks.add_task.side_effect = RuntimeError("BackgroundTasks queue pool exhausted")
-
-    with patch("app.rag.workflows.runner.logger.warning") as mock_log_warn:
-        response = runner.execute(request, background_tasks=failing_bg_tasks)
-        assert response.workflow == "failing_bg_task_wf"
-        assert response.answer == "Mock Answer"
-        assert mock_log_warn.called
-        log_event = mock_log_warn.call_args[0][0]
-        assert log_event == "online_evaluation_scheduling_failed"
-        assert "BackgroundTasks queue pool exhausted" in mock_log_warn.call_args[1]["error"]
+    with patch("asyncio.create_task", side_effect=RuntimeError("BackgroundTasks queue pool exhausted")):
+        with patch("app.rag.workflows.runner.logger.warning") as mock_log_warn:
+            response = runner.execute(request)
+            assert response.workflow == "failing_bg_task_wf"
+            assert response.answer == "Mock Answer"
+            assert mock_log_warn.called
+            log_event = mock_log_warn.call_args[0][0]
+            assert log_event == "listener_background_task_scheduling_failed"
+            assert "BackgroundTasks queue pool exhausted" in mock_log_warn.call_args[1]["error"]
 
 
 @pytest.mark.asyncio
@@ -1420,7 +1426,7 @@ async def test_finalize_execution_delegates_to_evaluator_aevaluate_in_execute():
     assert response.answer == "Mock Answer"
 
     # Await background evaluation tasks spawned in loop
-    await asyncio.gather(*list(runner._background_tasks), return_exceptions=True)
+    await asyncio.sleep(0.05)
 
     assert len(fake_eval.evaluate_calls) == 1
     call = fake_eval.evaluate_calls[0]
@@ -1433,7 +1439,7 @@ async def test_finalize_execution_delegates_to_evaluator_aevaluate_in_execute():
 
 @pytest.mark.asyncio
 async def test_finalize_execution_delegates_to_evaluator_in_background_tasks():
-    """Verify execute() with BackgroundTasks delegates evaluator.aevaluate to background tasks."""
+    """Verify execute() delegates evaluator.aevaluate via listener background task."""
     custom_registry = WorkflowRegistry()
     mock_wf = MockWorkflow("bg_eval_wf")
     custom_registry.register(mock_wf)
@@ -1446,12 +1452,7 @@ async def test_finalize_execution_delegates_to_evaluator_in_background_tasks():
     response = runner.execute(request, background_tasks=bg_tasks)
     assert response.answer == "Mock Answer"
 
-    assert len(bg_tasks.tasks) == 1
-    task = bg_tasks.tasks[0]
-    # Execute the queued background task
-    res = task()
-    if asyncio.iscoroutine(res) or hasattr(res, "__await__"):
-        await res
+    await asyncio.sleep(0.05)
 
     assert len(fake_eval.evaluate_calls) == 1
     call = fake_eval.evaluate_calls[0]
@@ -2134,3 +2135,94 @@ async def test_stream_propagates_variant_id_in_terminal_metadata():
     assert len(completed_events) == 1
     assert completed_events[0].output.workflow == "stream_variant_wf"
     assert completed_events[0].output.variant_id == "stream_v1"
+
+
+# ==============================================================================
+# 15. Private Bypass Pruning & Read-Only Properties (Issue 03)
+# ==============================================================================
+
+
+def test_runner_private_bypass_methods_pruned():
+    """Verify vestigial bypass methods have been deleted from WorkflowRunner."""
+    assert not hasattr(WorkflowRunner, "_apersist_turn")
+    assert not hasattr(WorkflowRunner, "_persist_turn_sync")
+    assert not hasattr(WorkflowRunner, "_safe_evaluate")
+
+
+def test_runner_properties_are_read_only():
+    """Verify memory, evaluator, eval_task_fn, and listeners are read-only properties."""
+    runner = WorkflowRunner()
+
+    with pytest.raises(AttributeError):
+        runner.memory = None  # type: ignore[misc]
+
+    with pytest.raises(AttributeError):
+        runner.evaluator = None  # type: ignore[misc]
+
+    with pytest.raises(AttributeError):
+        runner.eval_task_fn = None  # type: ignore[misc]
+
+    with pytest.raises(AttributeError):
+        runner.listeners = []  # type: ignore[misc]
+
+
+def test_runner_auto_wires_listeners_when_omitted():
+    """Verify memory and evaluator auto-wire listeners when listeners parameter is omitted."""
+    fake_mem = MagicMock()
+    fake_eval = FakeEvaluator()
+
+    runner = WorkflowRunner(memory=fake_mem, evaluator=fake_eval)
+    assert len(runner.listeners) == 2
+    assert any(isinstance(l, MemoryPersistenceListener) for l in runner.listeners)
+    assert any(isinstance(l, OnlineEvaluationListener) for l in runner.listeners)
+
+    # Empty listeners explicitly overrides auto-wiring
+    runner_empty = WorkflowRunner(memory=fake_mem, evaluator=fake_eval, listeners=[])
+    assert runner_empty.listeners == []
+
+
+@pytest.mark.asyncio
+async def test_runner_empty_listeners_guarantees_zero_side_effects():
+    """Verify initializing WorkflowRunner(listeners=[]) guarantees zero persistence and zero judge tasks."""
+    custom_registry = WorkflowRegistry()
+    mock_wf = MockWorkflow("zero_side_effects_wf")
+    mock_wf.mock_graph.ainvoke = AsyncMock(
+        return_value={"answer": "Mock Answer", "source_used": "vectorstore", "trace": []}
+    )
+    custom_registry.register(mock_wf)
+
+    fake_mem = MagicMock()
+    fake_mem.aget_messages = AsyncMock(return_value=[])
+    fake_mem.aappend_turn = AsyncMock()
+    fake_eval = FakeEvaluator()
+
+    runner = WorkflowRunner(
+        registry=custom_registry,
+        memory=fake_mem,
+        evaluator=fake_eval,
+        listeners=[],
+    )
+    assert runner.listeners == []
+
+    req = WorkflowInput(
+        question="Zero side effects question",
+        workflow="zero_side_effects_wf",
+        session_id="session_zero_se",
+        trace_id="trace_zero_se",
+    )
+
+    # 1. Sync execute
+    resp = runner.execute(req)
+    assert resp.answer == "Mock Answer"
+    await asyncio.sleep(0.05)
+    fake_mem.aappend_turn.assert_not_called()
+    assert len(fake_eval.evaluate_calls) == 0
+    assert len(runner._background_tasks) == 0
+
+    # 2. Async aexecute
+    resp_async = await runner.aexecute(req)
+    assert resp_async.answer == "Mock Answer"
+    await asyncio.sleep(0.05)
+    fake_mem.aappend_turn.assert_not_called()
+    assert len(fake_eval.evaluate_calls) == 0
+    assert len(runner._background_tasks) == 0

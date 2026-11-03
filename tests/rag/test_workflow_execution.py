@@ -582,8 +582,8 @@ async def test_graph_execution_errors_trigger_on_error_across_all_pathways():
 
 
 @pytest.mark.asyncio
-async def test_background_tasks_bridge_skips_listener_background_task_dispatch():
-    """Verify that when FastAPI background_tasks is supplied, on_background_task listener dispatch is skipped."""
+async def test_background_tasks_param_still_dispatches_listener_background_task():
+    """Verify that when legacy background_tasks is supplied, listeners still receive lifecycle dispatches."""
     from fastapi import BackgroundTasks
 
     registry = WorkflowRegistry()
@@ -601,16 +601,18 @@ async def test_background_tasks_bridge_skips_listener_background_task_dispatch()
 
     # 1. Async aexecute with background_tasks
     await runner.aexecute(request, background_tasks=bg_tasks)
+    await asyncio.sleep(0.05)
     assert len(spy_listener.completed_calls) == 1
-    assert len(spy_listener.background_calls) == 0
+    assert len(spy_listener.background_calls) == 1
 
     spy_listener.completed_calls.clear()
+    spy_listener.background_calls.clear()
 
     # 2. Sync execute with background_tasks
     runner.execute(request, background_tasks=bg_tasks)
-    await asyncio.sleep(0.02)
+    await asyncio.sleep(0.05)
     assert len(spy_listener.completed_calls) == 1
-    assert len(spy_listener.background_calls) == 0
+    assert len(spy_listener.background_calls) == 1
 
 
 @pytest.mark.asyncio

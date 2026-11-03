@@ -193,7 +193,7 @@ def mock_telemetry_defaults(monkeypatch):
         "app.rag.workflows.runner.extract_trace_id", lambda handler: getattr(handler, "last_trace_id", "trace-default")
     )
     monkeypatch.setattr("app.rag.workflows.runner.flush_telemetry", lambda: None)
-    get_workflow_runner().eval_task_fn = AsyncMock()
+    get_workflow_runner(eval_task_fn=AsyncMock())
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -425,7 +425,7 @@ class TestWireEventSequence:
             captured_kwargs = kwargs
             eval_task_called.set()
 
-        get_workflow_runner().eval_task_fn = fake_eval_task
+        get_workflow_runner(eval_task_fn=fake_eval_task)
 
         async def mock_events(*args, **kwargs):
             yield {"event": "on_chain_start", "metadata": {"langgraph_node": "retrieve_kb"}, "data": {}}
@@ -1090,7 +1090,7 @@ class TestUnifiedBaseToolStreamingRegression:
             captured_eval = kwargs
             eval_task_called.set()
 
-        get_workflow_runner().eval_task_fn = fake_eval
+        get_workflow_runner(eval_task_fn=fake_eval)
 
         kb_doc = Document(
             page_content="Official company VPN setup guide.", metadata={"source": "docs/network/vpn_setup.md"}
@@ -1169,7 +1169,7 @@ class TestUnifiedBaseToolStreamingRegression:
             captured_eval = kwargs
             eval_task_called.set()
 
-        get_workflow_runner().eval_task_fn = fake_eval
+        get_workflow_runner(eval_task_fn=fake_eval)
 
         kb_tool = MagicMock(spec=BaseTool)
         kb_tool.ainvoke = AsyncMock(return_value=("No internal KB docs found", {"documents": [], "citations": []}))
