@@ -643,3 +643,42 @@ async def test_http_exception_triggers_on_error_prior_to_reraising():
     assert len(spy_listener.error_calls) == 1
     assert isinstance(spy_listener.error_calls[0][1], HTTPException)
 
+
+@pytest.mark.asyncio
+async def test_no_duplicate_on_error_when_handle_error_fails():
+    """Verify that if graph failure triggers on_error, subsequent handle_error failure does not re-dispatch on_error."""
+    from fastapi import HTTPException
+
+    registry = WorkflowRegistry()
+    workflow = DummyStreamWorkflow()
+    graph_error = RuntimeError("Original graph explosion")
+    handler_error = RuntimeError("handle_error explosion")
+
+    workflow.mock_graph.invoke.side_effect = graph_error
+    workflow.mock_graph.ainvoke = AsyncMock(side_effect=graph_error)
+    workflow.handle_error = MagicMock(side_effect=handler_error)
+    registry.register(workflow)
+
+    sync_spy = SpyExecutionLifecycleListener()
+    sync_runner = WorkflowRunner(registry=registry, listeners=[sync_spy])
+
+    async_spy = SpyExecutionLifecycleListener()
+    async_runner = WorkflowRunner(registry=registry, listeners=[async_spy])
+
+    request = WorkflowInput(question="Double error test", workflow="dummy_stream_wf")
+
+    # 1. Sync execute
+    with pytest.raises(HTTPException) as exc_info:
+        sync_runner.execute(request)
+    assert exc_info.value.status_code == 500
+    assert len(sync_spy.error_calls) == 1
+    assert sync_spy.error_calls[0][1] is graph_error
+
+    # 2. Async aexecute
+    with pytest.raises(HTTPException) as exc_info_async:
+        await async_runner.aexecute(request)
+    assert exc_info_async.value.status_code == 500
+    assert len(async_spy.error_calls) == 1
+    assert async_spy.error_calls[0][1] is graph_error
+
+

@@ -120,6 +120,35 @@ class WorkflowOutput(BaseModel):
         description="List of text chunks or document excerpts retrieved by the workflow",
     )
 
+    def normalize_contexts(self) -> list[str]:
+        """Normalize raw or heterogeneous retrieved_contexts into a standardized list of strings."""
+        raw_contexts = getattr(self, "retrieved_contexts", None)
+        if raw_contexts is None:
+            self.retrieved_contexts = []
+            return self.retrieved_contexts
+
+        if isinstance(raw_contexts, list):
+            normalized: list[str] = []
+            for chunk_item in raw_contexts:
+                if isinstance(chunk_item, str):
+                    normalized.append(chunk_item)
+                elif isinstance(chunk_item, dict):
+                    content = None
+                    for key in ("content", "text", "snippet", "page_content"):
+                        val = chunk_item.get(key)
+                        if val is not None:
+                            content = val
+                            break
+                    normalized.append(str(content) if content is not None else str(chunk_item))
+                else:
+                    normalized.append(str(chunk_item))
+            self.retrieved_contexts = normalized
+        elif isinstance(raw_contexts, str):
+            self.retrieved_contexts = [raw_contexts]
+        else:
+            self.retrieved_contexts = [str(raw_contexts)]
+        return self.retrieved_contexts
+
 
 @runtime_checkable
 class WorkflowDefinition(Protocol):

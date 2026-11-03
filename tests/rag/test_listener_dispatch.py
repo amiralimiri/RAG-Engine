@@ -134,6 +134,33 @@ async def test_adispatch_listeners_normalizes_none_retrieved_contexts() -> None:
     assert received_output.retrieved_contexts == []
 
 
+def test_workflow_output_normalize_contexts_direct():
+    """Verify WorkflowOutput.normalize_contexts normalizes dicts, strings, and non-string chunks."""
+    output = WorkflowOutput.model_construct(
+        workflow="mock_wf",
+        answer="Test answer",
+        retrieved_contexts=[
+            {"content": "c1"},
+            {"text": "c2"},
+            {"snippet": "c3"},
+            {"page_content": "c4"},
+            "raw string",
+            999,
+        ],
+    )
+    res = output.normalize_contexts()
+    assert res == ["c1", "c2", "c3", "c4", "raw string", "999"]
+    assert output.retrieved_contexts == ["c1", "c2", "c3", "c4", "raw string", "999"]
+
+    output_none = WorkflowOutput.model_construct(
+        workflow="mock_wf",
+        answer="Test answer",
+        retrieved_contexts=None,
+    )
+    assert output_none.normalize_contexts() == []
+    assert output_none.retrieved_contexts == []
+
+
 @pytest.mark.asyncio
 async def test_adispatch_listeners_fail_open_isolation() -> None:
     """Verify failing listener does not prevent subsequent listeners from executing."""

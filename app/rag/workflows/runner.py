@@ -135,7 +135,8 @@ class WorkflowRunner:
             if evaluator is not None or eval_task_fn is not None:
                 defaults.append(
                     OnlineEvaluationListener(
-                        evaluator=evaluator,
+                        evaluator=evaluator
+                        or (get_evaluator() if evaluator is None and eval_task_fn is None else None),
                         eval_task_fn=eval_task_fn,
                     )
                 )
@@ -567,29 +568,18 @@ class WorkflowRunner:
             return
 
         if output is not None:
-            raw_contexts = getattr(output, "retrieved_contexts", None)
-            if raw_contexts is None:
-                output.retrieved_contexts = []
-            elif isinstance(raw_contexts, list):
-                normalized: list[str] = []
-                for chunk_item in raw_contexts:
-                    if isinstance(chunk_item, str):
-                        normalized.append(chunk_item)
-                    elif isinstance(chunk_item, dict):
-                        content = None
-                        for key in ("content", "text", "snippet", "page_content"):
-                            val = chunk_item.get(key)
-                            if val is not None:
-                                content = val
-                                break
-                        normalized.append(str(content) if content is not None else str(chunk_item))
-                    else:
-                        normalized.append(str(chunk_item))
-                output.retrieved_contexts = normalized
-            elif isinstance(raw_contexts, str):
-                output.retrieved_contexts = [raw_contexts]
+            if hasattr(output, "normalize_contexts") and callable(output.normalize_contexts):
+                output.normalize_contexts()
             else:
-                output.retrieved_contexts = [str(raw_contexts)]
+                raw_contexts = getattr(output, "retrieved_contexts", None)
+                if raw_contexts is None:
+                    output.retrieved_contexts = []
+                elif isinstance(raw_contexts, list):
+                    output.retrieved_contexts = [str(c) for c in raw_contexts]
+                elif isinstance(raw_contexts, str):
+                    output.retrieved_contexts = [raw_contexts]
+                else:
+                    output.retrieved_contexts = [str(raw_contexts)]
 
         if resolved_event == "completed" and output is None:
             logger.warning("listener_dispatch_missing_output", event_type=resolved_event)
@@ -751,6 +741,7 @@ class WorkflowRunner:
         **kwargs: Any,
     ) -> tuple[WorkflowOutput, dict[str, Any]]:
         """Synchronously execute workflow and return (WorkflowOutput, final_state) without model mutation."""
+        error_dispatched = False
         try:
             wf_def, trace_id, handler, initial_state, run_config = self._prepare_execution(
                 request,
@@ -772,6 +763,7 @@ class WorkflowRunner:
                     final_state = {"answer": str(final_state)}
             except Exception as exc:
                 self._dispatch_listeners("error", request, error=exc)
+                error_dispatched = True
                 logger.exception("Error executing workflow %s: %s", getattr(request, "workflow", "unknown"), exc)
                 final_state = wf_def.handle_error(exc, initial_state)
 
@@ -784,10 +776,12 @@ class WorkflowRunner:
             )
             return response, final_state
         except HTTPException as exc:
-            self._dispatch_listeners("error", request, error=exc)
+            if not error_dispatched:
+                self._dispatch_listeners("error", request, error=exc)
             raise
         except Exception as exc:
-            self._dispatch_listeners("error", request, error=exc)
+            if not error_dispatched:
+                self._dispatch_listeners("error", request, error=exc)
             logger.exception("Error in chat pipeline: %s", exc)
             raise HTTPException(status_code=500, detail=f"Inference error: {exc}") from exc
         finally:
@@ -851,6 +845,7 @@ class WorkflowRunner:
         **kwargs: Any,
     ) -> tuple[WorkflowOutput, dict[str, Any]]:
         """Asynchronously execute workflow and return (WorkflowOutput, final_state) without model mutation."""
+        error_dispatched = False
         try:
             hydrated = await self._ahydrate_memory(request)
             wf_def, trace_id, handler, initial_state, run_config = self._prepare_execution(
@@ -882,6 +877,7 @@ class WorkflowRunner:
                     final_state = {"answer": str(final_state)}
             except Exception as exc:
                 await self._adispatch_listeners("error", request, error=exc)
+                error_dispatched = True
                 logger.exception("Error executing workflow %s: %s", getattr(request, "workflow", "unknown"), exc)
                 final_state = wf_def.handle_error(exc, initial_state)
 
@@ -894,10 +890,12 @@ class WorkflowRunner:
             )
             return response, final_state
         except HTTPException as exc:
-            await self._adispatch_listeners("error", request, error=exc)
+            if not error_dispatched:
+                await self._adispatch_listeners("error", request, error=exc)
             raise
         except Exception as exc:
-            await self._adispatch_listeners("error", request, error=exc)
+            if not error_dispatched:
+                await self._adispatch_listeners("error", request, error=exc)
             logger.exception("Error in chat pipeline: %s", exc)
             raise HTTPException(status_code=500, detail=f"Inference error: {exc}") from exc
         finally:

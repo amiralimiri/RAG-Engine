@@ -17,7 +17,7 @@ from app.rag.evaluation import FakeEvaluator
 from app.rag.memory.base import ConversationTurn
 from app.rag.memory.in_memory import InMemoryConversationStore
 from app.rag.workflows.registry import get_workflow_registry
-from app.rag.workflows.runner import WorkflowRunner
+from app.rag.workflows.runner import get_workflow_runner
 from tests.conftest import MockWorkflowDefinition
 
 
@@ -26,8 +26,7 @@ def memory_store(monkeypatch) -> InMemoryConversationStore:
     """Fixture providing an isolated in-memory conversation memory adapter."""
     store = InMemoryConversationStore()
     monkeypatch.setattr("app.rag.memory._memory_instance", store)
-    runner = WorkflowRunner(registry=get_workflow_registry(), memory=store, eval_task_fn=lambda **kwargs: None)
-    monkeypatch.setattr("app.rag.workflows.runner._default_runner", runner)
+    get_workflow_runner(registry=get_workflow_registry(), memory=store, eval_task_fn=lambda **kwargs: None)
     return store
 
 
@@ -447,10 +446,9 @@ class TestChatMemoryRoutes:
         db_path = tmp_path / "test_sqlite_e2e.db"
         sqlite_store = SQLiteConversationStore(db_path=db_path)
         monkeypatch.setattr("app.rag.memory._memory_instance", sqlite_store)
-        runner = WorkflowRunner(
+        get_workflow_runner(
             registry=get_workflow_registry(), memory=sqlite_store, eval_task_fn=lambda **kwargs: None
         )
-        monkeypatch.setattr("app.rag.workflows.runner._default_runner", runner)
 
         session_id = "sess-sqlite-e2e"
 
@@ -534,7 +532,7 @@ class TestChatMemoryRoutes:
             source_used="private_kb",
         )
 
-        runner = WorkflowRunner(
+        get_workflow_runner(
             registry=get_workflow_registry(),
             memory=store,
             listeners=[
@@ -542,7 +540,6 @@ class TestChatMemoryRoutes:
                 OnlineEvaluationListener(evaluator=fake_eval),
             ],
         )
-        monkeypatch.setattr("app.rag.workflows.runner._default_runner", runner)
         monkeypatch.setattr("app.rag.memory._memory_instance", store)
 
         session_id = "sess-route-modernized"
