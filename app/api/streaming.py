@@ -44,7 +44,7 @@ class SseStreamAdapter:
         cls,
         events: AsyncIterable[WorkflowExecutionEvent],
         step_labels: dict[str, str] | None = None,
-    ) -> AsyncGenerator[str]:
+    ) -> AsyncGenerator[str, None]:  # noqa: UP043
         """Convert asynchronous workflow domain events into standard SSE text frames."""
         async for event in events:
             if isinstance(event, StepTransitionEvent):

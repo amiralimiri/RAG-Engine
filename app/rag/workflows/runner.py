@@ -1004,7 +1004,7 @@ class WorkflowRunner:
     def stream(
         self,
         request: WorkflowInput,
-    ) -> AsyncGenerator[WorkflowExecutionEvent]:
+    ) -> AsyncGenerator[WorkflowExecutionEvent, None]:  # noqa: UP043
         """Validate workflow and return an asynchronous generator yielding typed WorkflowExecutionEvent instances."""
         wf_name = (request.workflow if hasattr(request, "workflow") and request.workflow else None) or "fix_single_jev"
         self._resolve_workflow(wf_name)
@@ -1013,7 +1013,7 @@ class WorkflowRunner:
     async def _stream_generator(
         self,
         request: WorkflowInput,
-    ) -> AsyncGenerator[WorkflowExecutionEvent]:
+    ) -> AsyncGenerator[WorkflowExecutionEvent, None]:  # noqa: UP043
         """Consume LangGraph astream_events v2 and yield typed domain events."""
         cb_factory = self.callback_factory
         tr_extractor = self.trace_extractor
@@ -1294,7 +1294,7 @@ def get_workflow_runner(
             eval_task_fn,
         )
     ):
-        return WorkflowRunner(
+        runner = WorkflowRunner(
             registry=registry,
             evaluator=evaluator,
             memory=memory,
@@ -1304,6 +1304,9 @@ def get_workflow_runner(
             telemetry_flusher=telemetry_flusher,
             eval_task_fn=eval_task_fn,
         )
+        if _default_runner is None:
+            _default_runner = runner
+        return runner
     if _default_runner is None:
         _default_runner = WorkflowRunner()
     return _default_runner

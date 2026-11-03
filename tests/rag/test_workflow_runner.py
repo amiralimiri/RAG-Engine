@@ -139,6 +139,36 @@ def test_runner_factory_and_injection():
     assert direct_runner.registry is custom_registry
 
 
+def test_get_workflow_runner_prewarming():
+    """Verify get_workflow_runner pre-warms default singleton when invoked with dependencies."""
+    from app.rag.evaluation import FakeEvaluator
+    from app.rag.memory.in_memory import InMemoryConversationStore
+
+    reset_workflow_runner()
+    store = InMemoryConversationStore()
+    evaluator = FakeEvaluator()
+
+    warmed_runner = get_workflow_runner(memory=store, evaluator=evaluator)
+    assert get_workflow_runner() is warmed_runner
+    assert warmed_runner._memory is store
+    assert warmed_runner.evaluator is evaluator
+
+
+@pytest.mark.asyncio
+async def test_lifespan_prewarms_production_workflow_runner():
+    """Verify application lifespan hook pre-warms global WorkflowRunner with memory and evaluator."""
+    from fastapi import FastAPI
+
+    from app.main import lifespan
+
+    reset_workflow_runner()
+    test_app = FastAPI()
+    async with lifespan(test_app):
+        runner = get_workflow_runner()
+        assert runner._memory is not None
+        assert runner.evaluator is not None
+
+
 # ==============================================================================
 # 2. Workflow Lookup & Rejection
 # ==============================================================================

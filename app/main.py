@@ -11,7 +11,10 @@ from app.core.concurrency import shutdown_background_loop
 from app.core.config import BASE_DIR, get_settings
 from app.core.logger import configure_logging
 from app.core.telemetry import flush_telemetry
+from app.rag.evaluation import get_evaluator
+from app.rag.memory import get_conversation_memory
 from app.rag.prompts import get_prompt_store
+from app.rag.workflows import get_workflow_runner
 
 settings = get_settings()
 
@@ -21,6 +24,7 @@ async def lifespan(app: FastAPI):
     # Startup
     configure_logging()
     get_prompt_store().seed_prompts()
+    get_workflow_runner(memory=get_conversation_memory(), evaluator=get_evaluator())
     yield
     # Shutdown
     flush_telemetry()

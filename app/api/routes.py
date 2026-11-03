@@ -24,8 +24,7 @@ from app.core.config import get_settings
 from app.rag.evaluation import get_evaluator
 from app.rag.knowledge import SUPPORTED_EXTENSIONS, get_document_indexer
 from app.rag.memory import get_conversation_memory
-from app.rag.workflows import get_workflow_registry
-from app.rag.workflows.runner import DEFAULT_STEP_LABELS, get_workflow_runner
+from app.rag.workflows import DEFAULT_STEP_LABELS, get_workflow_registry, get_workflow_runner
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/api")

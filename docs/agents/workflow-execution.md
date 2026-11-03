@@ -16,7 +16,7 @@ Guidelines and lessons learned from ADR-0010 (Workflow Runner Execution Pipeline
 
 3. **No Dynamic Pydantic Model Mutation & Encapsulated Evaluation Context**:
    - Never dynamically attach private attributes to Pydantic models (e.g. `chat_response._raw_state = final_state`).
-   - The public execution seam (`execute`, `aexecute`, `stream`) returns standardized domain models (`ChatResponse` or SSE string stream).
+   - The public execution seam returns standardized domain models: `execute` and `aexecute` return `WorkflowOutput`, while `stream` returns `AsyncGenerator[WorkflowExecutionEvent, None]` (per ADR-0019). Transport-specific wire adapters (such as `SseStreamAdapter` in `app/api/streaming.py`) convert domain event streams into HTTP SSE text frames.
    - For offline evaluation harnesses, benchmark experiments, or diagnostic suites requiring normalized retrieval context and evidence, use `runner.execute_with_context(request) -> ExecutionResult` (per ADR-0013). This bundles the generated response with `EvalContext` without exposing raw internal graph state or piercing private methods (`_execute_with_state`).
    - Public transport routes strictly consume `execute()` or `stream()`.
 
@@ -27,8 +27,8 @@ Guidelines and lessons learned from ADR-0010 (Workflow Runner Execution Pipeline
 5. **Centralized Workflow Resolution**:
    - Always resolve workflows through `WorkflowRunner._resolve_workflow()` so that auto-registration of canonical default workflows (`fix_single_llm`, `fix_single_jev`, `react_agent`) is identical across all entrypoints (`execute`, `aexecute`, `stream`). Never perform raw registry dictionary lookups that bypass default registration.
 
-6. **Streaming Error Fallback Preservation**:
-   - When an unhandled exception occurs in `WorkflowRunner.stream()`, invoke `workflow_def.handle_error(exc, state)` and yield fallback tokens and metadata frames before terminating with the final SSE error frame.
+6. **Streaming Error Handling & Lifecycle Shielding (ADR-0019)**:
+   - When an unhandled exception occurs in `WorkflowRunner.stream()`, invoke `workflow_def.handle_error(exc, state)` for error logging/cleanup, notify registered `ExecutionLifecycleListener.on_error(request, exc)`, and yield a discrete domain `ExecutionFailedEvent(error=str(exc))` rather than emitting synthetic fallback answer tokens. The presentation layer (`SseStreamAdapter`) translates this into an SSE `error` frame.
 
 7. **Autonomous ReAct Agent & `create_agent` Seam Standards (ADR-0014)**:
    - Modernize agent workflows to compile via `from langchain.agents import create_agent` rather than deprecated `langgraph.prebuilt.create_react_agent`.

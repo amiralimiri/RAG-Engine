@@ -32,6 +32,7 @@ from app.rag.workflows.registry import (
     register_workflow,
 )
 from app.rag.workflows.runner import (
+    DEFAULT_STEP_LABELS,
     ExecutionResult,
     WorkflowRunner,
     get_workflow_runner,
@@ -94,6 +95,7 @@ __all__ = [
     "load_workflows_from_directory",
     "WorkflowRunner",
     "get_workflow_runner",
+    "DEFAULT_STEP_LABELS",
     "SelfCorrectiveRagWorkflow",
     "ReActAgentWorkflow",
     "PluggableWorkflow",
