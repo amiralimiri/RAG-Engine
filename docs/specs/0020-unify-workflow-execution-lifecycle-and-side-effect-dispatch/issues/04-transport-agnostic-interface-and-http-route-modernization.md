@@ -4,10 +4,10 @@
 
 **Blocked by:** 03: Prune Private Bypass Methods & Mutable Property Setters
 
-**Status:** ready-for-agent
+**Status:** completed
 
-- [ ] Remove `background_tasks: BackgroundTasks | None = None` from `WorkflowRunner.execute`, `WorkflowRunner.execute_with_context`, and `WorkflowRunner.aexecute`.
-- [ ] Remove `from fastapi import BackgroundTasks` from `app/rag/workflows/runner.py`.
-- [ ] Modernize `chat()` in `app/api/routes.py` to `def chat(payload: ChatRequest):` without `background_tasks: BackgroundTasks`.
-- [ ] Verify that `POST /api/chat` persists conversation turns and triggers background online evaluation via `OnlineEvaluationListener` without requiring `BackgroundTasks`.
-- [ ] Run full test suite regression (`pytest`) verifying memory hydration, in-place rewind, streaming event generation, and evaluation scoring.
+- [x] Remove `background_tasks: BackgroundTasks | None = None` from `WorkflowRunner.execute`, `WorkflowRunner.execute_with_context`, and `WorkflowRunner.aexecute`.
+- [x] Remove `from fastapi import BackgroundTasks` from `app/rag/workflows/runner.py`.
+- [x] Modernize `chat()` in `app/api/routes.py` to `def chat(payload: ChatRequest):` without `background_tasks: BackgroundTasks`.
+- [x] Verify that `POST /api/chat` persists conversation turns and triggers background online evaluation via `OnlineEvaluationListener` without requiring `BackgroundTasks`.
+- [x] Run full test suite regression (`pytest`) verifying memory hydration, in-place rewind, streaming event generation, and evaluation scoring.

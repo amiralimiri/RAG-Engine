@@ -62,9 +62,9 @@ def list_workflows():
 
 
 @router.post("/chat", response_model=ChatResponse)
-def chat(payload: ChatRequest, background_tasks: BackgroundTasks):
+def chat(payload: ChatRequest) -> ChatResponse:
     wf_input = payload.to_workflow_input()
-    wf_output = get_workflow_runner().execute(wf_input, background_tasks=background_tasks)
+    wf_output = get_workflow_runner().execute(wf_input)
     return ChatResponse.from_workflow_output(wf_output)
 
 

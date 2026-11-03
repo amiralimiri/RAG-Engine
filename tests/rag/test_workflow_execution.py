@@ -582,25 +582,21 @@ async def test_graph_execution_errors_trigger_on_error_across_all_pathways():
 
 
 @pytest.mark.asyncio
-async def test_background_tasks_param_still_dispatches_listener_background_task():
-    """Verify that when legacy background_tasks is supplied, listeners still receive lifecycle dispatches."""
-    from fastapi import BackgroundTasks
-
+async def test_sync_and_async_execute_dispatch_background_task_without_background_tasks_param():
+    """Verify that execute and aexecute dispatch listener background tasks purely via asyncio loop."""
     registry = WorkflowRegistry()
     workflow = DummyStreamWorkflow()
-    mock_state = {"answer": "Bridge test answer", "source_used": "direct", "trace": []}
+    mock_state = {"answer": "Pure test answer", "source_used": "direct", "trace": []}
     workflow.mock_graph.invoke.return_value = mock_state
     workflow.mock_graph.ainvoke = AsyncMock(return_value=mock_state)
     registry.register(workflow)
 
     spy_listener = SpyExecutionLifecycleListener()
     runner = WorkflowRunner(registry=registry, listeners=[spy_listener])
-    request = WorkflowInput(question="Bridge question", workflow="dummy_stream_wf")
+    request = WorkflowInput(question="Pure question", workflow="dummy_stream_wf")
 
-    bg_tasks = BackgroundTasks()
-
-    # 1. Async aexecute with background_tasks
-    await runner.aexecute(request, background_tasks=bg_tasks)
+    # 1. Async aexecute without background_tasks
+    await runner.aexecute(request)
     await asyncio.sleep(0.05)
     assert len(spy_listener.completed_calls) == 1
     assert len(spy_listener.background_calls) == 1
@@ -608,8 +604,8 @@ async def test_background_tasks_param_still_dispatches_listener_background_task(
     spy_listener.completed_calls.clear()
     spy_listener.background_calls.clear()
 
-    # 2. Sync execute with background_tasks
-    runner.execute(request, background_tasks=bg_tasks)
+    # 2. Sync execute without background_tasks
+    runner.execute(request)
     await asyncio.sleep(0.05)
     assert len(spy_listener.completed_calls) == 1
     assert len(spy_listener.background_calls) == 1

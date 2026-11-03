@@ -9,7 +9,7 @@ from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
 from typing import Any, cast
 
 import structlog
-from fastapi import BackgroundTasks, HTTPException
+from fastapi import HTTPException
 from langchain_core.messages import BaseMessage
 from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
@@ -662,7 +662,6 @@ class WorkflowRunner:
         final_state: dict[str, Any],
         trace_id: str | None,
         handler: Any,
-        background_tasks: BackgroundTasks | None = None,
         dispatch_listeners: bool = True,
     ) -> WorkflowOutput:
         """Convert final state to domain WorkflowOutput, bind resolved trace context, and schedule online evaluation."""
@@ -725,7 +724,6 @@ class WorkflowRunner:
         final_state: dict[str, Any],
         trace_id: str | None,
         handler: Any,
-        background_tasks: BackgroundTasks | None = None,
     ) -> WorkflowOutput:
         """Asynchronously finalize execution and persist turn via direct coroutine await."""
         domain_output = self._finalize_execution(
@@ -734,7 +732,6 @@ class WorkflowRunner:
             final_state=final_state,
             trace_id=trace_id,
             handler=handler,
-            background_tasks=background_tasks,
             dispatch_listeners=False,
         )
         await self._adispatch_listeners(
@@ -747,7 +744,6 @@ class WorkflowRunner:
     def _execute_with_state(
         self,
         request: WorkflowInput,
-        background_tasks: BackgroundTasks | None = None,
         *,
         callback: Any | None = None,
         metadata: dict[str, Any] | None = None,
@@ -785,7 +781,6 @@ class WorkflowRunner:
                 final_state=final_state,
                 trace_id=trace_id,
                 handler=handler,
-                background_tasks=background_tasks,
             )
             return response, final_state
         except HTTPException as exc:
@@ -804,7 +799,6 @@ class WorkflowRunner:
     def execute(
         self,
         request: WorkflowInput,
-        background_tasks: BackgroundTasks | None = None,
         *,
         callback: Any | None = None,
         metadata: dict[str, Any] | None = None,
@@ -814,7 +808,6 @@ class WorkflowRunner:
         """Synchronously execute a registered workflow and return WorkflowOutput."""
         response, _ = self._execute_with_state(
             request,
-            background_tasks=background_tasks,
             callback=callback,
             metadata=metadata,
             config=config,
@@ -825,7 +818,6 @@ class WorkflowRunner:
     def execute_with_context(
         self,
         request: WorkflowInput,
-        background_tasks: BackgroundTasks | None = None,
         *,
         callback: Any | None = None,
         metadata: dict[str, Any] | None = None,
@@ -835,7 +827,6 @@ class WorkflowRunner:
         """Public execution entrypoint returning both WorkflowOutput and normalized EvalContext."""
         response, final_state = self._execute_with_state(
             request,
-            background_tasks=background_tasks,
             callback=callback,
             metadata=metadata,
             config=config,
@@ -853,7 +844,6 @@ class WorkflowRunner:
     async def _aexecute_with_state(
         self,
         request: WorkflowInput,
-        background_tasks: BackgroundTasks | None = None,
         *,
         callback: Any | None = None,
         metadata: dict[str, Any] | None = None,
@@ -901,7 +891,6 @@ class WorkflowRunner:
                 final_state=final_state,
                 trace_id=trace_id,
                 handler=handler,
-                background_tasks=background_tasks,
             )
             return response, final_state
         except HTTPException as exc:
@@ -920,7 +909,6 @@ class WorkflowRunner:
     async def aexecute(
         self,
         request: WorkflowInput,
-        background_tasks: BackgroundTasks | None = None,
         *,
         callback: Any | None = None,
         metadata: dict[str, Any] | None = None,
@@ -930,7 +918,6 @@ class WorkflowRunner:
         """Asynchronously execute a registered workflow and return WorkflowOutput."""
         response, _ = await self._aexecute_with_state(
             request,
-            background_tasks=background_tasks,
             callback=callback,
             metadata=metadata,
             config=config,

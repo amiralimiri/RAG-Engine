@@ -13,6 +13,7 @@ from app.api.schemas import (
     SessionListResponse,
 )
 from app.main import app
+from app.rag.evaluation import FakeEvaluator
 from app.rag.memory.base import ConversationTurn
 from app.rag.memory.in_memory import InMemoryConversationStore
 from app.rag.workflows.registry import get_workflow_registry
@@ -510,3 +511,62 @@ class TestChatMemoryRoutes:
         detail_standalone = client.get(f"/api/chat/{session_id}").json()
         assert detail_standalone["turn_count"] == 1
         assert detail_standalone["turns"][0]["turn_index"] == 0
+
+    def test_chat_route_persists_turn_and_triggers_online_evaluation_without_background_tasks(
+        self,
+        client: TestClient,
+        monkeypatch: pytest.MonkeyPatch,
+        register_mock_workflow: Callable[..., MockWorkflowDefinition],
+    ):
+        """POST /api/chat persists conversation turns and triggers background evaluation without BackgroundTasks."""
+        import asyncio
+        from app.rag.workflows.listeners import (
+            MemoryPersistenceListener,
+            OnlineEvaluationListener,
+        )
+
+        store = InMemoryConversationStore()
+        fake_eval = FakeEvaluator()
+
+        register_mock_workflow(
+            "fix_single_jev",
+            answer="Modernized route answer",
+            citations=[{"title": "doc.pdf", "url": "http://docs/1", "type": "private_kb"}],
+            source_used="private_kb",
+        )
+
+        runner = WorkflowRunner(
+            registry=get_workflow_registry(),
+            memory=store,
+            listeners=[
+                MemoryPersistenceListener(memory=store),
+                OnlineEvaluationListener(evaluator=fake_eval),
+            ],
+        )
+        monkeypatch.setattr("app.rag.workflows.runner._default_runner", runner)
+        monkeypatch.setattr("app.rag.memory._memory_instance", store)
+
+        session_id = "sess-route-modernized"
+        resp = client.post(
+            "/api/chat",
+            json={
+                "question": "What is modernized route?",
+                "session_id": session_id,
+                "workflow": "fix_single_jev",
+            },
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["answer"] == "Modernized route answer"
+
+        # Verify turn persisted to memory via listener
+        detail = client.get(f"/api/chat/{session_id}").json()
+        assert detail["turn_count"] == 1
+        assert detail["turns"][0]["user_query"] == "What is modernized route?"
+        assert detail["turns"][0]["assistant_answer"] == "Modernized route answer"
+
+        # Verify online evaluation was triggered
+        assert len(fake_eval.evaluate_calls) == 1
+        eval_call = fake_eval.evaluate_calls[0]
+        assert eval_call["question"] == "What is modernized route?"
+        assert eval_call["answer"] == "Modernized route answer"

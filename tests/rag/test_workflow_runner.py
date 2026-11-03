@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import structlog
-from fastapi import BackgroundTasks, HTTPException
+from fastapi import HTTPException
 
 from app.api.schemas import (
     ChatRequest,
@@ -441,7 +441,6 @@ async def test_online_evaluation_scheduled_via_listener():
 
     fake_eval = FakeEvaluator()
     runner = WorkflowRunner(registry=custom_registry, evaluator=fake_eval)
-    bg_tasks = BackgroundTasks()
 
     request = WorkflowInput(
         question="How do I configure evaluation?",
@@ -449,7 +448,7 @@ async def test_online_evaluation_scheduled_via_listener():
         trace_id="eval-trace-123",
     )
 
-    response = runner.execute(request, background_tasks=bg_tasks)
+    response = runner.execute(request)
     assert response.workflow == "eval_wf"
 
     # Verify task was registered in runner._background_tasks or dispatched
@@ -489,7 +488,7 @@ async def test_online_evaluation_scheduled_via_asyncio_create_task():
         trace_id="trace-no-bg",
     )
 
-    response = await runner.aexecute(request, background_tasks=None)
+    response = await runner.aexecute(request)
     assert response.workflow == "eval_task_wf"
 
     # Verify task was registered in runner._background_tasks
@@ -508,8 +507,8 @@ def test_online_evaluation_no_event_loop_sync_safe():
     request = WorkflowInput(question="Sync no loop?", workflow="sync_no_loop_wf")
 
     # In regular pytest without asyncio mark, running loop may or may not exist.
-    # Let's ensure running execute with background_tasks=None does not raise RuntimeError.
-    response = runner.execute(request, background_tasks=None)
+    # Let's ensure running execute does not raise RuntimeError.
+    response = runner.execute(request)
     assert response.answer == "Mock Answer"
 
 
@@ -1447,9 +1446,8 @@ async def test_finalize_execution_delegates_to_evaluator_in_background_tasks():
     fake_eval = FakeEvaluator()
     runner = WorkflowRunner(registry=custom_registry, evaluator=fake_eval)
     request = WorkflowInput(question="Bg eval test?", workflow="bg_eval_wf", trace_id="trace-bg-eval")
-    bg_tasks = BackgroundTasks()
 
-    response = runner.execute(request, background_tasks=bg_tasks)
+    response = runner.execute(request)
     assert response.answer == "Mock Answer"
 
     await asyncio.sleep(0.05)

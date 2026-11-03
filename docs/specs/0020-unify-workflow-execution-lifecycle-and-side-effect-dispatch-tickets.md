@@ -40,10 +40,10 @@
 
 | Ticket | Title | Target Files / Scope | Blockers | Status |
 |---|---|---|---|---|
-| **Ticket 01** | Unified Listener Dispatch Engine & Fail-Open Semantics | `app/rag/workflows/runner.py`, `tests/rag/test_workflow_execution.py` | None | `ready-for-agent` |
-| **Ticket 02** | Route Synchronous & Async Execution Through Listener Seam | `app/rag/workflows/runner.py`, `tests/rag/test_workflow_execution.py`, `tests/rag/test_workflow_runner.py` | Ticket 01 | `ready-for-agent` |
-| **Ticket 03** | Prune Private Bypass Methods & Mutable Property Setters | `app/rag/workflows/runner.py`, `tests/rag/test_workflow_runner.py`, `tests/test_online_evaluation.py` | Ticket 02 | `ready-for-agent` |
-| **Ticket 04** | Transport-Agnostic Interface & HTTP Route Modernization | `app/api/routes.py`, `app/rag/workflows/runner.py`, `tests/api/test_routes_chat_memory.py`, `tests/test_chat_stream.py` | Ticket 03 | `ready-for-agent` |
+| **Ticket 01** | Unified Listener Dispatch Engine & Fail-Open Semantics | `app/rag/workflows/runner.py`, `tests/rag/test_workflow_execution.py` | None | `completed` |
+| **Ticket 02** | Route Synchronous & Async Execution Through Listener Seam | `app/rag/workflows/runner.py`, `tests/rag/test_workflow_execution.py`, `tests/rag/test_workflow_runner.py` | Ticket 01 | `completed` |
+| **Ticket 03** | Prune Private Bypass Methods & Mutable Property Setters | `app/rag/workflows/runner.py`, `tests/rag/test_workflow_runner.py`, `tests/test_online_evaluation.py` | Ticket 02 | `completed` |
+| **Ticket 04** | Transport-Agnostic Interface & HTTP Route Modernization | `app/api/routes.py`, `app/rag/workflows/runner.py`, `tests/api/test_routes_chat_memory.py`, `tests/test_chat_stream.py` | Ticket 03 | `completed` |
 
 ---
 
