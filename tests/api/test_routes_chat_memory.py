@@ -519,7 +519,6 @@ class TestChatMemoryRoutes:
         register_mock_workflow: Callable[..., MockWorkflowDefinition],
     ):
         """POST /api/chat persists conversation turns and triggers background evaluation without BackgroundTasks."""
-        import asyncio
         from app.rag.workflows.listeners import (
             MemoryPersistenceListener,
             OnlineEvaluationListener,
