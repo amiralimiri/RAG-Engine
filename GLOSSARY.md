@@ -89,7 +89,7 @@ A pluggable strategy protocol (`DocumentParser`) responsible for reading a raw f
 A pluggable strategy protocol (`DocumentChunker`) partitioning parsed documents into retrieval-optimized text segments with preserved metadata and configurable overlap.
 
 ### Workflow Runner
-The deep execution and streaming runtime module (`app/rag/workflows/runner.py`) orchestrating workflow invocation, LangGraph `astream_events` polling, selective token delta filtering, telemetry context binding, and trace normalization behind a compact execution interface (`execute`, `aexecute`, and `stream`), completely decoupled from wire transport protocols and lifecycle side-effects.
+The deep execution and streaming runtime module (`app/rag/workflows/runner.py`) orchestrating workflow invocation, LangGraph `astream_events` polling, selective token delta filtering, telemetry context binding, trace normalization, and unified listener lifecycle dispatch behind a compact execution interface (`execute`, `aexecute`, and `stream`), completely decoupled from wire transport protocols and lifecycle side-effects.
 _Avoid_: Event generator, stream helper, route executor
 
 ### Workflow Execution Event
@@ -101,7 +101,7 @@ A presentation adapter (`SseStreamAdapter`) translating domain execution event s
 _Avoid_: Stream serializer, SSE helper, socket bridge
 
 ### Execution Lifecycle Listener
-A pluggable event-driven listener protocol (`ExecutionLifecycleListener`) decoupling post-execution side-effects (such as conversation memory persistence and online evaluation scoring) from the core workflow execution engine.
+A pluggable event-driven listener protocol (`ExecutionLifecycleListener`) decoupling post-execution side-effects (such as conversation memory persistence and online evaluation scoring) uniformly across all execution modes (`execute`, `aexecute`, and `stream`) from the core workflow execution engine.
 _Avoid_: Post-execution hook, background task helper, runner callback
 
 ### Conversation Memory (Memory Seam)

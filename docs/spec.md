@@ -1,288 +1,224 @@
-# Technical Specification: Decouple Workflow Execution from Transport Wire Protocol and Lifecycle Side-Effects
+# Technical Specification: Unify Workflow Execution Lifecycle and Side-Effect Dispatch
 
-- **ADR Reference:** `docs/adr/0019-decouple-workflow-execution-from-transport-wire-protocol.md`
-- **Target Subsystems:** `app/rag/workflows/`, `app/api/`, `tests/rag/`, `tests/test_chat_stream.py`
-- **Specification Document:** `docs/spec.md` & `docs/specs/0019-decouple-workflow-execution-from-transport-wire-protocol-spec.md`
+- **ADR Reference:** `docs/adr/0020-unify-workflow-execution-lifecycle-and-side-effect-dispatch.md`
+- **Target Subsystems:** `app/rag/workflows/`, `app/api/`, `tests/rag/`, `tests/api/`, `tests/test_online_evaluation.py`, `tests/test_workflow_runner.py`
+- **Specification Document:** `docs/spec.md` & `docs/specs/0020-unify-workflow-execution-lifecycle-and-side-effect-dispatch-spec.md`
 - **Status:** Draft / Ready for Implementation
 
 ---
 
 ## Problem Statement
 
-As the Enterprise Agentic RAG system expanded to support multiple execution backends, dynamic execution profiles, in-place turn rewind, and offline matrix benchmarking, `WorkflowRunner` in `app/rag/workflows/runner.py` became a 1,140-line catch-all module burdened with conflicting domain, transport, and infrastructure concerns:
+Following the introduction of the `ExecutionLifecycleListener` protocol in ADR-0019, `WorkflowRunner.stream()` successfully delegated post-execution side-effects (conversation turn persistence and background judge evaluation) to pluggable listener adapters. However, `WorkflowRunner` was left in an asymmetric and contradictory architectural state across its execution modes:
 
-1. **Coupled Transport Serialization**: The streaming entrypoint `WorkflowRunner.stream()` directly imports and invokes `format_sse()`, emitting raw HTTP Server-Sent Event strings (`"event: token\ndata: ...\n\n"`). This tightly couples the graph execution runtime with HTTP/1.1 transport semantics, preventing reuse across non-HTTP callers (such as CLI tools, headless benchmarks, or future WebSocket interfaces) and forcing test suites to use regex parsing on text strings to verify execution behavior.
-2. **Entangled Post-Execution Side-Effects**: `WorkflowRunner` directly interacts with SQLite turn persistence transactions (`_apersist_turn`), manages background task collections (`_background_tasks`), and manipulates asyncio event loops. These side-effects cannot be cleanly decoupled during headless evaluation runs or matrix benchmarking, causing unwanted SQLite I/O or necessitating complex mock patching.
-3. **Implicit Memory Fallback**: When instantiated without an explicit `memory` store, `WorkflowRunner` defaults to `get_conversation_memory()`, opening the global `data/conversations.db` database connection even during unit testing and stateless benchmark executions.
-4. **Fragile Error Handling in Streaming**: Uncaught exceptions during graph execution cause abrupt socket disconnections without emitting application-level failure frames or invoking cleanup hooks.
-5. **Violated Architectural Dependency Rules**: The execution engine should be purely in-process and transport-agnostic, with strict unidirectional dependencies flowing from `app/api/` into `app/rag/`, and never the reverse.
+1. **Split Execution Pathways & Bypass Anti-Pattern**: In `execute()` and `aexecute()`, `WorkflowRunner` bypassed the `ExecutionLifecycleListener` seam completely. Instead, it invoked duplicate internal private persistence methods (`_apersist_turn`, `_persist_turn_sync`) and private evaluation methods (`_safe_evaluate`), creating two parallel side-effect engines within the same class.
+2. **Mutable Invalidation Setters**: `WorkflowRunner` retained mutable getters and setters (`memory`, `evaluator`, `eval_task_fn`) that dynamically set `self._listeners = None` to force cache invalidation. This hidden mutability encouraged callers and test fixtures to mutate runner singletons in-place rather than injecting clean dependencies at initialization.
+3. **Transport Leakage in Execution Interfaces**: `execute()`, `execute_with_context()`, and `aexecute()` accepted an optional Starlette/FastAPI `background_tasks: BackgroundTasks | None = None` parameter. Passing transport-specific framework objects across domain seams violated the clean separation between `app/api/` and `app/rag/`.
+4. **Scattered and Inconsistent Failure Handling**: While streaming execution caught cancellations and notified listeners via `on_cancelled`, unhandled errors during synchronous and asynchronous execution did not invoke `listener.on_error()`. This prevented centralized observability, audit logging, or error telemetry listeners from detecting graph execution failures.
+5. **Coupled Read-Path Hydration and Write-Path Persistence**: In `WorkflowRunner`, the `ConversationMemoryAdapter` dependency was treated ambiguously as both an input reader (pre-execution hydration of message history) and an output writer (post-execution SQLite append), blurring the boundary between input resolution and observer side-effects.
 
 ---
 
 ## Solution
 
-Decouple `WorkflowRunner` into a pure, transport-agnostic execution engine that yields strongly-typed domain events, delegates post-execution side-effects to an event-driven lifecycle listener protocol, and moves all SSE wire serialization to a presentation adapter in `app/api/`:
+Unify all workflow execution modes (`execute`, `aexecute`, and `stream`) on the `ExecutionLifecycleListener` protocol, prune all internal bypass methods and mutable setters from `WorkflowRunner`, remove transport leakage, and strictly isolate read hydration from write persistence:
 
-1. **Domain Event Stream (`app/rag/workflows/events.py`)**:
-   Define a discriminated union `WorkflowExecutionEvent` (`StepTransitionEvent`, `TokenDeltaEvent`, `ExecutionCompletedEvent`, `ExecutionFailedEvent`). `WorkflowRunner.stream()` yields this typed generator, completely ignorant of HTTP or SSE.
-2. **Pluggable Lifecycle Listeners (`app/rag/workflows/listeners.py`)**:
-   Establish an `ExecutionLifecycleListener` protocol with hooks for `on_completed` (awaited for immediate turn persistence), `on_background_task` (detached background tasks for online evaluation), `on_error` (failure handling), and `on_cancelled` (clean resource flushing on client disconnect). Provide a `BaseExecutionLifecycleListener` with default no-op methods and concrete adapters `MemoryPersistenceListener` and `OnlineEvaluationListener`.
-3. **Transport Wire Adapter (`app/api/streaming.py`)**:
-   Implement `SseStreamAdapter` in `app/api/` that translates `AsyncGenerator[WorkflowExecutionEvent, None]` into SSE text frames formatted identically to current client expectations (`step`, `token`, `metadata`, and `error`).
-4. **Explicit Memory Pluggability**:
-   Require memory to be explicit. If `memory is None` or `isinstance(memory, NoOpMemoryStore)`, completely bypass pre-execution history hydration and post-execution turn persistence, executing with zero SQLite or disk overhead.
-5. **Strict Unidirectional Seam**:
-   `app/rag/workflows/runner.py` retains **zero imports** from `app/api/` and zero awareness of HTTP or SSE wire protocols.
+1. **Unified Listener Dispatching**:
+   Implement internal dispatch helpers `_adispatch_listeners` and `_dispatch_listeners` (via `run_async_safely`) in `WorkflowRunner` that invoke lifecycle hooks uniformly across all execution modes:
+   - `on_completed`: Awaited sequentially across registered listeners. Fail-open isolation ensures that transient persistence or evaluation errors log warnings without aborting user response delivery.
+   - `on_background_task`: Scheduled concurrently via `asyncio.create_task` with GC-shielding tracking sets.
+   - `on_error`: Awaited across registered listeners when graph execution fails before re-raising or returning fallback output.
+   - `on_cancelled`: Awaited across registered listeners when streaming connections abort.
+2. **Prune Bypass Methods and Mutable Setters**:
+   Delete `_apersist_turn`, `_persist_turn_sync`, and `_safe_evaluate` from `WorkflowRunner`. Remove mutable property setters for `memory`, `evaluator`, `eval_task_fn`, and `listeners`. Treat `listeners: Sequence[ExecutionLifecycleListener]` as the definitive side-effect seam configured at initialization.
+3. **Read-Path Hydration Boundary**:
+   Keep `memory: ConversationMemoryAdapter | None = None` in `WorkflowRunner` strictly as an input read-path dependency for hydrating past turns in `_prepare_execution`. Write-path persistence is delegated exclusively to `MemoryPersistenceListener`.
+4. **Pre-Notification EvalContext Normalization**:
+   Guarantee that `WorkflowRunner` extracts and binds `output.retrieved_contexts` to canonical `WorkflowOutput` prior to notifying listeners, ensuring `OnlineEvaluationListener` receives normalized context chunks without inspecting graph internals.
+5. **Pure Python Transport-Agnostic Interface**:
+   Remove `background_tasks: BackgroundTasks | None` from `WorkflowRunner` execution methods. Update `POST /api/chat` to a pure, declarative signature without `BackgroundTasks`.
 
 ---
 
 ## User Stories
 
-1. As a platform developer, I want `WorkflowRunner.stream()` to yield strongly-typed `WorkflowExecutionEvent` objects, so that I can consume streaming graph execution in non-HTTP environments (CLI benchmarks, WebSockets, offline test harnesses) without parsing SSE text strings.
-2. As a test author, I want to assert on `StepTransitionEvent(step="grade_evidence")` and `TokenDeltaEvent(delta="...")` directly, so that my unit tests do not break when whitespace or JSON formatting changes in the transport layer.
-3. As a developer running offline matrix benchmarks, I want to instantiate `WorkflowRunner` with `memory=None` and empty listeners, so that benchmark iterations execute with zero database I/O, no background judge tasks, and maximum speed.
-4. As an API client receiving streaming responses, I want `SseStreamAdapter` to serialize `ExecutionCompletedEvent` into a `metadata` event frame containing `trace_id`, `session_id`, `workflow`, `source_used`, `citations`, `trace`, `rewritten_query`, and `variant_id`, so that the frontend UI continues to render citations and accordions without modification.
-5. As an API client encountering a runtime graph error during streaming, I want `SseStreamAdapter` to emit an `error` frame before the connection closes, so that my UI displays an informative error toast instead of an unexplained broken stream.
-6. As a conversational user submitting rapid follow-up queries, I want `MemoryPersistenceListener.on_completed` to be awaited before `ExecutionCompletedEvent` is emitted, so that prior conversation turns are guaranteed to be in SQLite before my next query begins.
-7. As an end user streaming a long response who closes the browser tab, I want `WorkflowRunner` to invoke `on_cancelled` on listeners, so that incomplete half-sentence assistant responses are discarded and never persisted to my session history.
-8. As an operations engineer monitoring production performance, I want `OnlineEvaluationListener` to run as a detached background task, so that judge model evaluations never add latency to the user's streaming response.
-9. As an architect enforcing domain cleanliness, I want `app/rag/workflows/runner.py` to contain zero references to `format_sse`, `text/event-stream`, or `app/api/`, so that the execution core remains strictly decoupled from presentation logic.
-10. As a developer adding an audit logging plugin, I want to register a custom `ExecutionLifecycleListener`, so that I can observe completed workflow outputs without modifying the runner's execution logic.
-11. As a developer configuring execution parameters, I want `WorkflowRunner.execute()` and `WorkflowRunner.aexecute()` to trigger lifecycle listeners identically to streaming execution, so that turn persistence and online evaluation behave consistently across sync, async, and streaming routes.
-12. As a developer testing edge cases, I want `BaseExecutionLifecycleListener` to provide default no-op implementations for all hooks, so that I only need to implement the specific lifecycle methods relevant to my adapter.
-13. As a maintainer inspecting the codebase, I want `app/api/routes.py` to clearly route `POST /api/chat/stream` through `SseStreamAdapter.format(runner.stream(request))`, so that the transport seam is visible and readable.
-14. As a test author writing integration tests in `tests/test_chat_stream.py`, I want `SseStreamAdapter` to be verified for correct SSE formatting (event names, JSON escaping, multi-line data), so that wire regressions are caught at the presentation seam.
-15. As a developer inspecting dependency boundaries, I want `app/rag/workflows/__init__.py` to export the public events (`WorkflowExecutionEvent`, etc.) and listeners (`ExecutionLifecycleListener`, etc.), so that external packages import canonical domain symbols cleanly.
+1. As a platform developer, I want `WorkflowRunner.execute()`, `aexecute()`, and `stream()` to dispatch side-effects through the exact same `ExecutionLifecycleListener` seam, so that persistence and evaluation behavior are identical across all execution modes.
+2. As a test author, I want to instantiate `WorkflowRunner(listeners=[])`, so that I can run completely isolated tests with zero database writes, zero background tasks, and zero filesystem I/O.
+3. As a test author, I want to inject a custom `ExecutionLifecycleListener` into `WorkflowRunner`, so that I can assert on lifecycle events (`on_completed`, `on_error`) without mocking internal private methods.
+4. As an API client using `POST /api/chat`, I want my conversational turns to be persisted atomically to SQLite via `MemoryPersistenceListener`, so that subsequent conversational turns have access to prior message context.
+5. As an end user receiving an answer, I want transient database or evaluation failures to be logged as warnings without failing my query, so that I always receive the generated answer (fail-open invariant).
+6. As an operations engineer monitoring production, I want unhandled graph exceptions in `execute()` and `aexecute()` to trigger `listener.on_error(request, exc)`, so that audit and telemetry listeners record failure details reliably.
+7. As an architect enforcing domain decoupling, I want `WorkflowRunner` execution signatures to be completely free of Starlette/FastAPI `BackgroundTasks`, so that core workflows can execute inside Celery workers, CLI tools, or batch scripts without web framework dependencies.
+8. As a backend engineer maintaining HTTP routes, I want `POST /api/chat` to have a clean signature (`def chat(payload: ChatRequest) -> ChatResponse`), so that routing code remains uncluttered by unused framework parameters.
+9. As a developer writing multi-turn conversations, I want `WorkflowRunner` to hydrate past conversation messages using `self.memory` before graph execution begins, so that retrieval condensation nodes have access to previous turns.
+10. As a developer adding an online evaluation metric, I want `WorkflowRunner` to populate `output.retrieved_contexts` before calling `OnlineEvaluationListener`, so that faithfulness and answer relevancy metrics have direct access to retrieved document chunks.
+11. As a developer configuring application startup, I want `get_workflow_runner(memory=..., evaluator=...)` to automatically configure default `[MemoryPersistenceListener, OnlineEvaluationListener]` instances when `listeners` is omitted, so that production DI wiring remains concise and backward-compatible.
+12. As a developer building custom harnesses, I want `WorkflowRunner(listeners=[my_listener])` to prioritize the explicit `listeners` list over defaults, so that I have complete control over side-effect execution.
+13. As a maintainer inspecting `WorkflowRunner`, I want `_apersist_turn`, `_persist_turn_sync`, and `_safe_evaluate` to be completely removed, so that there is no possibility of accidental bypass in future code changes.
+14. As a developer debugging streaming disconnects, I want `on_cancelled` to be invoked cleanly across listeners when a client disconnects, ensuring incomplete assistant answers are never persisted.
+15. As a developer running synchronous benchmarks, I want background evaluation tasks triggered by synchronous `execute()` to run safely on the persistent background concurrency loop via `run_async_safely`, so that event loop collisions never occur.
 
 ---
 
 ## Implementation Decisions
 
-### 1. Domain Event Subsystem (`app/rag/workflows/events.py`)
+### 1. Unified Dispatch Seam in `WorkflowRunner`
 
-Create `app/rag/workflows/events.py` defining the discriminated domain event union:
-
-```python
-from typing import Literal, Union
-from pydantic import BaseModel, Field
-from app.api.schemas import WorkflowOutput
-
-
-class StepTransitionEvent(BaseModel):
-    """Emitted when the execution graph transitions between discrete nodes."""
-
-    type: Literal["step"] = "step"
-    step: str = Field(description="Name of the node entered (e.g. 'retrieve', 'grade_evidence')")
-
-
-class TokenDeltaEvent(BaseModel):
-    """Emitted when a generation node produces an LLM token chunk."""
-
-    type: Literal["token"] = "token"
-    delta: str = Field(description="Generated textual token content")
-
-
-class ExecutionCompletedEvent(BaseModel):
-    """Emitted upon successful completion of workflow execution."""
-
-    type: Literal["completed"] = "completed"
-    output: WorkflowOutput = Field(description="Canonical workflow domain output")
-
-
-class ExecutionFailedEvent(BaseModel):
-    """Emitted when workflow execution fails with an uncaught exception."""
-
-    type: Literal["failed"] = "failed"
-    error: str = Field(description="Human-readable error description")
-    code: str = Field(default="EXECUTION_ERROR", description="Machine-readable error code")
-
-
-WorkflowExecutionEvent = Union[
-    StepTransitionEvent,
-    TokenDeltaEvent,
-    ExecutionCompletedEvent,
-    ExecutionFailedEvent,
-]
-```
-
-### 2. Execution Lifecycle Listener Protocol (`app/rag/workflows/listeners.py`)
-
-Create `app/rag/workflows/listeners.py` defining the lifecycle listener interface and concrete implementations:
+Add private dispatch helpers to `WorkflowRunner` in `app/rag/workflows/runner.py`:
 
 ```python
-from typing import Any, Protocol, runtime_checkable
-from app.api.schemas import WorkflowInput, WorkflowOutput
+async def _adispatch_listeners(
+    self,
+    event: str,
+    request: WorkflowInput,
+    output: WorkflowOutput | None = None,
+    error: Exception | None = None,
+) -> None:
+    for listener in self.listeners:
+        try:
+            if event == "completed" and output is not None:
+                await listener.on_completed(request, output)
+            elif event == "error" and error is not None:
+                await listener.on_error(request, error)
+            elif event == "cancelled":
+                await listener.on_cancelled(request, output)
+        except Exception as exc:
+            logger.warning(
+                f"listener_{event}_failed",
+                listener=listener.__class__.__name__,
+                error=str(exc),
+            )
 
-
-@runtime_checkable
-class ExecutionLifecycleListener(Protocol):
-    """Protocol for receiving execution lifecycle notifications and executing side-effects."""
-
-    async def on_completed(self, request: WorkflowInput, output: WorkflowOutput) -> None:
-        """Awaited immediately upon successful execution before terminal event emission."""
-        ...
-
-    async def on_background_task(self, request: WorkflowInput, output: WorkflowOutput) -> None:
-        """Executed concurrently in a detached background task without delaying response."""
-        ...
-
-    async def on_error(self, request: WorkflowInput, error: Exception) -> None:
-        """Invoked when execution fails with an exception."""
-        ...
-
-    async def on_cancelled(self, request: WorkflowInput, partial_output: WorkflowOutput | None) -> None:
-        """Invoked when execution is cancelled by client disconnect."""
-        ...
-
-
-class BaseExecutionLifecycleListener:
-    """Default no-op implementation of ExecutionLifecycleListener."""
-
-    async def on_completed(self, request: WorkflowInput, output: WorkflowOutput) -> None:
-        pass
-
-    async def on_background_task(self, request: WorkflowInput, output: WorkflowOutput) -> None:
-        pass
-
-    async def on_error(self, request: WorkflowInput, error: Exception) -> None:
-        pass
-
-    async def on_cancelled(self, request: WorkflowInput, partial_output: WorkflowOutput | None) -> None:
-        pass
+    if event == "completed" and output is not None:
+        for listener in self.listeners:
+            try:
+                loop = asyncio.get_running_loop()
+                task = loop.create_task(listener.on_background_task(request, output))
+                _background_tasks.add(task)
+                task.add_done_callback(_background_tasks.discard)
+                self._background_tasks.add(task)
+                task.add_done_callback(self._background_tasks.discard)
+            except Exception as exc:
+                logger.warning(
+                    "listener_background_task_scheduling_failed",
+                    listener=listener.__class__.__name__,
+                    error=str(exc),
+                )
 ```
 
-#### Concrete Adapters in `app/rag/workflows/listeners.py`:
-- **`MemoryPersistenceListener`**:
-  - Implements `on_completed`: Awaits `memory.aappend_turn(...)` when `request.session_id` and `output.answer` are present.
-  - Implements `on_cancelled`: Discards partial state; does NOT persist incomplete turns to SQLite.
-- **`OnlineEvaluationListener`**:
-  - Implements `on_background_task`: Schedules `eval_task_fn(...)` safely, catching and logging any judge evaluation exceptions without affecting the caller.
-
-### 3. Transport Wire Adapter (`app/api/streaming.py`)
-
-Create `app/api/streaming.py` isolating all Server-Sent Events serialization logic:
-
+For synchronous execution (`execute()`):
 ```python
-from typing import AsyncGenerator
-from app.rag.workflows.events import (
-    ExecutionCompletedEvent,
-    ExecutionFailedEvent,
-    StepTransitionEvent,
-    TokenDeltaEvent,
-    WorkflowExecutionEvent,
-)
-from app.rag.workflows.runner import format_sse  # Wire helper moved or imported
-
-
-class SseStreamAdapter:
-    """Presentation adapter translating domain WorkflowExecutionEvent streams into HTTP SSE text frames."""
-
-    @classmethod
-    async def format(
-        cls,
-        events: AsyncGenerator[WorkflowExecutionEvent, None],
-    ) -> AsyncGenerator[str, None]:
-        async for event in events:
-            if isinstance(event, StepTransitionEvent):
-                yield format_sse("step", {"step": event.step})
-            elif isinstance(event, TokenDeltaEvent):
-                yield format_sse("token", {"delta": event.delta})
-            elif isinstance(event, ExecutionCompletedEvent):
-                output = event.output
-                metadata_payload = {
-                    "trace_id": output.trace_id,
-                    "session_id": output.session_id,
-                    "workflow": output.workflow,
-                    "source_used": output.source_used,
-                    "citations": [c.model_dump() if hasattr(c, "model_dump") else c for c in output.citations],
-                    "trace": output.trace,
-                    "rewritten_query": output.rewritten_query,
-                    "variant_id": output.variant_id,
-                }
-                yield format_sse("metadata", metadata_payload)
-            elif isinstance(event, ExecutionFailedEvent):
-                yield format_sse("error", {"error": event.error, "code": event.code})
+def _dispatch_listeners(
+    self,
+    event: str,
+    request: WorkflowInput,
+    output: WorkflowOutput | None = None,
+    error: Exception | None = None,
+) -> None:
+    run_async_safely(self._adispatch_listeners, event, request, output, error)
 ```
 
-### 4. Refactoring `WorkflowRunner` (`app/rag/workflows/runner.py`)
+### 2. Prune Bypass Logic and Mutable Properties
 
-1. **Remove Wire Coupling**:
-   - Delete all `yield self.format_sse(...)` calls from `stream()`.
-   - Instead, `yield StepTransitionEvent(step=node_name)`, `yield TokenDeltaEvent(delta=delta_content)`, and `yield ExecutionCompletedEvent(output=domain_output)`.
-   - Wrap graph iteration in `try...except Exception as exc:` to catch uncaught stream errors, invoke `listener.on_error(...)`, and `yield ExecutionFailedEvent(error=str(exc))`.
-   - In `except (asyncio.CancelledError, GeneratorExit):`, invoke `listener.on_cancelled(...)` and cleanly flush telemetry.
-2. **Pluggable Listeners**:
-   - `WorkflowRunner.__init__` accepts `listeners: list[ExecutionLifecycleListener] | None = None`.
-   - If `listeners is None`, configure default listeners:
-     - `MemoryPersistenceListener(memory=self._memory)` (only if `self._memory` is active and not `NoOpMemoryStore`).
-     - `OnlineEvaluationListener(eval_task_fn=self.eval_task_fn or self._safe_evaluate)`.
-3. **Explicit Memory**:
-   - `_memory: ConversationMemoryAdapter | None = None`.
-   - If `self._memory is None`, do NOT fall back to `get_conversation_memory()`. Memory hydration and persistence are completely skipped.
-4. **Lifecycle Hooks in Execution**:
-   - In `_finalize_execution` (sync/async) and `stream()`, trigger:
-     - Await all `listener.on_completed(request, domain_output)` for immediate listeners.
-     - Dispatch `listener.on_background_task(request, domain_output)` for background tasks.
-5. **Zero API Imports**:
-   - Verify `runner.py` contains zero imports from `app/api/`.
+In `app/rag/workflows/runner.py`:
+- Delete `_apersist_turn`, `_persist_turn_sync`, and `_safe_evaluate`.
+- Delete property setters for `memory`, `evaluator`, `eval_task_fn`, and `listeners`.
+- In `_finalize_execution`: Remove inline calls to `self._safe_evaluate` and `self._persist_turn_sync`. Replace with `self._dispatch_listeners("completed", request, domain_output)`.
+- In `_afinalize_execution`: Replace inline calls with `await self._adispatch_listeners("completed", request, domain_output)`.
+- In `stream()`: Replace inline listener loop iterations with `await self._adispatch_listeners("completed", request, domain_output)`.
+- On execution error: In `_execute_with_state`, `_aexecute_with_state`, and `_stream_generator`, dispatch `error` event: `_dispatch_listeners("error", request, error=exc)` or `await self._adispatch_listeners("error", request, error=exc)`.
 
-### 5. HTTP Routes Simplification (`app/api/routes.py`)
+### 3. Factory and Constructor Defaults
 
-Update `POST /api/chat/stream`:
+In `WorkflowRunner.__init__`:
 ```python
-@router.post("/chat/stream")
-async def chat_stream(request: ChatRequest) -> StreamingResponse:
-    wf_input = request.to_workflow_input()
-    event_stream = get_workflow_runner().stream(wf_input)
-    return StreamingResponse(
-        SseStreamAdapter.format(event_stream),
-        media_type="text/event-stream; charset=utf-8",
-    )
+def __init__(
+    self,
+    registry: WorkflowRegistry | None = None,
+    *,
+    memory: ConversationMemoryAdapter | None = None,
+    evaluator: Evaluator | None = None,
+    listeners: Sequence[ExecutionLifecycleListener] | None = None,
+    callback_factory: Callable[..., Any] | None = None,
+    trace_extractor: Callable[[Any], str | None] | None = None,
+    telemetry_flusher: Callable[[], None] | None = None,
+    eval_task_fn: Callable[..., Any] | None = None,
+) -> None:
+    self.registry = registry if registry is not None else get_workflow_registry()
+    self._memory = memory
+    self._callback_factory = callback_factory
+    self._trace_extractor = trace_extractor
+    self._telemetry_flusher = telemetry_flusher
+    self._background_tasks: set[asyncio.Task[Any]] = set()
+
+    if listeners is not None:
+        self._listeners = list(listeners)
+    else:
+        defaults: list[ExecutionLifecycleListener] = []
+        if memory is not None and not isinstance(memory, NoOpMemoryStore):
+            defaults.append(MemoryPersistenceListener(memory=memory))
+        if evaluator is not None or eval_task_fn is not None:
+            defaults.append(
+                OnlineEvaluationListener(
+                    evaluator=evaluator or (get_evaluator() if evaluator is None and eval_task_fn is None else None),
+                    eval_task_fn=eval_task_fn,
+                )
+            )
+        self._listeners = defaults
 ```
+
+Provide read-only properties:
+- `runner.listeners -> list[ExecutionLifecycleListener]`
+- `runner.memory -> ConversationMemoryAdapter | None`
+
+### 4. Remove `BackgroundTasks` from Runner & HTTP Routes
+
+- In `WorkflowRunner.execute`, `execute_with_context`, and `aexecute`: Remove `background_tasks: BackgroundTasks | None = None` parameter from signatures and call sites.
+- In `app/api/routes.py`:
+  ```python
+  @router.post("/chat", response_model=ChatResponse)
+  def chat(payload: ChatRequest):
+      wf_input = payload.to_workflow_input()
+      wf_output = get_workflow_runner().execute(wf_input)
+      return ChatResponse.from_workflow_output(wf_output)
+  ```
 
 ---
 
 ## Testing Decisions
 
 ### What Makes a Good Test
-- Tests must assert external behavior across documented seams, never inspecting private runner variables or internal call counts.
-- Domain tests verify structured `WorkflowExecutionEvent` types and properties.
-- Wire tests verify SSE framing semantics and HTTP streaming compatibility.
-- Offline tests verify that passing `memory=None` performs zero disk or SQLite operations.
+
+Tests must verify external behavioral contracts across the public execution interface (`execute`, `aexecute`, `stream`) rather than testing private internal state:
+1. **Unified Listener Notification**: Assert that passing a custom `spy_listener` records identical `on_completed` invocations across `execute()`, `aexecute()`, and `stream()`.
+2. **Error Notification**: Assert that when a workflow graph raises an unhandled exception, `on_error` is invoked with the expected exception instance across sync, async, and streaming routes.
+3. **Fail-Open Isolation**: Assert that when a listener raises an unhandled error inside `on_completed` or `on_background_task`, `WorkflowRunner` logs a warning and returns the user's `WorkflowOutput` cleanly without raising an exception.
+4. **Zero-Side-Effect Isolation**: Assert that `WorkflowRunner(listeners=[])` performs zero SQLite turn appends and zero judge evaluations during execution.
+5. **Route Cleanliness**: Assert that `POST /api/chat` returns 200 and valid responses without requiring `BackgroundTasks`.
 
 ### Modules to Test
-1. **`tests/rag/test_workflow_events.py`**:
-   - Unit test serialization and validation of `WorkflowExecutionEvent` models.
-2. **`tests/rag/test_workflow_listeners.py`**:
-   - Verify `MemoryPersistenceListener` awaits turn persistence and discards turns on cancellation.
-   - Verify `OnlineEvaluationListener` safely schedules detached evaluation.
-3. **`tests/rag/test_workflow_execution.py`**:
-   - Verify `WorkflowRunner.stream()` yields typed events in order: `StepTransitionEvent` -> `TokenDeltaEvent`* -> `ExecutionCompletedEvent`.
-   - Verify error during streaming yields `ExecutionFailedEvent`.
-   - Verify client disconnect triggers `on_cancelled`.
-   - Verify `memory=None` executes cleanly with zero memory interactions.
-4. **`tests/api/test_sse_stream_adapter.py`**:
-   - Unit test `SseStreamAdapter.format()` converting typed events into valid SSE text frames.
-5. **`tests/test_chat_stream.py`**:
-   - End-to-end HTTP streaming regression tests ensuring the existing client/UI contract remains 100% backward-compatible.
+
+- `tests/rag/test_workflow_execution.py`: Expand listener dispatch tests across `execute`, `aexecute`, and `stream`.
+- `tests/rag/test_workflow_runner.py`: Verify constructor defaults, read hydration, error dispatching, and removal of private bypass methods.
+- `tests/rag/test_workflow_runner_memory.py`: Verify that turn persistence occurs exclusively via `MemoryPersistenceListener` on completed executions.
+- `tests/api/test_routes_chat_memory.py`: Verify end-to-end chat memory behavior with the updated `/api/chat` signature.
 
 ### Prior Art
-- `tests/rag/test_workflow_runner.py`: Existing tests for parameter precedence and graph compilation.
-- `tests/test_chat_stream.py`: Existing SSE streaming route tests.
-- `tests/rag/test_conversation_memory.py`: Existing memory adapter seam testing patterns.
+
+- `tests/rag/test_workflow_execution.py`: Provides existing spy and failing listener patterns from ADR-0019.
+- `tests/rag/test_workflow_runner.py`: Provides canonical mock workflow definition harnesses.
 
 ---
 
 ## Out of Scope
 
-- Modifying LangGraph node definitions (`retrieve_kb`, `grade_evidence`, etc.) in `app/rag/engine.py`.
-- Changing the schema of SQLite `conversations.db` or `ConversationTurn`.
-- Introducing external distributed task workers (Celery, RQ, RabbitMQ).
-- Modifying frontend DOM construction logic in `static/js/app.js` (client consumes the identical SSE frames).
+- Changing the `ExecutionLifecycleListener` protocol method signatures (`on_completed`, `on_background_task`, `on_error`, `on_cancelled`).
+- Modifying the SSE wire formatting logic in `SseStreamAdapter` (addressed separately in Candidate #2).
+- Modifying the vector store indexing pipeline in `DocumentIndexer` (addressed separately in Candidate #3).
 
 ---
 
 ## Further Notes
 
-- By decoupling wire formatting into `SseStreamAdapter`, the codebase is now prepared for future presentation adapters (such as WebSocket streaming or gRPC) without touching the RAG execution engine.
-- This refactoring reduces `WorkflowRunner` by ~300 lines of wire serialization and ad-hoc background task code, significantly improving maintainability and test execution speed.
+- This specification completes the architectural journey of ADR-0010, ADR-0012, and ADR-0019, turning `WorkflowRunner` into a completely cohesive, zero-bypass, deep execution module.
+- All changes maintain 100% backward compatibility with existing frontend clients and external workflows.
