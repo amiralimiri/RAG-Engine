@@ -645,5 +645,3 @@ async def test_http_exception_triggers_on_error_prior_to_reraising():
     assert len(spy_listener.error_calls) == 1
     assert isinstance(spy_listener.error_calls[0][1], HTTPException)
 
-
-
