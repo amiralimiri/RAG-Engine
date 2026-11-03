@@ -650,6 +650,96 @@ class WorkflowRunner:
                 error=str(exc),
             )
 
+    async def _adispatch_listeners(
+        self,
+        event_type: str,
+        request: WorkflowInput,
+        output: WorkflowOutput | None = None,
+        error: Exception | None = None,
+    ) -> None:
+        """Centralized lifecycle event dispatcher awaiting listeners with fail-open fault isolation."""
+        resolved_event = event_type.lower().removeprefix("on_")
+
+        if output is not None:
+            raw_contexts = getattr(output, "retrieved_contexts", None)
+            if raw_contexts is None:
+                output.retrieved_contexts = []
+            elif isinstance(raw_contexts, list):
+                normalized: list[str] = []
+                for chunk_item in raw_contexts:
+                    if isinstance(chunk_item, str):
+                        normalized.append(chunk_item)
+                    elif isinstance(chunk_item, dict):
+                        content = chunk_item.get("content") or chunk_item.get("text")
+                        normalized.append(str(content) if content is not None else "")
+                    else:
+                        normalized.append(str(chunk_item))
+                output.retrieved_contexts = normalized
+            elif isinstance(raw_contexts, str):
+                output.retrieved_contexts = [raw_contexts]
+            else:
+                output.retrieved_contexts = [str(raw_contexts)]
+
+        if resolved_event == "completed" and output is None:
+            logger.warning("listener_dispatch_missing_output", event_type=resolved_event)
+            return
+
+        if resolved_event == "error" and error is None:
+            logger.warning("listener_dispatch_missing_error", event_type=resolved_event)
+            return
+
+        for listener in self.listeners:
+            try:
+                if resolved_event == "completed" and output is not None:
+                    await listener.on_completed(request, output)
+                elif resolved_event == "error" and error is not None:
+                    await listener.on_error(request, error)
+                elif resolved_event == "cancelled":
+                    await listener.on_cancelled(request, output)
+            except Exception as exc:
+                logger.warning(
+                    f"listener_{resolved_event}_failed",
+                    listener=listener.__class__.__name__,
+                    error=str(exc),
+                )
+
+        if resolved_event == "completed" and output is not None:
+            for listener in self.listeners:
+                try:
+                    task = asyncio.create_task(listener.on_background_task(request, output))
+                    _background_tasks.add(task)
+                    task.add_done_callback(_background_tasks.discard)
+                    self._background_tasks.add(task)
+                    task.add_done_callback(self._background_tasks.discard)
+
+                    def _on_task_done(t: asyncio.Task[Any], listener_name: str = listener.__class__.__name__) -> None:
+                        if not t.cancelled():
+                            exc = t.exception()
+                            if exc is not None:
+                                logger.warning(
+                                    "listener_background_task_failed",
+                                    listener=listener_name,
+                                    error=str(exc),
+                                )
+
+                    task.add_done_callback(_on_task_done)
+                except Exception as exc:
+                    logger.warning(
+                        "listener_background_task_scheduling_failed",
+                        listener=listener.__class__.__name__,
+                        error=str(exc),
+                    )
+
+    def _dispatch_listeners(
+        self,
+        event_type: str,
+        request: WorkflowInput,
+        output: WorkflowOutput | None = None,
+        error: Exception | None = None,
+    ) -> None:
+        """Synchronously dispatch lifecycle events via persistent background event loop."""
+        run_async_safely(self._adispatch_listeners, event_type, request, output, error)
+
     def _finalize_execution(
         self,
         wf_def: WorkflowDefinition,

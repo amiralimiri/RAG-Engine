@@ -4,11 +4,11 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
-
-- [ ] Implement `_adispatch_listeners(event_type, request, output=None, error=None)` in `WorkflowRunner` to sequentially await `on_completed`, `on_error`, or `on_cancelled` on all registered listeners.
-- [ ] Implement `_dispatch_listeners(...)` delegating to `run_async_safely` for safe invocation in synchronous contexts without event loop collision.
-- [ ] Ensure `on_background_task` is scheduled asynchronously via `asyncio.create_task` with GC-shielding sets (`_background_tasks`) upon successful completion.
-- [ ] Wrap individual listener executions in try/except blocks to log warnings upon failure and preserve fail-open execution invariants.
-- [ ] Ensure `output.retrieved_contexts` is normalized and bound to `WorkflowOutput` prior to listener notification.
-- [ ] Unit test `_adispatch_listeners` and `_dispatch_listeners` using spy and failing listener test doubles.
+**Status:** closed
+ 
+- [x] Implement `_adispatch_listeners(event_type, request, output=None, error=None)` in `WorkflowRunner` to sequentially await `on_completed`, `on_error`, or `on_cancelled` on all registered listeners.
+- [x] Implement `_dispatch_listeners(...)` delegating to `run_async_safely` for safe invocation in synchronous contexts without event loop collision.
+- [x] Ensure `on_background_task` is scheduled asynchronously via `asyncio.create_task` with GC-shielding sets (`_background_tasks`) upon successful completion.
+- [x] Wrap individual listener executions in try/except blocks to log warnings upon failure and preserve fail-open execution invariants.
+- [x] Ensure `output.retrieved_contexts` is normalized and bound to `WorkflowOutput` prior to listener notification.
+- [x] Unit test `_adispatch_listeners` and `_dispatch_listeners` using spy and failing listener test doubles.
