@@ -79,7 +79,8 @@ class MemoryPersistenceListener(BaseExecutionLifecycleListener):
         if not output.answer or not output.answer.strip():
             return
 
-        tid = output.trace_id or request.trace_id
+        trace_id = output.trace_id or request.trace_id
+        source_used = output.source_used or "direct"
 
         try:
             turn = await self._memory.aappend_turn(
@@ -89,15 +90,15 @@ class MemoryPersistenceListener(BaseExecutionLifecycleListener):
                 rewind_turn_index=request.rewind_turn_index,
                 attachments=request.attachments or [],
                 citations=output.citations,
-                source_used=output.source_used,
-                trace_id=tid,
+                source_used=source_used,
+                trace_id=trace_id,
             )
             logger.info(
                 "conversation_turn_persisted",
                 session_id=session_id,
                 turn_index=turn.turn_index,
-                source_used=output.source_used,
-                trace_id=tid,
+                source_used=source_used,
+                trace_id=trace_id,
             )
         except Exception as exc:
             logger.warning(
@@ -157,6 +158,9 @@ class OnlineEvaluationListener(BaseExecutionLifecycleListener):
     async def on_background_task(self, request: WorkflowInput, output: WorkflowOutput) -> None:
         """Dispatches judge model evaluation safely without throwing exceptions."""
         if self._eval_task_fn is None and self._evaluator is None:
+            return
+
+        if not output.answer or not output.answer.strip():
             return
 
         trace_id = output.trace_id or request.trace_id

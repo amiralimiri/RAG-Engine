@@ -230,6 +230,21 @@ class TestMemoryPersistenceListener:
         await listener.on_error(request, RuntimeError("Graph node failed"))
         mock_memory.aappend_turn.assert_not_called()
 
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("empty_source", ["", None])
+    async def test_on_completed_source_used_fallback_direct(self, empty_source: str | None) -> None:
+        """Verify turn persistence falls back to 'direct' when output.source_used is empty or None."""
+        mock_memory = AsyncMock(spec=ConversationMemoryAdapter)
+        listener = MemoryPersistenceListener(memory=mock_memory)
+
+        request = WorkflowInput(question="Question", session_id="session-123")
+        output = WorkflowOutput(workflow="fix_single_llm", answer="Answer")
+        object.__setattr__(output, "source_used", empty_source)
+
+        await listener.on_completed(request, output)
+        mock_memory.aappend_turn.assert_called_once()
+        assert mock_memory.aappend_turn.call_args.kwargs["source_used"] == "direct"
+
 
 class TestOnlineEvaluationListener:
     """Tests for OnlineEvaluationListener background execution, error shielding, and formatting."""
@@ -385,6 +400,24 @@ class TestOnlineEvaluationListener:
         failing_eval_task.assert_awaited_once()
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("blank_answer", ["", "   ", " \n\t "])
+    async def test_on_background_task_skips_when_answer_is_blank(self, blank_answer: str) -> None:
+        """Verify evaluation is skipped without calling eval_task_fn or evaluator when answer is blank."""
+        mock_eval_task = AsyncMock()
+        mock_evaluator = AsyncMock(spec=Evaluator)
+        listener_fn = OnlineEvaluationListener(eval_task_fn=mock_eval_task)
+        listener_eval = OnlineEvaluationListener(evaluator=mock_evaluator)
+
+        request = WorkflowInput(question="Question", trace_id="trace-blank")
+        output = WorkflowOutput(workflow="fix_single_llm", answer=blank_answer)
+
+        await listener_fn.on_background_task(request, output)
+        await listener_eval.on_background_task(request, output)
+
+        mock_eval_task.assert_not_called()
+        mock_evaluator.aevaluate.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_other_lifecycle_hooks_are_noop(self) -> None:
         """Verify on_completed, on_error, and on_cancelled do not invoke eval_task_fn."""
         mock_eval_task = AsyncMock()
@@ -422,6 +455,3 @@ class TestWorkflowPackageExports:
             from app.rag.workflows import listeners
 
             assert getattr(wf_pkg, symbol) is getattr(listeners, symbol)
-
-
-
