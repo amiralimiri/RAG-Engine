@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import uuid
 from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
 from typing import Any, cast
@@ -23,7 +24,6 @@ from app.core.telemetry import (
 from app.rag.evaluation import Evaluator, get_evaluator
 from app.rag.memory import (
     ConversationMemoryAdapter,
-    ConversationTurn,
     NoOpMemoryStore,
 )
 from app.rag.workflows.base import (
@@ -616,8 +616,10 @@ class WorkflowRunner:
 
         if resolved_event == "completed" and output is not None:
             for listener in self.listeners:
+                coro: Any = None
                 try:
-                    task = asyncio.create_task(listener.on_background_task(request, output))
+                    coro = listener.on_background_task(request, output)
+                    task = asyncio.create_task(coro)
                     _background_tasks.add(task)
                     task.add_done_callback(_background_tasks.discard)
                     self._background_tasks.add(task)
@@ -635,6 +637,8 @@ class WorkflowRunner:
 
                     task.add_done_callback(_on_task_done)
                 except Exception as exc:
+                    if coro is not None and inspect.iscoroutine(coro):
+                        coro.close()
                     logger.warning(
                         "listener_background_task_scheduling_failed",
                         listener=listener.__class__.__name__,
