@@ -440,3 +440,210 @@ async def test_listener_exception_is_shielded_and_does_not_abort_stream():
     assert len(events) == 2
     assert isinstance(events[1], ExecutionCompletedEvent)
     assert events[1].output.answer == "Shielded listener test"
+
+
+@pytest.mark.asyncio
+async def test_sync_async_stream_trigger_identical_lifecycle_events():
+    """Verify execute(), aexecute(), and stream() trigger identical on_completed and on_background_task listener events."""
+    registry = WorkflowRegistry()
+    workflow = DummyStreamWorkflow()
+
+    mock_state = {
+        "answer": "Identical answer across pathways",
+        "source_used": "knowledge_store",
+        "trace": ["node_start", "node_generate"],
+        "citations": [{"title": "test.txt", "url": "", "type": "private_kb"}],
+        "retrieved_contexts": ["context passage 1"],
+        "session_id": "ses-identical",
+        "current_query": "What is life?",
+    }
+
+    workflow.mock_graph.invoke.return_value = mock_state
+    workflow.mock_graph.ainvoke = AsyncMock(return_value=mock_state)
+
+    async def mock_stream(*args: Any, **kwargs: Any):
+        yield {
+            "event": "on_chain_end",
+            "metadata": {"langgraph_node": "node_generate"},
+            "data": {"output": mock_state},
+        }
+
+    workflow.mock_graph.astream_events = mock_stream
+    registry.register(workflow)
+
+    sync_spy = SpyExecutionLifecycleListener()
+    sync_runner = WorkflowRunner(registry=registry, listeners=[sync_spy])
+
+    async_spy = SpyExecutionLifecycleListener()
+    async_runner = WorkflowRunner(registry=registry, listeners=[async_spy])
+
+    stream_spy = SpyExecutionLifecycleListener()
+    stream_runner = WorkflowRunner(registry=registry, listeners=[stream_spy])
+
+    request = WorkflowInput(
+        question="What is life?",
+        workflow="dummy_stream_wf",
+        session_id="ses-identical",
+        trace_id="trace-identical",
+    )
+
+    # 1. Sync execute()
+    sync_runner.execute(request)
+    for _ in range(50):
+        if len(sync_spy.background_calls) > 0:
+            break
+        await asyncio.sleep(0.01)
+
+    # 2. Async aexecute()
+    await async_runner.aexecute(request)
+    await asyncio.gather(*list(async_runner._background_tasks), return_exceptions=True)
+
+    # 3. Stream stream()
+    _ = [event async for event in stream_runner.stream(request)]
+    await asyncio.gather(*list(stream_runner._background_tasks), return_exceptions=True)
+
+    # Assert on_completed calls match across all 3
+    assert len(sync_spy.completed_calls) == 1
+    assert len(async_spy.completed_calls) == 1
+    assert len(stream_spy.completed_calls) == 1
+
+    _, sync_out = sync_spy.completed_calls[0]
+    _, async_out = async_spy.completed_calls[0]
+    _, stream_out = stream_spy.completed_calls[0]
+
+    assert sync_out.answer == async_out.answer == stream_out.answer == "Identical answer across pathways"
+    assert sync_out.source_used == async_out.source_used == stream_out.source_used == "knowledge_store"
+    assert sync_out.retrieved_contexts == async_out.retrieved_contexts == stream_out.retrieved_contexts == ["context passage 1"]
+    assert sync_out.workflow == async_out.workflow == stream_out.workflow == "dummy_stream_wf"
+    assert sync_out.trace_id == async_out.trace_id == stream_out.trace_id
+    assert sync_out.session_id == async_out.session_id == stream_out.session_id == "ses-identical"
+
+    # Assert on_background_task calls match across all 3
+    assert len(sync_spy.background_calls) == 1
+    assert len(async_spy.background_calls) == 1
+    assert len(stream_spy.background_calls) == 1
+
+    _, bg_sync_out = sync_spy.background_calls[0]
+    _, bg_async_out = async_spy.background_calls[0]
+    _, bg_stream_out = stream_spy.background_calls[0]
+
+    assert bg_sync_out.answer == bg_async_out.answer == bg_stream_out.answer == "Identical answer across pathways"
+    assert bg_sync_out.retrieved_contexts == bg_async_out.retrieved_contexts == bg_stream_out.retrieved_contexts == ["context passage 1"]
+
+
+@pytest.mark.asyncio
+async def test_graph_execution_errors_trigger_on_error_across_all_pathways():
+    """Verify graph execution errors trigger on_error across sync, async, and streaming routes."""
+    registry = WorkflowRegistry()
+    workflow = DummyStreamWorkflow()
+
+    sync_error = RuntimeError("Sync graph execution error")
+    async_error = ValueError("Async graph execution error")
+    stream_error = KeyError("Stream graph execution error")
+
+    workflow.mock_graph.invoke.side_effect = sync_error
+    workflow.mock_graph.ainvoke = AsyncMock(side_effect=async_error)
+
+    async def mock_failing_stream(*args: Any, **kwargs: Any):
+        raise stream_error
+        yield {}  # unreachable generator syntax
+
+    workflow.mock_graph.astream_events = mock_failing_stream
+    registry.register(workflow)
+
+    sync_spy = SpyExecutionLifecycleListener()
+    sync_runner = WorkflowRunner(registry=registry, listeners=[sync_spy])
+
+    async_spy = SpyExecutionLifecycleListener()
+    async_runner = WorkflowRunner(registry=registry, listeners=[async_spy])
+
+    stream_spy = SpyExecutionLifecycleListener()
+    stream_runner = WorkflowRunner(registry=registry, listeners=[stream_spy])
+
+    request = WorkflowInput(question="Error test", workflow="dummy_stream_wf")
+
+    # 1. Sync execute()
+    sync_out = sync_runner.execute(request)
+    assert "Fallback error answer" in sync_out.answer
+    assert len(sync_spy.error_calls) == 1
+    assert sync_spy.error_calls[0][1] is sync_error
+
+    # 2. Async aexecute()
+    async_out = await async_runner.aexecute(request)
+    assert "Fallback error answer" in async_out.answer
+    assert len(async_spy.error_calls) == 1
+    assert async_spy.error_calls[0][1] is async_error
+
+    # 3. Stream stream()
+    events = [event async for event in stream_runner.stream(request)]
+    assert any(isinstance(e, ExecutionFailedEvent) for e in events)
+    assert len(stream_spy.error_calls) == 1
+    assert stream_spy.error_calls[0][1] is stream_error
+
+
+@pytest.mark.asyncio
+async def test_background_tasks_bridge_skips_listener_background_task_dispatch():
+    """Verify that when FastAPI background_tasks is supplied, on_background_task listener dispatch is skipped."""
+    from fastapi import BackgroundTasks
+
+    registry = WorkflowRegistry()
+    workflow = DummyStreamWorkflow()
+    mock_state = {"answer": "Bridge test answer", "source_used": "direct", "trace": []}
+    workflow.mock_graph.invoke.return_value = mock_state
+    workflow.mock_graph.ainvoke = AsyncMock(return_value=mock_state)
+    registry.register(workflow)
+
+    spy_listener = SpyExecutionLifecycleListener()
+    runner = WorkflowRunner(registry=registry, listeners=[spy_listener])
+    request = WorkflowInput(question="Bridge question", workflow="dummy_stream_wf")
+
+    bg_tasks = BackgroundTasks()
+
+    # 1. Async aexecute with background_tasks
+    await runner.aexecute(request, background_tasks=bg_tasks)
+    assert len(spy_listener.completed_calls) == 1
+    assert len(spy_listener.background_calls) == 0
+
+    spy_listener.completed_calls.clear()
+
+    # 2. Sync execute with background_tasks
+    runner.execute(request, background_tasks=bg_tasks)
+    await asyncio.sleep(0.02)
+    assert len(spy_listener.completed_calls) == 1
+    assert len(spy_listener.background_calls) == 0
+
+
+@pytest.mark.asyncio
+async def test_http_exception_triggers_on_error_prior_to_reraising():
+    """Verify that HTTPException (e.g. invalid workflow) triggers on_error listener before re-raising."""
+    from fastapi import HTTPException
+
+    registry = WorkflowRegistry()
+    spy_listener = SpyExecutionLifecycleListener()
+    runner = WorkflowRunner(registry=registry, listeners=[spy_listener])
+    request = WorkflowInput(question="Unregistered workflow", workflow="non_existent_wf")
+
+    # 1. Sync execute
+    with pytest.raises(HTTPException):
+        runner.execute(request)
+    assert len(spy_listener.error_calls) == 1
+    assert isinstance(spy_listener.error_calls[0][1], HTTPException)
+
+    spy_listener.error_calls.clear()
+
+    # 2. Async aexecute
+    with pytest.raises(HTTPException):
+        await runner.aexecute(request)
+    assert len(spy_listener.error_calls) == 1
+    assert isinstance(spy_listener.error_calls[0][1], HTTPException)
+
+    spy_listener.error_calls.clear()
+
+    # 3. Stream stream
+    with pytest.raises(HTTPException):
+        runner.stream(request)
+    assert len(spy_listener.error_calls) == 1
+    assert isinstance(spy_listener.error_calls[0][1], HTTPException)
+
+
+

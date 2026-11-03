@@ -461,9 +461,21 @@ async def test_online_evaluation_scheduled_via_asyncio_create_task():
     """Verify evaluation falls back to loop.create_task when background_tasks is None."""
     custom_registry = WorkflowRegistry()
     mock_wf = MockWorkflow("eval_task_wf")
+    mock_wf.mock_graph.ainvoke = AsyncMock(
+        return_value={
+            "answer": "Mock Answer",
+            "source_used": "vectorstore",
+            "trace": ["step_1", "generate"],
+            "citations": [{"title": "doc1.pdf", "url": "", "type": "private_kb"}],
+            "retrieved_contexts": ["chunk context 1"],
+            "current_query": "mock query",
+            "trace_id": "trace-no-bg",
+        }
+    )
     custom_registry.register(mock_wf)
 
-    runner = WorkflowRunner(registry=custom_registry)
+    fake_eval = FakeEvaluator()
+    runner = WorkflowRunner(registry=custom_registry, evaluator=fake_eval)
     request = WorkflowInput(
         question="No BackgroundTasks?",
         workflow="eval_task_wf",
@@ -1193,7 +1205,7 @@ async def test_online_evaluation_task_exception_shielded_in_aexecute():
         trace_id="eval-aexec-trace",
     )
 
-    with patch("app.rag.workflows.runner.logger.warning") as mock_log_warn:
+    with patch("app.rag.workflows.listeners.logger.warning") as mock_log_warn:
         response = await runner.aexecute(request)
         assert response.answer == "Async eval shielded answer"
 
@@ -1518,7 +1530,7 @@ async def test_evaluator_exception_shielded_in_finalize_and_stream():
     runner = WorkflowRunner(registry=custom_registry, evaluator=failing_eval)
 
     # 1. Test in aexecute
-    with patch("app.rag.workflows.runner.logger.warning") as mock_warn:
+    with patch("app.rag.workflows.listeners.logger.warning") as mock_warn:
         resp = await runner.aexecute(
             WorkflowInput(question="Shield test?", workflow="shielded_eval_wf", trace_id="trace-s1")
         )
