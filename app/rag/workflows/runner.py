@@ -177,6 +177,8 @@ class WorkflowRunner:
     @eval_task_fn.setter
     def eval_task_fn(self, val: Callable[..., Any] | None) -> None:
         self._eval_task_fn = val
+        if not self._explicit_listeners:
+            self._listeners = None
 
     @property
     def evaluator(self) -> Evaluator:
@@ -1234,6 +1236,9 @@ class WorkflowRunner:
 
         except Exception as exc:
             logger.exception("Error during graph execution stream: %s", exc)
+            # In the domain event model, graph failures directly emit ExecutionFailedEvent;
+            # wf_def.handle_error() is invoked strictly for workflow telemetry/cleanup rather
+            # than synthetic token fallback.
             if wf_def is not None:
                 try:
                     wf_def.handle_error(exc, final_output or initial_state)
