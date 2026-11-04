@@ -4,7 +4,7 @@
 - **ADR Reference:** [`docs/adr/0021-extract-execution-context-binder-seam.md`](../adr/0021-extract-execution-context-binder-seam.md)
 - **Domain Guidelines:** [`GLOSSARY.md`](../../GLOSSARY.md) | [`docs/agents/workflow-execution.md`](../agents/workflow-execution.md)
 - **Status:** Complete (4 Tickets Completed)
-- **Triage Label:** `ready-for-human`
+- **Triage Label:** `closed`
 
 ---
 
