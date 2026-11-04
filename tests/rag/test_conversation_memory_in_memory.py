@@ -59,7 +59,9 @@ async def test_noop_memory_store_protocol_compliance_and_behavior() -> None:
     assert fork_session_generated.parent_session_id == "session-noop"
     assert fork_session_generated.forked_from_turn == 0
 
-    fork_session_explicit = await store.afork_session("session-noop", upto_turn_index=0, new_session_id="custom-child-id")
+    fork_session_explicit = await store.afork_session(
+        "session-noop", upto_turn_index=0, new_session_id="custom-child-id"
+    )
     assert isinstance(fork_session_explicit, ConversationSession)
     assert fork_session_explicit.session_id == "custom-child-id"
     assert fork_session_explicit.turns == []
@@ -763,4 +765,3 @@ async def test_noop_memory_store_aget_session_and_afork_session() -> None:
     assert ephemeral_explicit.forked_from_turn == -1
     assert ephemeral_explicit.turn_count == 0
     assert ephemeral_explicit.turns == []
-

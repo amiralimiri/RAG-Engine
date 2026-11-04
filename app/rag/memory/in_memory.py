@@ -184,7 +184,7 @@ class InMemoryConversationStore(ConversationMemoryAdapter):
             now = datetime.now(UTC)
 
             parent_session = self._sessions[source_session_id]
-            if parent_session and parent_session.title:
+            if parent_session.title:
                 title = f"{parent_session.title} (Fork)"
             else:
                 title = f"Fork of {source_session_id}"
