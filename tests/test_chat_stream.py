@@ -73,6 +73,19 @@ def parse_sse_lines(lines: list[str]) -> list[dict[str, Any]]:
     return events
 
 
+def assert_step_events_valid(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Assert all event: step frames have required step, label, and timestamp fields."""
+    step_events = [e for e in events if e["event"] == "step"]
+    for s in step_events:
+        d = s["data"]
+        assert isinstance(d, dict)
+        assert "step" in d
+        assert "label" in d
+        assert "timestamp" in d
+        assert isinstance(d["timestamp"], (int, float))
+    return step_events
+
+
 def get_mock_handler(trace_id: str = "trace-test-999") -> MagicMock:
     h = MagicMock()
     h.last_trace_id = trace_id
@@ -372,15 +385,8 @@ class TestWireEventSequence:
         assert "metadata" in event_types
 
         # Verify step payloads
-        step_events = [e for e in events if e["event"] == "step"]
+        step_events = assert_step_events_valid(events)
         assert len(step_events) >= 1
-        for s in step_events:
-            d = s["data"]
-            assert isinstance(d, dict)
-            assert "step" in d
-            assert "label" in d
-            assert "timestamp" in d
-            assert isinstance(d["timestamp"], (int, float))
 
         # Verify token payloads parse as valid JSON {"delta": "..."}
         token_events = [e for e in events if e["event"] == "token"]
@@ -830,7 +836,8 @@ class TestMultiWorkflowStreamingE2E:
                 lines1 = [line async for line in resp1.aiter_lines()]
 
             events1 = parse_sse_lines(lines1)
-            steps1 = [e["data"]["step"] for e in events1 if e["event"] == "step"]
+            step_events1 = assert_step_events_valid(events1)
+            steps1 = [s["data"]["step"] for s in step_events1]
             assert "route_question" in steps1
             assert "retrieve_kb" in steps1
             assert "generate_from_kb" in steps1
@@ -852,7 +859,8 @@ class TestMultiWorkflowStreamingE2E:
                 lines2 = [line async for line in resp2.aiter_lines()]
 
             events2 = parse_sse_lines(lines2)
-            steps2 = [e["data"]["step"] for e in events2 if e["event"] == "step"]
+            step_events2 = assert_step_events_valid(events2)
+            steps2 = [s["data"]["step"] for s in step_events2]
             assert "agent" in steps2
             assert "tools" in steps2
 
@@ -973,7 +981,7 @@ class TestMultiWorkflowStreamingE2E:
         events = parse_sse_lines(lines)
 
         # 1. Step events must include the active LLM node and tools
-        step_events = [e for e in events if e["event"] == "step"]
+        step_events = assert_step_events_valid(events)
         steps = [s["data"]["step"] for s in step_events]
         assert node_name in steps
         assert "tools" in steps
@@ -1128,7 +1136,7 @@ class TestUnifiedBaseToolStreamingRegression:
         events = parse_sse_lines(lines)
 
         # 1. Step transitions
-        step_events = [e for e in events if e["event"] == "step"]
+        step_events = assert_step_events_valid(events)
         steps = [s["data"]["step"] for s in step_events]
         assert "route_question" in steps
         assert "retrieve_kb" in steps
@@ -1212,7 +1220,7 @@ class TestUnifiedBaseToolStreamingRegression:
         events = parse_sse_lines(lines)
 
         # 1. Step transitions include web fallback sequence
-        step_events = [e for e in events if e["event"] == "step"]
+        step_events = assert_step_events_valid(events)
         steps = [s["data"]["step"] for s in step_events]
         assert "retrieve_kb" in steps
         assert "search_web" in steps
@@ -1308,7 +1316,8 @@ class TestUnifiedBaseToolStreamingRegression:
                 lines = [line async for line in resp.aiter_lines()]
 
         events = parse_sse_lines(lines)
-        steps = [s["data"]["step"] for s in events if s["event"] == "step"]
+        step_events = assert_step_events_valid(events)
+        steps = [s["data"]["step"] for s in step_events]
         assert "retrieve_kb" in steps
 
         tokens = "".join(t["data"]["delta"] for t in events if t["event"] == "token")
@@ -1355,14 +1364,17 @@ class TestRunnerStreamWithSseStreamAdapter:
 
         mock_graph = MagicMock()
         mock_graph.astream_events = dummy_events
-        register_mock_workflow("fix_single_llm", graph=mock_graph)
+        register_mock_workflow(
+            "fix_single_llm",
+            graph=mock_graph,
+            step_labels={"route_question": "Analyzing incoming question..."},
+        )
 
         runner = get_workflow_runner()
         request = WorkflowInput(question="Direct test question", workflow="fix_single_llm")
 
-        custom_labels = {"route_question": "Analyzing incoming question..."}
         raw_sse_frames = [
-            frame async for frame in SseStreamAdapter.format(runner.stream(request), step_labels=custom_labels)
+            frame async for frame in SseStreamAdapter.format(runner.stream(request))
         ]
 
         assert len(raw_sse_frames) == 3

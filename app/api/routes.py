@@ -24,7 +24,7 @@ from app.core.config import get_settings
 from app.rag.evaluation import get_evaluator
 from app.rag.knowledge import SUPPORTED_EXTENSIONS, get_document_indexer
 from app.rag.memory import get_conversation_memory
-from app.rag.workflows import DEFAULT_STEP_LABELS, get_workflow_registry, get_workflow_runner
+from app.rag.workflows import get_workflow_registry, get_workflow_runner
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/api")
@@ -72,18 +72,8 @@ def chat(payload: ChatRequest) -> ChatResponse:
 async def chat_stream(payload: ChatRequest):
     wf_input = payload.to_workflow_input()
     runner = get_workflow_runner()
-    step_labels = None
-    if wf_input.workflow:
-        try:
-            wf_def = runner.resolve_workflow(wf_input.workflow)
-            step_labels = wf_def.info.step_labels if wf_def and wf_def.info else None
-        except Exception:
-            pass
-    if step_labels is None:
-        step_labels = DEFAULT_STEP_LABELS
-
     return StreamingResponse(
-        SseStreamAdapter.format(runner.stream(wf_input), step_labels=step_labels),
+        SseStreamAdapter.format(runner.stream(wf_input)),
         media_type="text/event-stream; charset=utf-8",
         headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
     )
