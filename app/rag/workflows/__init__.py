@@ -12,6 +12,7 @@ from app.rag.workflows.base import (
     WorkflowInput,
     WorkflowOutput,
 )
+from app.rag.workflows.binder import ExecutionContextBinder
 from app.rag.workflows.events import (
     ExecutionCompletedEvent,
     ExecutionFailedEvent,
@@ -79,6 +80,7 @@ __all__ = [
     "WorkflowInput",
     "WorkflowOutput",
     "BoundExecutionContext",
+    "ExecutionContextBinder",
     "StepTransitionEvent",
     "TokenDeltaEvent",
     "ExecutionCompletedEvent",
