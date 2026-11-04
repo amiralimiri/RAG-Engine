@@ -239,9 +239,7 @@ def test_protocol_runtime_checkable() -> None:
         async def alist_sessions(self, limit: int = 50):
             return []
 
-        async def aget_session(
-            self, session_id: str, limit: int | None = None
-        ) -> ConversationSession | None:
+        async def aget_session(self, session_id: str, limit: int | None = None) -> ConversationSession | None:
             return None
 
     class IncompleteMemoryAdapter:
@@ -277,9 +275,7 @@ def test_protocol_runtime_checkable() -> None:
         async def alist_sessions(self, limit: int = 50):
             return []
 
-        async def aget_session(
-            self, session_id: str, limit: int | None = None
-        ) -> ConversationSession | None:
+        async def aget_session(self, session_id: str, limit: int | None = None) -> ConversationSession | None:
             return None
 
     dummy_complete = CompleteMemoryAdapter()

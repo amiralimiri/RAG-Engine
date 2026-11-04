@@ -104,7 +104,7 @@ class ConversationMemoryAdapter(Protocol):
         upto_turn_index: int,
         new_session_id: str | None = None,
     ) -> ConversationSession:
-        """Clone turns [0 .. upto_turn_index] into a child session and track lineage."""
+        """Clone turns [0 .. upto_turn_index] into a child session and return the complete aggregate."""
         ...
 
     async def alist_sessions(self, limit: int = 50) -> list[SessionInfo]:
