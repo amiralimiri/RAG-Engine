@@ -407,6 +407,11 @@ class ExecutionContextBinder:
         resolved_parameters = self._resolve_parameters(request, wf_def, profile, kwargs)
 
         effective_messages = hydrated_messages if hydrated_messages is not None else getattr(request, "messages", None)
+        if effective_messages is not None:
+            try:
+                request.messages = effective_messages
+            except Exception:
+                pass
         turn_count = (len(effective_messages) // 2) if effective_messages is not None else 0
         history_turns_loaded = turn_count if getattr(request, "session_id", None) else 0
 

@@ -30,6 +30,7 @@ from app.rag.workflows.base import (
     WorkflowInput,
     WorkflowOutput,
 )
+from app.rag.workflows.binder import ExecutionContextBinder
 from app.rag.workflows.events import (
     ExecutionCompletedEvent,
     ExecutionFailedEvent,
@@ -154,7 +155,7 @@ def test_get_workflow_runner_prewarming():
 
     warmed_runner = get_workflow_runner(memory=store, evaluator=evaluator)
     assert get_workflow_runner() is warmed_runner
-    assert warmed_runner._memory is store
+    assert warmed_runner.memory is store
     assert warmed_runner.evaluator is evaluator
 
 
@@ -169,8 +170,115 @@ async def test_lifespan_prewarms_production_workflow_runner():
     test_app = FastAPI()
     async with lifespan(test_app):
         runner = get_workflow_runner()
-        assert runner._memory is not None
+        assert runner.memory is not None
         assert runner.evaluator is not None
+
+
+def test_runner_custom_binder_injection():
+    """Verify custom ExecutionContextBinder injection and forwarding properties."""
+    from app.rag.memory.in_memory import InMemoryConversationStore
+
+    custom_registry = WorkflowRegistry()
+    mock_wf = MockWorkflow("binder_injected_wf")
+    custom_registry.register(mock_wf)
+    custom_memory = InMemoryConversationStore()
+
+    custom_binder = ExecutionContextBinder(
+        registry=custom_registry,
+        memory=custom_memory,
+    )
+
+    runner = WorkflowRunner(binder=custom_binder)
+
+    assert runner.binder is custom_binder
+    assert runner.registry is custom_registry
+    assert runner.memory is custom_memory
+    assert runner.resolve_workflow("binder_injected_wf") is mock_wf
+
+
+def test_runner_delegates_execute_to_binder():
+    """Verify execute() delegates preparation to binder.bind() and unpacks BoundExecutionContext."""
+    custom_registry = WorkflowRegistry()
+    mock_wf = MockWorkflow("bound_exec_wf")
+    custom_registry.register(mock_wf)
+
+    binder = ExecutionContextBinder(registry=custom_registry)
+    runner = WorkflowRunner(binder=binder)
+
+    request = WorkflowInput(question="Delegated question?", workflow="bound_exec_wf")
+
+    with patch.object(binder, "bind", wraps=binder.bind) as spy_bind:
+        response = runner.execute(request)
+        assert spy_bind.called
+        call_args, call_kwargs = spy_bind.call_args
+        assert call_args[0].question == "Delegated question?"
+        assert response.workflow == "bound_exec_wf"
+        assert response.answer == "Mock Answer"
+
+
+@pytest.mark.asyncio
+async def test_runner_delegates_aexecute_to_binder():
+    """Verify aexecute() delegates preparation to binder.abind()."""
+    custom_registry = WorkflowRegistry()
+    mock_wf = MockWorkflow("bound_aexec_wf")
+    custom_registry.register(mock_wf)
+
+    binder = ExecutionContextBinder(registry=custom_registry)
+    runner = WorkflowRunner(binder=binder)
+
+    request = WorkflowInput(question="Async delegated question?", workflow="bound_aexec_wf")
+
+    with patch.object(binder, "abind", wraps=binder.abind) as spy_abind:
+        response = await runner.aexecute(request)
+        assert spy_abind.called
+        call_args, call_kwargs = spy_abind.call_args
+        assert call_args[0].question == "Async delegated question?"
+        assert response.workflow == "bound_aexec_wf"
+
+
+@pytest.mark.asyncio
+async def test_runner_delegates_stream_to_binder():
+    """Verify stream() delegates preparation to binder.abind(streaming=True)."""
+    custom_registry = WorkflowRegistry()
+    mock_wf = MockWorkflow("bound_stream_wf")
+    custom_registry.register(mock_wf)
+
+    binder = ExecutionContextBinder(registry=custom_registry)
+    runner = WorkflowRunner(binder=binder)
+
+    request = WorkflowInput(question="Stream delegated question?", workflow="bound_stream_wf")
+
+    with patch.object(binder, "abind", wraps=binder.abind) as spy_abind:
+        events = []
+        async for ev in runner.stream(request):
+            events.append(ev)
+        assert spy_abind.called
+        _, call_kwargs = spy_abind.call_args
+        assert call_kwargs.get("streaming") is True
+        assert any(isinstance(ev, ExecutionCompletedEvent) for ev in events)
+
+
+def test_runner_delegates_execute_with_context_to_binder():
+    """Verify execute_with_context() delegates preparation to binder.bind() without redundant workflow resolution."""
+    custom_registry = WorkflowRegistry()
+    mock_wf = MockWorkflow("bound_ctx_wf")
+    custom_registry.register(mock_wf)
+
+    binder = ExecutionContextBinder(registry=custom_registry)
+    runner = WorkflowRunner(binder=binder)
+
+    request = WorkflowInput(question="Context delegation question?", workflow="bound_ctx_wf")
+
+    with patch.object(binder, "bind", wraps=binder.bind) as spy_bind:
+        with patch.object(binder, "resolve_workflow", wraps=binder.resolve_workflow) as spy_resolve:
+            result = runner.execute_with_context(request)
+            assert spy_bind.called
+            # binder.bind calls resolve_workflow once; execute_with_context must not re-resolve
+            assert spy_resolve.call_count == 1
+            assert isinstance(result, ExecutionResult)
+            assert result.response.workflow == "bound_ctx_wf"
+            assert result.eval_context.source_used == "vectorstore"
+
 
 
 # ==============================================================================
@@ -1828,8 +1936,8 @@ def test_three_tier_resolution_precedence():
 
     # Case A: Baseline only (no variant, no explicit parameters)
     req_baseline = WorkflowInput(question="Baseline inquiry?", workflow="three_tier_wf")
-    _, _, _, _, config_base = runner._prepare_execution(req_baseline)
-    cfg_b = config_base["configurable"]
+    bound_base = runner.binder.bind(req_baseline)
+    cfg_b = bound_base.as_runnable_config()["configurable"]
     assert cfg_b["top_k"] == 3
     assert cfg_b["shared_param"] == "from_baseline"
     assert cfg_b["model_name"] == "baseline-model"
@@ -1843,8 +1951,8 @@ def test_three_tier_resolution_precedence():
         workflow="three_tier_wf",
         variant_id="profile_var",
     )
-    _, _, _, _, config_prof = runner._prepare_execution(req_profile)
-    cfg_p = config_prof["configurable"]
+    bound_prof = runner.binder.bind(req_profile)
+    cfg_p = bound_prof.as_runnable_config()["configurable"]
     assert cfg_p["variant_id"] == "profile_var"
     assert cfg_p["top_k"] == 7  # Profile overwrote baseline (7 vs 3)
     assert cfg_p["shared_param"] == "from_profile"  # Profile overwrote baseline
@@ -1865,8 +1973,8 @@ def test_three_tier_resolution_precedence():
             "model_name": "explicit-model",
         },
     )
-    _, _, _, _, config_exp = runner._prepare_execution(req_explicit)
-    cfg_e = config_exp["configurable"]
+    bound_exp = runner.binder.bind(req_explicit)
+    cfg_e = bound_exp.as_runnable_config()["configurable"]
     assert cfg_e["variant_id"] == "profile_var"
     assert cfg_e["temperature"] == 0.9  # Explicit (0.9) > Profile (0.4) > Baseline (0.0)
     assert cfg_e["top_k"] == 15  # Explicit (15) > Profile (7) > Baseline (3)

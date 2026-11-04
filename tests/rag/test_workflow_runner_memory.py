@@ -521,7 +521,6 @@ async def test_runner_safe_rewind_bounded_by_max_turns(monkeypatch: pytest.Monke
     registry.register(mock_wf)
 
     memory = InMemoryConversationStore()
-    runner = WorkflowRunner(registry=registry, memory=memory)
     session_id = "test-session-rewind-bounded"
 
     # Populate 15 turns (indices 0..14)
@@ -539,7 +538,7 @@ async def test_runner_safe_rewind_bounded_by_max_turns(monkeypatch: pytest.Monke
     mock_settings = MagicMock()
     mock_settings.memory_max_turns = 4
     mock_settings.app_env = "testing"
-    monkeypatch.setattr(runner, "settings", mock_settings)
+    runner = WorkflowRunner(registry=registry, memory=memory, settings=mock_settings)
 
     # Rewind to turn 10: turns 0..9 exist before rewind.
     # With max_turns=4, sliced should be [10 - 4 : 10] = turns 6, 7, 8, 9 (4 turns).
@@ -650,11 +649,10 @@ async def test_runner_hydrate_memory_uses_single_aget_messages(monkeypatch: pyte
     memory.aget_messages = AsyncMock(return_value=fake_messages)
     memory.aget_turns = AsyncMock()
 
-    runner = WorkflowRunner(memory=memory)
     mock_settings = MagicMock()
     mock_settings.memory_max_turns = 6
     mock_settings.app_env = "testing"
-    monkeypatch.setattr(runner, "settings", mock_settings)
+    runner = WorkflowRunner(memory=memory, settings=mock_settings)
 
     # 1. Hydration with rewind_turn_index
     req_rewind = WorkflowInput(
@@ -662,7 +660,7 @@ async def test_runner_hydrate_memory_uses_single_aget_messages(monkeypatch: pyte
         session_id="test-session-hydrate",
         rewind_turn_index=3,
     )
-    hydrated = await runner._ahydrate_memory(req_rewind)
+    hydrated = await runner.binder._ahydrate_messages(req_rewind)
     assert hydrated == fake_messages
     memory.aget_messages.assert_awaited_once_with(
         "test-session-hydrate",
@@ -677,7 +675,7 @@ async def test_runner_hydrate_memory_uses_single_aget_messages(monkeypatch: pyte
         question="Normal question",
         session_id="test-session-hydrate",
     )
-    hydrated_normal = await runner._ahydrate_memory(req_normal)
+    hydrated_normal = await runner.binder._ahydrate_messages(req_normal)
     assert hydrated_normal == fake_messages
     memory.aget_messages.assert_awaited_once_with(
         "test-session-hydrate",
@@ -735,18 +733,17 @@ async def test_runner_hydrate_memory_does_not_mutate_request_messages(monkeypatc
     fake_messages = [HumanMessage(content="Prior q"), AIMessage(content="Prior a")]
     memory.aget_messages = AsyncMock(return_value=fake_messages)
 
-    runner = WorkflowRunner(memory=memory)
     mock_settings = MagicMock()
     mock_settings.memory_max_turns = 10
     mock_settings.app_env = "testing"
-    monkeypatch.setattr(runner, "settings", mock_settings)
+    runner = WorkflowRunner(memory=memory, settings=mock_settings)
 
     req = WorkflowInput(
         question="What is the policy?",
         session_id="test-session-immutable",
         messages=None,
     )
-    hydrated = await runner._ahydrate_memory(req)
+    hydrated = await runner.binder._ahydrate_messages(req)
     assert hydrated == fake_messages
     assert req.messages is None  # Must NOT be mutated in-place
 
