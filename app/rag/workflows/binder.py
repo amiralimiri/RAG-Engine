@@ -24,7 +24,6 @@ from app.rag.workflows.base import (
     ExecutionProfile,
     WorkflowDefinition,
     WorkflowInput,
-    parse_raw_attachments,
     parse_raw_messages,
 )
 from app.rag.workflows.registry import (
@@ -137,7 +136,7 @@ class ExecutionContextBinder:
 
     async def _ahydrate_messages(self, request: Any) -> list[BaseMessage] | None:
         """Hydrate bounded historical messages from conversation memory store."""
-        if self._memory is None or isinstance(self._memory, NoOpMemoryStore):
+        if self.memory is None or isinstance(self.memory, NoOpMemoryStore):
             return getattr(request, "messages", None)
 
         session_id = getattr(request, "session_id", None)
@@ -150,26 +149,26 @@ class ExecutionContextBinder:
         max_turns = getattr(settings, "memory_max_turns", 10)
 
         hydrated: list[BaseMessage] | None = None
-        if hasattr(self._memory, "aget_messages"):
+        if hasattr(self.memory, "aget_messages"):
             try:
-                hydrated = await self._memory.aget_messages(
+                hydrated = await self.memory.aget_messages(
                     session_id,
                     limit=max_turns,
                     before_turn_index=rewind_turn_index,
                 )
             except TypeError:
-                hydrated = await self._memory.aget_messages(session_id)
+                hydrated = await self.memory.aget_messages(session_id)
                 if rewind_turn_index is not None:
                     hydrated = hydrated[: rewind_turn_index * 2]
-        elif hasattr(self._memory, "aget_turns"):
+        elif hasattr(self.memory, "aget_turns"):
             try:
-                turns = await self._memory.aget_turns(
+                turns = await self.memory.aget_turns(
                     session_id,
                     limit=max_turns,
                     before_turn_index=rewind_turn_index,
                 )
             except TypeError:
-                turns = await self._memory.aget_turns(session_id)
+                turns = await self.memory.aget_turns(session_id)
             if rewind_turn_index is not None:
                 turns = turns[:rewind_turn_index]
             msgs: list[BaseMessage] = []
@@ -196,7 +195,7 @@ class ExecutionContextBinder:
 
     def _hydrate_messages_sync(self, request: Any) -> list[BaseMessage] | None:
         """Synchronous wrapper for conversation memory hydration."""
-        if self._memory is None or isinstance(self._memory, NoOpMemoryStore):
+        if self.memory is None or isinstance(self.memory, NoOpMemoryStore):
             return getattr(request, "messages", None)
         return run_async_safely(self._ahydrate_messages, request)
 
@@ -468,7 +467,9 @@ class ExecutionContextBinder:
             cfg_meta["streaming"] = True
         if metadata:
             cfg_meta.update(metadata)
-        run_config.setdefault("metadata", {}).update(cfg_meta)
+        run_metadata = dict(run_config.get("metadata", {}))
+        run_metadata.update(cfg_meta)
+        run_config["metadata"] = run_metadata
 
         if kwargs.get("tags"):
             run_config["tags"] = kwargs["tags"]

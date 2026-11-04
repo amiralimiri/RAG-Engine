@@ -464,8 +464,13 @@ def test_binder_properties_and_di():
 
     # Custom injected dependencies
     custom_settings = object()
-    custom_cb = lambda **kwargs: None
-    custom_extractor = lambda h: "custom-extracted"
+
+    def custom_cb(**kwargs):
+        return None
+
+    def custom_extractor(h):
+        return "custom-extracted"
+
     custom_registry = WorkflowRegistry()
     custom_memory = object()
 
@@ -525,7 +530,3 @@ def test_bound_execution_context_immutability():
     cfg = bound.as_runnable_config()
     cfg["new_key"] = "modified"
     assert "new_key" not in bound.config
-
-
-
-
