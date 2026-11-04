@@ -2,6 +2,7 @@
 
 from app.rag.classifiers import JevClassifierAdapter, OpenAIClassifierAdapter
 from app.rag.workflows.base import (
+    BoundExecutionContext,
     EvalContext,
     ExecutionProfile,
     PluggableWorkflow,
@@ -77,6 +78,7 @@ __all__ = [
     "EvalContext",
     "WorkflowInput",
     "WorkflowOutput",
+    "BoundExecutionContext",
     "StepTransitionEvent",
     "TokenDeltaEvent",
     "ExecutionCompletedEvent",

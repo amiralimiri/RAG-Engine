@@ -12,6 +12,7 @@ from app.api.schemas import (
     WorkflowListResponse,
 )
 from app.rag.workflows.base import (
+    BoundExecutionContext,
     EvalContext,
     WorkflowDefinition,
     WorkflowInfo,
@@ -34,7 +35,7 @@ class DummyCompliantWorkflow:
             generation_nodes={"generate"},
         )
 
-    def get_compiled_graph(self) -> Any:
+    def get_compiled_graph(self, variant_id: str | None = None) -> Any:
         return "mock_compiled_graph"
 
     def to_initial_state(self, input: WorkflowInput | Any, trace_id: str | None = None) -> dict[str, Any]:
@@ -207,3 +208,105 @@ def test_workflow_list_response():
     assert len(dumped["workflows"]) == 2
     assert len(dumped["details"]) == 1
     assert dumped["details"][0]["id"] == "dummy_workflow"
+
+
+@pytest.fixture
+def dummy_workflow() -> DummyCompliantWorkflow:
+    return DummyCompliantWorkflow()
+
+
+def test_bound_execution_context_instantiation_defaults(dummy_workflow: DummyCompliantWorkflow):
+    initial_state = {"question": "test question", "messages": []}
+    config = {"configurable": {"thread_id": "t1"}}
+    trace_id = "trace-123"
+
+    bound = BoundExecutionContext(
+        workflow=dummy_workflow,
+        initial_state=initial_state,
+        config=config,
+        trace_id=trace_id,
+    )
+
+    assert bound.workflow is dummy_workflow
+    assert bound.initial_state == initial_state
+    assert bound.config == config
+    assert bound.trace_id == trace_id
+    assert bound.session_id is None
+    assert bound.variant_id is None
+    assert bound.resolved_parameters == {}
+    assert bound.hydrated_messages is None
+
+
+def test_bound_execution_context_full_fields(dummy_workflow: DummyCompliantWorkflow):
+    from langchain_core.messages import BaseMessage, HumanMessage
+
+    messages: list[BaseMessage] = [HumanMessage(content="hello")]
+    bound = BoundExecutionContext(
+        workflow=dummy_workflow,
+        initial_state={"question": "hello"},
+        config={"tags": ["tag1"], "callbacks": []},
+        trace_id="tr-456",
+        session_id="ses-1",
+        variant_id="var-fast",
+        resolved_parameters={"temperature": 0.2},
+        hydrated_messages=messages,
+    )
+
+    assert bound.session_id == "ses-1"
+    assert bound.variant_id == "var-fast"
+    assert bound.resolved_parameters == {"temperature": 0.2}
+    assert bound.hydrated_messages == messages
+
+
+def test_bound_execution_context_frozen_immutability(dummy_workflow: DummyCompliantWorkflow):
+    bound = BoundExecutionContext(
+        workflow=dummy_workflow,
+        initial_state={"question": "q"},
+        config={},
+        trace_id="tr-1",
+    )
+
+    with pytest.raises(ValidationError):
+        bound.trace_id = "tr-2"  # type: ignore
+
+    with pytest.raises(ValidationError):
+        bound.initial_state = {}  # type: ignore
+
+
+def test_bound_execution_context_forbid_extra(dummy_workflow: DummyCompliantWorkflow):
+    with pytest.raises(ValidationError):
+        BoundExecutionContext(
+            workflow=dummy_workflow,
+            initial_state={},
+            config={},
+            trace_id="tr-1",
+            unexpected_field="disallowed",  # type: ignore
+        )
+
+
+def test_bound_execution_context_as_runnable_config_defensive_copy(dummy_workflow: DummyCompliantWorkflow):
+    original_config = {"tags": ["t1"], "configurable": {"k": "v"}}
+    bound = BoundExecutionContext(
+        workflow=dummy_workflow,
+        initial_state={},
+        config=original_config,
+        trace_id="tr-1",
+    )
+
+    runnable_config = bound.as_runnable_config()
+    assert runnable_config == original_config
+
+    # Ensure modifying the returned dict doesn't mutate bound.config
+    runnable_config["new_key"] = "new_val"
+    assert "new_key" not in bound.config
+
+
+def test_bound_execution_context_canonical_exports():
+    import app.rag.workflows as workflows_pkg
+    import app.rag.workflows.base as base_pkg
+
+    assert "BoundExecutionContext" in workflows_pkg.__all__
+    assert "BoundExecutionContext" in base_pkg.__all__
+    assert getattr(workflows_pkg, "BoundExecutionContext") is BoundExecutionContext
+    assert getattr(base_pkg, "BoundExecutionContext") is BoundExecutionContext
+

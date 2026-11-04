@@ -177,6 +177,25 @@ class WorkflowDefinition(Protocol):
         ...
 
 
+class BoundExecutionContext(BaseModel):
+    """Immutable domain context bundling resolved workflow, state, config, and telemetry."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid", arbitrary_types_allowed=True)
+
+    workflow: WorkflowDefinition
+    initial_state: dict[str, Any]
+    config: dict[str, Any]
+    trace_id: str
+    session_id: str | None = None
+    variant_id: str | None = None
+    resolved_parameters: dict[str, Any] = Field(default_factory=dict)
+    hydrated_messages: list[BaseMessage] | None = None
+
+    def as_runnable_config(self) -> dict[str, Any]:
+        """Return defensive shallow copy of config suitable for LangGraph runnables."""
+        return dict(self.config)
+
+
 class StandardWorkflowState(TypedDict, total=False):
     """Canonical state dictionary contract for pluggable workflow topologies."""
 
@@ -536,6 +555,7 @@ __all__ = [
     "WorkflowOutput",
     "ExecutionProfile",
     "WorkflowDefinition",
+    "BoundExecutionContext",
     "StandardWorkflowState",
     "PluggableWorkflow",
     "parse_raw_messages",
