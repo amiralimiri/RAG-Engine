@@ -280,7 +280,6 @@ def test_runner_delegates_execute_with_context_to_binder():
             assert result.eval_context.source_used == "vectorstore"
 
 
-
 # ==============================================================================
 # 2. Workflow Lookup & Rejection
 # ==============================================================================

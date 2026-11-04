@@ -309,4 +309,3 @@ def test_bound_execution_context_canonical_exports():
     assert "BoundExecutionContext" in base_pkg.__all__
     assert getattr(workflows_pkg, "BoundExecutionContext") is BoundExecutionContext
     assert getattr(base_pkg, "BoundExecutionContext") is BoundExecutionContext
-

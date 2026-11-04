@@ -1,5 +1,6 @@
 """Execution context binder seam preparing execution parameters, telemetry, and memory."""
 
+import sys
 import uuid
 from collections.abc import Callable, Sequence
 from typing import Any
@@ -67,12 +68,22 @@ class ExecutionContextBinder:
     @property
     def callback_factory(self) -> Callable[..., Any]:
         """Injected Langfuse callback factory or canonical default."""
-        return self._callback_factory or get_langfuse_callback
+        if self._callback_factory is not None:
+            return self._callback_factory
+        runner_mod = sys.modules.get("app.rag.workflows.runner")
+        if runner_mod is not None and hasattr(runner_mod, "get_langfuse_callback"):
+            return getattr(runner_mod, "get_langfuse_callback")
+        return get_langfuse_callback
 
     @property
     def trace_extractor(self) -> Callable[[Any], str | None]:
         """Injected trace extractor or canonical default."""
-        return self._trace_extractor or extract_trace_id
+        if self._trace_extractor is not None:
+            return self._trace_extractor
+        runner_mod = sys.modules.get("app.rag.workflows.runner")
+        if runner_mod is not None and hasattr(runner_mod, "extract_trace_id"):
+            return getattr(runner_mod, "extract_trace_id")
+        return extract_trace_id
 
     @property
     def settings(self) -> Any:
@@ -269,8 +280,10 @@ class ExecutionContextBinder:
         kwargs: dict[str, Any],
     ) -> tuple[str, Any, list[str], dict[str, Any]]:
         """Compile multi-dimensional tags, metadata, and initialize callback handler."""
-        resolved_variant_id = getattr(request, "variant_id", None) or kwargs.get("variant_id") or (
-            profile.variant_id if profile else None
+        resolved_variant_id = (
+            getattr(request, "variant_id", None)
+            or kwargs.get("variant_id")
+            or (profile.variant_id if profile else None)
         )
         resolved_model_name = resolved_parameters.get("model_name") or resolved_parameters.get("model")
         resolved_prompt_version = resolved_parameters.get("prompt_version")
@@ -428,7 +441,9 @@ class ExecutionContextBinder:
 
         # Contextvars binding
         context_bindings: dict[str, Any] = {"workflow": wf_name, "trace_id": trace_id}
-        session_id = getattr(request, "session_id", None) or (request.get("session_id") if isinstance(request, dict) else None)
+        session_id = getattr(request, "session_id", None) or (
+            request.get("session_id") if isinstance(request, dict) else None
+        )
         if session_id:
             context_bindings["session_id"] = session_id
         user_id = getattr(request, "user_id", None) or (request.get("user_id") if isinstance(request, dict) else None)

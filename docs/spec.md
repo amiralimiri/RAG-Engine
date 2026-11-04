@@ -125,9 +125,11 @@ Refactor `WorkflowRunner` in `app/rag/workflows/runner.py`:
   def binder(self) -> ExecutionContextBinder:
       return self._binder
 
+
   @property
   def memory(self) -> ConversationMemoryAdapter | None:
       return self._binder.memory
+
 
   def resolve_workflow(self, workflow_name: str) -> WorkflowDefinition:
       return self._binder.resolve_workflow(workflow_name)

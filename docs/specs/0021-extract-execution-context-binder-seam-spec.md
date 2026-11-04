@@ -3,8 +3,8 @@
 - **ADR Reference:** `docs/adr/0021-extract-execution-context-binder-seam.md`
 - **Target Subsystems:** `app/rag/workflows/`, `tests/rag/`, `tests/api/`
 - **Specification Document:** `docs/spec.md` & `docs/specs/0021-extract-execution-context-binder-seam-spec.md`
-- **Status:** Draft / Ready for Implementation
-- **Triage Label:** `ready-for-agent`
+- **Status:** Implemented
+- **Triage Label:** `ready-for-human`
 
 ---
 
@@ -125,9 +125,11 @@ Refactor `WorkflowRunner` in `app/rag/workflows/runner.py`:
   def binder(self) -> ExecutionContextBinder:
       return self._binder
 
+
   @property
   def memory(self) -> ConversationMemoryAdapter | None:
       return self._binder.memory
+
 
   def resolve_workflow(self, workflow_name: str) -> WorkflowDefinition:
       return self._binder.resolve_workflow(workflow_name)

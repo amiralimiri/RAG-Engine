@@ -446,9 +446,7 @@ class TestChatMemoryRoutes:
         db_path = tmp_path / "test_sqlite_e2e.db"
         sqlite_store = SQLiteConversationStore(db_path=db_path)
         monkeypatch.setattr("app.rag.memory._memory_instance", sqlite_store)
-        get_workflow_runner(
-            registry=get_workflow_registry(), memory=sqlite_store, eval_task_fn=lambda **kwargs: None
-        )
+        get_workflow_runner(registry=get_workflow_registry(), memory=sqlite_store, eval_task_fn=lambda **kwargs: None)
 
         session_id = "sess-sqlite-e2e"
 

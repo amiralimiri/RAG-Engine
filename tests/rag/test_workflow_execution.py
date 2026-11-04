@@ -513,7 +513,12 @@ async def test_sync_async_stream_trigger_identical_lifecycle_events():
 
     assert sync_out.answer == async_out.answer == stream_out.answer == "Identical answer across pathways"
     assert sync_out.source_used == async_out.source_used == stream_out.source_used == "knowledge_store"
-    assert sync_out.retrieved_contexts == async_out.retrieved_contexts == stream_out.retrieved_contexts == ["context passage 1"]
+    assert (
+        sync_out.retrieved_contexts
+        == async_out.retrieved_contexts
+        == stream_out.retrieved_contexts
+        == ["context passage 1"]
+    )
     assert sync_out.workflow == async_out.workflow == stream_out.workflow == "dummy_stream_wf"
     assert sync_out.trace_id == async_out.trace_id == stream_out.trace_id
     assert sync_out.session_id == async_out.session_id == stream_out.session_id == "ses-identical"
@@ -528,7 +533,12 @@ async def test_sync_async_stream_trigger_identical_lifecycle_events():
     _, bg_stream_out = stream_spy.background_calls[0]
 
     assert bg_sync_out.answer == bg_async_out.answer == bg_stream_out.answer == "Identical answer across pathways"
-    assert bg_sync_out.retrieved_contexts == bg_async_out.retrieved_contexts == bg_stream_out.retrieved_contexts == ["context passage 1"]
+    assert (
+        bg_sync_out.retrieved_contexts
+        == bg_async_out.retrieved_contexts
+        == bg_stream_out.retrieved_contexts
+        == ["context passage 1"]
+    )
 
 
 @pytest.mark.asyncio
@@ -680,5 +690,3 @@ async def test_no_duplicate_on_error_when_handle_error_fails():
     assert exc_info_async.value.status_code == 500
     assert len(async_spy.error_calls) == 1
     assert async_spy.error_calls[0][1] is graph_error
-
-

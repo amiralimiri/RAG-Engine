@@ -15,7 +15,9 @@ from starlette.concurrency import run_in_threadpool
 
 from app.core.concurrency import run_async_safely
 from app.core.telemetry import (
+    extract_trace_id,
     flush_telemetry,
+    get_langfuse_callback,
 )
 from app.rag.evaluation import Evaluator, get_evaluator
 from app.rag.memory import (
@@ -186,13 +188,25 @@ class WorkflowRunner:
         """Injected Langfuse callback factory or canonical default."""
         return self._binder.callback_factory
 
+    @callback_factory.setter
+    def callback_factory(self, val: Callable[..., Any] | None) -> None:
+        self._binder._callback_factory = val
+
     @property
     def trace_extractor(self) -> Callable[[Any], str | None]:
         return self._binder.trace_extractor
 
+    @trace_extractor.setter
+    def trace_extractor(self, val: Callable[[Any], str | None] | None) -> None:
+        self._binder._trace_extractor = val
+
     @property
     def telemetry_flusher(self) -> Callable[[], None]:
         return self._telemetry_flusher or flush_telemetry
+
+    @telemetry_flusher.setter
+    def telemetry_flusher(self, val: Callable[[], None] | None) -> None:
+        self._telemetry_flusher = val
 
     def is_tool_call_chunk(self, chunk: Any) -> bool:
         """Filter out token deltas when chunk contains tool call chunks or structured calls."""
@@ -678,9 +692,7 @@ class WorkflowRunner:
             handler = callbacks[0] if callbacks else None
 
             variant_id = (
-                bound.variant_id
-                or initial_state.get("variant_id")
-                or config.get("configurable", {}).get("variant_id")
+                bound.variant_id or initial_state.get("variant_id") or config.get("configurable", {}).get("variant_id")
             )
             graph = (
                 wf_def.get_compiled_graph(variant_id=variant_id)
@@ -945,6 +957,9 @@ __all__ = [
     "ExecutionResult",
     "WorkflowRunner",
     "_background_tasks",
+    "extract_trace_id",
+    "flush_telemetry",
+    "get_langfuse_callback",
     "get_workflow_runner",
     "is_tool_call_chunk",
     "reset_workflow_runner",

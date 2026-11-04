@@ -3,7 +3,7 @@
 import pytest
 from fastapi import HTTPException
 
-from app.rag.workflows.base import PluggableWorkflow, WorkflowDefinition, WorkflowInfo, WorkflowInput
+from app.rag.workflows.base import PluggableWorkflow, WorkflowInfo, WorkflowInput
 from app.rag.workflows.binder import ExecutionContextBinder
 from app.rag.workflows.registry import WorkflowRegistry
 
@@ -161,7 +161,9 @@ def test_parameter_precedence_tier1_explicit_overrides_profile_and_baseline():
 def test_telemetry_tags_compilation_and_deduplication():
     """Verify multi-dimensional tags are compiled and deduplicated preserving order."""
     from unittest.mock import MagicMock
+
     from langchain_core.messages import AIMessage, HumanMessage
+
     from app.rag.workflows.base import ExecutionProfile
 
     registry = WorkflowRegistry()
@@ -286,6 +288,7 @@ def test_structlog_contextvars_binding():
 async def test_abind_hydrates_messages_directly_via_aget_messages():
     """Verify abind retrieves messages asynchronously using aget_messages."""
     from unittest.mock import AsyncMock, MagicMock
+
     from langchain_core.messages import AIMessage, HumanMessage
 
     registry = WorkflowRegistry()
@@ -315,6 +318,7 @@ async def test_abind_hydrates_messages_directly_via_aget_messages():
 def test_bind_hydrates_messages_synchronously():
     """Verify synchronous bind hydrates messages using runner threadpool/concurrency safe helper."""
     from unittest.mock import AsyncMock, MagicMock
+
     from langchain_core.messages import AIMessage, HumanMessage
 
     registry = WorkflowRegistry()
@@ -338,6 +342,7 @@ def test_bind_hydrates_messages_synchronously():
 async def test_rewind_slicing_with_before_turn_index():
     """Verify rewind_turn_index passes before_turn_index and isolates turns [:rewind_turn_index]."""
     from unittest.mock import AsyncMock, MagicMock
+
     from langchain_core.messages import AIMessage, HumanMessage
 
     registry = WorkflowRegistry()
@@ -373,6 +378,7 @@ async def test_rewind_slicing_with_before_turn_index():
 async def test_rewind_slicing_with_aget_turns_fallback():
     """Verify message hydration fallback slices turns and converts to HumanMessage/AIMessage pairs."""
     from unittest.mock import AsyncMock
+
     from app.rag.memory.base import ConversationTurn
 
     registry = WorkflowRegistry()
@@ -422,6 +428,7 @@ async def test_rewind_slicing_with_aget_turns_fallback():
 async def test_hydration_skipped_when_pre_supplied_or_no_session():
     """Verify memory queries are skipped when messages are already supplied or session_id is absent."""
     from unittest.mock import AsyncMock, MagicMock
+
     from langchain_core.messages import HumanMessage
 
     registry = WorkflowRegistry()

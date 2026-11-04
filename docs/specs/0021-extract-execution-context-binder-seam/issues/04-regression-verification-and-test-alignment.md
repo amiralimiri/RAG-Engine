@@ -3,7 +3,8 @@
 - **Part of:** ADR-0021 (`docs/specs/0021-extract-execution-context-binder-seam-spec.md`)
 - **Blockers:** Ticket 03
 - **Scope:** Full test suite (`tests/rag/`, `tests/api/`, `tests/`)
-- **Labels:** `ready-for-agent`
+- **Labels:** `ready-for-human`
+- **Status:** Closed
 
 ---
 
