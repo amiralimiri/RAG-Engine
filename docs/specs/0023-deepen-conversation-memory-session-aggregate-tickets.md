@@ -3,7 +3,7 @@
 - **Specification Reference:** [`docs/specs/0023-deepen-conversation-memory-session-aggregate-spec.md`](./0023-deepen-conversation-memory-session-aggregate-spec.md)
 - **ADR Reference:** [`docs/adr/0023-deepen-conversation-memory-session-aggregate.md`](../adr/0023-deepen-conversation-memory-session-aggregate.md)
 - **Domain Guidelines:** [`GLOSSARY.md`](../../GLOSSARY.md) | [`docs/agents/conversation-memory.md`](../agents/conversation-memory.md)
-- **Status:** Proposed / Ready for Review
+- **Status:** Completed
 - **Triage Label:** `ready-for-agent`
 
 ---
@@ -41,10 +41,10 @@
 
 | Ticket | Title | Target Files / Scope | Blockers | Status |
 |---|---|---|---|---|
-| **Ticket 01** | ConversationSession Domain Aggregate & Protocol Seam | `app/rag/memory/base.py`, `tests/rag/test_conversation_memory_base.py` | None | `ready-for-agent` |
-| **Ticket 02** | InMemoryConversationStore & NoOpMemoryStore Implementation | `app/rag/memory/in_memory.py`, `app/rag/memory/noop.py`, `tests/rag/test_conversation_memory_in_memory.py` | Ticket 01 | `ready-for-agent` |
-| **Ticket 03** | SQLiteConversationStore Single-Transaction Implementation | `app/rag/memory/sqlite.py`, `tests/rag/test_conversation_memory_sqlite.py` | Ticket 02 | `ready-for-agent` |
-| **Ticket 04** | Presentation Layer Integration & Regression Verification | `app/api/schemas.py`, `app/api/routes.py`, `tests/api/test_routes_chat_memory.py`, regression suite | Ticket 03 | `ready-for-agent` |
+| **Ticket 01** | ConversationSession Domain Aggregate & Protocol Seam | `app/rag/memory/base.py`, `tests/rag/test_conversation_memory_base.py` | None | `closed` |
+| **Ticket 02** | InMemoryConversationStore & NoOpMemoryStore Implementation | `app/rag/memory/in_memory.py`, `app/rag/memory/noop.py`, `tests/rag/test_conversation_memory_in_memory.py` | Ticket 01 | `closed` |
+| **Ticket 03** | SQLiteConversationStore Single-Transaction Implementation | `app/rag/memory/sqlite.py`, `tests/rag/test_conversation_memory_sqlite.py` | Ticket 02 | `closed` |
+| **Ticket 04** | Presentation Layer Integration & Regression Verification | `app/api/schemas.py`, `app/api/routes.py`, `tests/api/test_routes_chat_memory.py`, regression suite | Ticket 03 | `completed` |
 
 ---
 
