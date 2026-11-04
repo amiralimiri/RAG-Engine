@@ -43,6 +43,12 @@ class SessionInfo(BaseModel):
     turn_count: int = Field(default=0, ge=0)
 
 
+class ConversationSession(SessionInfo):
+    """Canonical domain aggregate representing a complete conversation session with turns."""
+
+    turns: list[ConversationTurn] = Field(default_factory=list)
+
+
 @runtime_checkable
 class ConversationMemoryAdapter(Protocol):
     """Protocol seam defining conversation memory persistence, resumption, and branching."""
@@ -97,7 +103,7 @@ class ConversationMemoryAdapter(Protocol):
         source_session_id: str,
         upto_turn_index: int,
         new_session_id: str | None = None,
-    ) -> str:
+    ) -> ConversationSession:
         """Clone turns [0 .. upto_turn_index] into a child session and track lineage."""
         ...
 
@@ -105,6 +111,18 @@ class ConversationMemoryAdapter(Protocol):
         """Enumerate recent sessions ordered by recency."""
         ...
 
-    async def aget_session(self, session_id: str) -> SessionInfo | None:
-        """Retrieve session metadata by session ID."""
+    async def aget_session(
+        self,
+        session_id: str,
+        limit: int | None = None,
+    ) -> ConversationSession | None:
+        """Retrieve full conversation session aggregate with chronological turn history."""
         ...
+
+
+__all__ = [
+    "ConversationMemoryAdapter",
+    "ConversationSession",
+    "ConversationTurn",
+    "SessionInfo",
+]

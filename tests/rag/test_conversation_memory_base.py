@@ -7,9 +7,11 @@ import pytest
 from langchain_core.messages import AIMessage, HumanMessage
 from pydantic import SecretStr, ValidationError
 
+import app.rag.memory.base as memory_base
 from app.core.config import Settings
 from app.rag.memory.base import (
     ConversationMemoryAdapter,
+    ConversationSession,
     ConversationTurn,
     SessionInfo,
 )
@@ -125,6 +127,67 @@ def test_session_info_validation() -> None:
     assert forked_session.turn_count == 3
 
 
+def test_conversation_session_aggregate_inheritance_and_defaults() -> None:
+    """Validate ConversationSession domain aggregate subtyping SessionInfo, defaults, and isolation."""
+    created = datetime.now(UTC)
+    updated = datetime.now(UTC)
+
+    # Validate subtyping and polymorphism
+    assert issubclass(ConversationSession, SessionInfo)
+
+    # Validate instance creation with defaults
+    session1 = ConversationSession(
+        session_id="session-agg-1",
+        title="Session 1",
+        created_at=created,
+        updated_at=updated,
+    )
+    assert isinstance(session1, SessionInfo)
+    assert isinstance(session1, ConversationSession)
+    assert session1.session_id == "session-agg-1"
+    assert session1.title == "Session 1"
+    assert session1.parent_session_id is None
+    assert session1.forked_from_turn is None
+    assert session1.turn_count == 0
+    assert session1.turns == []
+
+    # Validate default factory isolation across instances
+    session2 = ConversationSession(
+        session_id="session-agg-2",
+        title="Session 2",
+        created_at=created,
+        updated_at=updated,
+    )
+    turn = ConversationTurn(
+        session_id="session-agg-1",
+        turn_index=0,
+        user_query="Q",
+        assistant_answer="A",
+    )
+    session1.turns.append(turn)
+    assert len(session1.turns) == 1
+    assert session2.turns == []
+    assert session1.turns is not session2.turns
+
+    # Validate creation with populated turns
+    session3 = ConversationSession(
+        session_id="session-agg-3",
+        title="Session 3",
+        created_at=created,
+        updated_at=updated,
+        turn_count=1,
+        turns=[turn],
+    )
+    assert len(session3.turns) == 1
+    assert session3.turns[0].user_query == "Q"
+
+    # Validate module __all__ exports
+    assert "ConversationSession" in memory_base.__all__
+    assert "ConversationTurn" in memory_base.__all__
+    assert "SessionInfo" in memory_base.__all__
+    assert "ConversationMemoryAdapter" in memory_base.__all__
+
+
 def test_protocol_runtime_checkable() -> None:
     """Validate ConversationMemoryAdapter is runtime checkable and enforces deep seam methods."""
 
@@ -165,13 +228,20 @@ def test_protocol_runtime_checkable() -> None:
 
         async def afork_session(
             self, source_session_id: str, upto_turn_index: int, new_session_id: str | None = None
-        ) -> str:
-            return "forked-id"
+        ) -> ConversationSession:
+            return ConversationSession(
+                session_id=new_session_id or "forked-id",
+                title="Forked",
+                created_at=datetime.now(UTC),
+                updated_at=datetime.now(UTC),
+            )
 
         async def alist_sessions(self, limit: int = 50):
             return []
 
-        async def aget_session(self, session_id: str):
+        async def aget_session(
+            self, session_id: str, limit: int | None = None
+        ) -> ConversationSession | None:
             return None
 
     class IncompleteMemoryAdapter:
@@ -196,13 +266,20 @@ def test_protocol_runtime_checkable() -> None:
 
         async def afork_session(
             self, source_session_id: str, upto_turn_index: int, new_session_id: str | None = None
-        ) -> str:
-            return "forked-id"
+        ) -> ConversationSession:
+            return ConversationSession(
+                session_id=new_session_id or "forked-id",
+                title="Forked",
+                created_at=datetime.now(UTC),
+                updated_at=datetime.now(UTC),
+            )
 
         async def alist_sessions(self, limit: int = 50):
             return []
 
-        async def aget_session(self, session_id: str):
+        async def aget_session(
+            self, session_id: str, limit: int | None = None
+        ) -> ConversationSession | None:
             return None
 
     dummy_complete = CompleteMemoryAdapter()

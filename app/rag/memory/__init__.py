@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 from app.core.config import get_settings
 from app.rag.memory.base import (
     ConversationMemoryAdapter,
+    ConversationSession,
     ConversationTurn,
     SessionInfo,
 )
@@ -59,6 +60,7 @@ def reset_conversation_memory() -> None:
 
 __all__ = [
     "ConversationMemoryAdapter",
+    "ConversationSession",
     "ConversationTurn",
     "InMemoryConversationStore",
     "NoOpMemoryStore",
