@@ -14,7 +14,12 @@ from typing import TYPE_CHECKING, Any
 
 from starlette.concurrency import run_in_threadpool
 
-from app.rag.memory.base import ConversationMemoryAdapter, ConversationTurn, SessionInfo
+from app.rag.memory.base import (
+    ConversationMemoryAdapter,
+    ConversationSession,
+    ConversationTurn,
+    SessionInfo,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -87,6 +92,27 @@ def _row_to_session_info(row: sqlite3.Row) -> SessionInfo:
         created_at=_parse_iso_datetime(row["created_at"]),
         updated_at=_parse_iso_datetime(row["updated_at"]),
         turn_count=int(row["turn_count"]),
+    )
+
+
+def _row_to_turn(row: sqlite3.Row) -> ConversationTurn:
+    """Map a database row to a canonical ConversationTurn domain model."""
+    attachments: list[dict[str, Any]] = (
+        json.loads(row["attachments_json"]) if row["attachments_json"] else []
+    )
+    citations: list[dict[str, Any]] = (
+        json.loads(row["citations_json"]) if row["citations_json"] else []
+    )
+    return ConversationTurn(
+        session_id=row["session_id"],
+        turn_index=row["turn_index"],
+        user_query=row["user_query"],
+        assistant_answer=row["assistant_answer"],
+        attachments=attachments,
+        citations=citations,
+        source_used=row["source_used"],
+        trace_id=row["trace_id"],
+        created_at=_parse_iso_datetime(row["created_at"]),
     )
 
 
@@ -176,26 +202,7 @@ class SQLiteConversationStore(ConversationMemoryAdapter):
                     cursor = conn.execute(query, tuple(params))
 
                 rows = cursor.fetchall()
-                turns: list[ConversationTurn] = []
-                for row in rows:
-                    attachments: list[dict[str, Any]] = (
-                        json.loads(row["attachments_json"]) if row["attachments_json"] else []
-                    )
-                    citations: list[dict[str, Any]] = json.loads(row["citations_json"]) if row["citations_json"] else []
-                    turns.append(
-                        ConversationTurn(
-                            session_id=row["session_id"],
-                            turn_index=row["turn_index"],
-                            user_query=row["user_query"],
-                            assistant_answer=row["assistant_answer"],
-                            attachments=attachments,
-                            citations=citations,
-                            source_used=row["source_used"],
-                            trace_id=row["trace_id"],
-                            created_at=_parse_iso_datetime(row["created_at"]),
-                        )
-                    )
-                return turns
+                return [_row_to_turn(row) for row in rows]
 
         return await run_in_threadpool(_sync_get_turns)
 
@@ -372,12 +379,15 @@ class SQLiteConversationStore(ConversationMemoryAdapter):
         source_session_id: str,
         upto_turn_index: int,
         new_session_id: str | None = None,
-    ) -> str:
-        """Clone turns [0 .. upto_turn_index] into a child session and track lineage."""
+    ) -> ConversationSession:
+        """Clone turns [0 .. upto_turn_index] into a child session and return the complete aggregate."""
+        if upto_turn_index < -1:
+            raise ValueError(f"Invalid upto_turn_index: {upto_turn_index}. Must be >= -1.")
+
         async with self._write_lock:
             target_id = new_session_id or uuid.uuid4().hex
 
-            def _sync_fork() -> str:
+            def _sync_fork() -> ConversationSession:
                 now_iso = datetime.now(UTC).isoformat()
                 with self._connection() as conn:
                     with conn:
@@ -386,7 +396,10 @@ class SQLiteConversationStore(ConversationMemoryAdapter):
                             (source_session_id,),
                         )
                         row = cursor.fetchone()
-                        source_title = row["title"] if row is not None else source_session_id
+                        if row is None:
+                            raise KeyError(f"Session not found: {source_session_id}")
+
+                        source_title = row["title"] if row["title"] else source_session_id
                         title = f"{source_title} (Fork)"
 
                         conn.execute(
@@ -398,12 +411,12 @@ class SQLiteConversationStore(ConversationMemoryAdapter):
                             (target_id, title, source_session_id, upto_turn_index, now_iso, now_iso),
                         )
 
+                        cloned_turns: list[ConversationTurn] = []
                         if upto_turn_index >= 0:
                             conn.execute(
-                                """
+                                f"""
                                 INSERT INTO conversation_turns (
-                                    session_id, turn_index, user_query, assistant_answer,
-                                    attachments_json, citations_json, source_used, trace_id, created_at
+                                    {_TURN_COLUMNS}
                                 )
                                 SELECT ?, turn_index, user_query, assistant_answer,
                                        attachments_json, citations_json, source_used, trace_id, created_at
@@ -414,7 +427,28 @@ class SQLiteConversationStore(ConversationMemoryAdapter):
                                 (target_id, source_session_id, upto_turn_index),
                             )
 
-                return target_id
+                            turn_cursor = conn.execute(
+                                f"""
+                                SELECT {_TURN_COLUMNS}
+                                FROM conversation_turns
+                                WHERE session_id = ?
+                                ORDER BY turn_index ASC;
+                                """,
+                                (target_id,),
+                            )
+                            cloned_turns = [_row_to_turn(r) for r in turn_cursor.fetchall()]
+
+                        now_dt = _parse_iso_datetime(now_iso)
+                        return ConversationSession(
+                            session_id=target_id,
+                            title=title,
+                            parent_session_id=source_session_id,
+                            forked_from_turn=upto_turn_index,
+                            created_at=now_dt,
+                            updated_at=now_dt,
+                            turn_count=len(cloned_turns),
+                            turns=cloned_turns,
+                        )
 
             return await run_in_threadpool(_sync_fork)
 
@@ -435,21 +469,61 @@ class SQLiteConversationStore(ConversationMemoryAdapter):
 
         return await run_in_threadpool(_sync_list)
 
-    async def aget_session(self, session_id: str) -> SessionInfo | None:
-        """Retrieve session metadata by session ID."""
+    async def aget_session(
+        self,
+        session_id: str,
+        limit: int | None = None,
+    ) -> ConversationSession | None:
+        """Retrieve full conversation session aggregate with chronological turn history."""
 
-        def _sync_get() -> SessionInfo | None:
+        def _sync_get_session() -> ConversationSession | None:
             with self._connection() as conn:
-                query = f"""
-                {_SESSION_SELECT_BASE}
-                WHERE s.session_id = ?
-                GROUP BY s.session_id;
-                """
-                cursor = conn.execute(query, (session_id,))
+                cursor = conn.execute(
+                    f"""
+                    {_SESSION_SELECT_BASE}
+                    WHERE s.session_id = ?
+                    GROUP BY s.session_id;
+                    """,
+                    (session_id,),
+                )
                 row = cursor.fetchone()
                 if not row or row["session_id"] is None:
                     return None
 
-                return _row_to_session_info(row)
+                info = _row_to_session_info(row)
 
-        return await run_in_threadpool(_sync_get)
+                if limit is not None:
+                    if limit <= 0:
+                        turns: list[ConversationTurn] = []
+                    else:
+                        turn_cursor = conn.execute(
+                            f"""
+                            SELECT {_TURN_COLUMNS}
+                            FROM conversation_turns
+                            WHERE session_id = ?
+                            ORDER BY turn_index DESC
+                            LIMIT ?;
+                            """,
+                            (session_id, limit),
+                        )
+                        turn_rows = turn_cursor.fetchall()
+                        turns = [_row_to_turn(r) for r in reversed(turn_rows)]
+                else:
+                    turn_cursor = conn.execute(
+                        f"""
+                        SELECT {_TURN_COLUMNS}
+                        FROM conversation_turns
+                        WHERE session_id = ?
+                        ORDER BY turn_index ASC;
+                        """,
+                        (session_id,),
+                    )
+                    turn_rows = turn_cursor.fetchall()
+                    turns = [_row_to_turn(r) for r in turn_rows]
+
+                return ConversationSession(
+                    **info.model_dump(),
+                    turns=turns,
+                )
+
+        return await run_in_threadpool(_sync_get_session)

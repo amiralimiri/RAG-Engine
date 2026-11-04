@@ -13,6 +13,7 @@ from pydantic import SecretStr
 from app.core.config import Settings
 from app.rag.memory import (
     ConversationMemoryAdapter,
+    ConversationSession,
     ConversationTurn,
     get_conversation_memory,
     reset_conversation_memory,
@@ -239,7 +240,7 @@ async def test_sqlite_cascade_delete(sqlite_store: SQLiteConversationStore) -> N
 
 @pytest.mark.asyncio
 async def test_sqlite_fork_session(sqlite_store: SQLiteConversationStore) -> None:
-    """Validate conversation branching with turn cloning and lineage tracking."""
+    """Validate conversation branching with turn cloning and lineage tracking returning ConversationSession aggregate."""
     for idx in range(4):
         await sqlite_store.asave_turn(
             ConversationTurn(
@@ -250,9 +251,20 @@ async def test_sqlite_fork_session(sqlite_store: SQLiteConversationStore) -> Non
             )
         )
 
-    # Fork at turn 1 (copying turns 0 and 1)
-    fork_id = await sqlite_store.afork_session("session-parent", upto_turn_index=1)
+    # Fork at turn 1 (copying turns 0 and 1) returning aggregate directly
+    forked = await sqlite_store.afork_session("session-parent", upto_turn_index=1)
+    assert isinstance(forked, ConversationSession)
+    fork_id = forked.session_id
     assert fork_id != "session-parent"
+    assert forked.parent_session_id == "session-parent"
+    assert forked.forked_from_turn == 1
+    assert forked.turn_count == 2
+    assert len(forked.turns) == 2
+    assert [t.turn_index for t in forked.turns] == [0, 1]
+    assert all(t.session_id == fork_id for t in forked.turns)
+    assert forked.turns[0].user_query == "Parent query 0"
+    assert forked.turns[1].user_query == "Parent query 1"
+    assert "(Fork)" in forked.title
 
     # Parent remains unaffected
     parent_turns = await sqlite_store.aget_turns("session-parent")
@@ -266,13 +278,15 @@ async def test_sqlite_fork_session(sqlite_store: SQLiteConversationStore) -> Non
     assert child_turns[0].user_query == "Parent query 0"
     assert child_turns[1].user_query == "Parent query 1"
 
-    # Verify session lineage
+    # Verify session lineage via subsequent aget_session
     child_session = await sqlite_store.aget_session(fork_id)
     assert child_session is not None
+    assert isinstance(child_session, ConversationSession)
     assert child_session.parent_session_id == "session-parent"
     assert child_session.forked_from_turn == 1
     assert child_session.turn_count == 2
     assert "(Fork)" in child_session.title
+    assert len(child_session.turns) == 2
 
 
 @pytest.mark.asyncio
@@ -287,30 +301,37 @@ async def test_sqlite_fork_turn_zero(sqlite_store: SQLiteConversationStore) -> N
         )
     )
 
-    child_id = await sqlite_store.afork_session(
+    child_session = await sqlite_store.afork_session(
         "session-fork-zero",
         upto_turn_index=-1,
         new_session_id="session-fork-zero-child",
     )
-    assert child_id == "session-fork-zero-child"
-
-    # Child has 0 turns
-    child_turns = await sqlite_store.aget_turns(child_id)
-    assert child_turns == []
-
-    # Lineage is preserved
-    child_session = await sqlite_store.aget_session(child_id)
-    assert child_session is not None
+    assert isinstance(child_session, ConversationSession)
     assert child_session.session_id == "session-fork-zero-child"
     assert child_session.parent_session_id == "session-fork-zero"
     assert child_session.forked_from_turn == -1
     assert child_session.turn_count == 0
+    assert child_session.turns == []
+
+    # Child has 0 turns
+    child_turns = await sqlite_store.aget_turns("session-fork-zero-child")
+    assert child_turns == []
+
+    # Lineage is preserved
+    queried_session = await sqlite_store.aget_session("session-fork-zero-child")
+    assert queried_session is not None
+    assert isinstance(queried_session, ConversationSession)
+    assert queried_session.session_id == "session-fork-zero-child"
+    assert queried_session.parent_session_id == "session-fork-zero"
+    assert queried_session.forked_from_turn == -1
+    assert queried_session.turn_count == 0
+    assert queried_session.turns == []
 
 
 @pytest.mark.asyncio
-async def test_sqlite_fork_nonexistent_parent_raises_integrity_error(sqlite_store: SQLiteConversationStore) -> None:
-    """Validate that attempting to fork from a non-existent parent enforces foreign key integrity."""
-    with pytest.raises(sqlite3.IntegrityError, match="FOREIGN KEY"):
+async def test_sqlite_fork_nonexistent_parent_raises_key_error(sqlite_store: SQLiteConversationStore) -> None:
+    """Validate that attempting to fork from a non-existent parent raises KeyError."""
+    with pytest.raises(KeyError, match="Session not found: nonexistent-parent"):
         await sqlite_store.afork_session("nonexistent-parent", upto_turn_index=0)
 
 
@@ -580,3 +601,133 @@ async def test_sqlite_append_turn_rollback_on_failure(sqlite_store: SQLiteConver
     turns_after = await sqlite_store.aget_turns(session_id)
     assert len(turns_after) == 3
     assert [t.turn_index for t in turns_after] == [0, 1, 2]
+
+
+@pytest.mark.asyncio
+async def test_sqlite_aget_session_full_aggregate_and_limit_windowing(
+    sqlite_store: SQLiteConversationStore,
+) -> None:
+    """Validate that aget_session returns a complete ConversationSession with chronological turns and tail-windowing."""
+    session_id = "session-aggregate-windowing"
+
+    # Non-existent session returns None
+    assert await sqlite_store.aget_session("missing-session") is None
+    assert await sqlite_store.aget_session("missing-session", limit=5) is None
+
+    # Seed 5 turns: 0, 1, 2, 3, 4
+    for idx in range(5):
+        await sqlite_store.aappend_turn(
+            session_id=session_id,
+            user_query=f"Question {idx}",
+            assistant_answer=f"Answer {idx}",
+        )
+
+    # 1. Full aggregate without limit (ORDER BY turn_index ASC)
+    full_session = await sqlite_store.aget_session(session_id)
+    assert full_session is not None
+    assert isinstance(full_session, ConversationSession)
+    assert full_session.session_id == session_id
+    assert full_session.turn_count == 5
+    assert len(full_session.turns) == 5
+    assert [t.turn_index for t in full_session.turns] == [0, 1, 2, 3, 4]
+
+    # 2. Limit windowing: limit=2 returns latest 2 turns ordered ascending (3, 4)
+    limited_session = await sqlite_store.aget_session(session_id, limit=2)
+    assert limited_session is not None
+    assert isinstance(limited_session, ConversationSession)
+    assert limited_session.session_id == session_id
+    assert limited_session.turn_count == 5  # Total session turn count preserved
+    assert len(limited_session.turns) == 2
+    assert [t.turn_index for t in limited_session.turns] == [3, 4]
+    assert limited_session.turns[0].user_query == "Question 3"
+    assert limited_session.turns[1].user_query == "Question 4"
+
+    # 3. Limit=0 returns empty turns list
+    zero_limited = await sqlite_store.aget_session(session_id, limit=0)
+    assert zero_limited is not None
+    assert zero_limited.turns == []
+    assert zero_limited.turn_count == 5
+
+    # 4. Limit exceeding turn count returns all turns in ascending order
+    large_limited = await sqlite_store.aget_session(session_id, limit=10)
+    assert large_limited is not None
+    assert len(large_limited.turns) == 5
+    assert [t.turn_index for t in large_limited.turns] == [0, 1, 2, 3, 4]
+
+
+@pytest.mark.asyncio
+async def test_sqlite_afork_session_aggregate_and_invariants(
+    sqlite_store: SQLiteConversationStore,
+) -> None:
+    """Validate afork_session preconditions, KeyError, ValueError, and aggregate return."""
+    source_id = "session-parent-invariants"
+
+    # Invariant: source session not found raises KeyError
+    with pytest.raises(KeyError, match=f"Session not found: {source_id}"):
+        await sqlite_store.afork_session(source_id, upto_turn_index=0)
+
+    # Invariant: upto_turn_index < -1 raises ValueError
+    with pytest.raises(ValueError, match=r"Invalid upto_turn_index: -2\. Must be >= -1\."):
+        await sqlite_store.afork_session(source_id, upto_turn_index=-2)
+
+    # Seed parent session with 4 turns
+    for idx in range(4):
+        await sqlite_store.aappend_turn(
+            session_id=source_id,
+            user_query=f"Parent Q{idx}",
+            assistant_answer=f"Parent A{idx}",
+        )
+
+    # Invariant: even with existing parent, upto_turn_index < -1 raises ValueError
+    with pytest.raises(ValueError, match=r"Invalid upto_turn_index: -5\. Must be >= -1\."):
+        await sqlite_store.afork_session(source_id, upto_turn_index=-5)
+
+    # Valid fork at turn 2 (turns 0, 1, 2)
+    custom_child_id = "custom-fork-aggregate"
+    forked = await sqlite_store.afork_session(source_id, upto_turn_index=2, new_session_id=custom_child_id)
+    assert isinstance(forked, ConversationSession)
+    assert forked.session_id == custom_child_id
+    assert forked.parent_session_id == source_id
+    assert forked.forked_from_turn == 2
+    assert forked.turn_count == 3
+    assert len(forked.turns) == 3
+    assert [t.turn_index for t in forked.turns] == [0, 1, 2]
+    assert all(t.session_id == custom_child_id for t in forked.turns)
+    assert forked.turns[2].user_query == "Parent Q2"
+    assert "(Fork)" in forked.title
+
+    # Mutating returned forked turns does not affect stored child session
+    forked.turns[0].user_query = "Corrupted Q0"
+    stored_child = await sqlite_store.aget_session(custom_child_id)
+    assert stored_child is not None
+    assert stored_child.turns[0].user_query == "Parent Q0"
+
+
+@pytest.mark.asyncio
+async def test_sqlite_aget_session_single_threadpool_execution(
+    sqlite_store: SQLiteConversationStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Validate that aget_session executes within a single threadpool execution and connection block."""
+    session_id = "session-threadpool-check"
+    await sqlite_store.aappend_turn(session_id, "Q1", "A1")
+
+    call_count = 0
+    orig_connection = sqlite_store._connection
+
+    from contextlib import contextmanager
+
+    @contextmanager
+    def counted_connection():
+        nonlocal call_count
+        call_count += 1
+        with orig_connection() as conn:
+            yield conn
+
+    monkeypatch.setattr(sqlite_store, "_connection", counted_connection)
+
+    session = await sqlite_store.aget_session(session_id)
+    assert session is not None
+    assert session.session_id == session_id
+    assert len(session.turns) == 1
+    # Exactly one connection block was opened to fetch both metadata and turns
+    assert call_count == 1
