@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 from collections.abc import AsyncGenerator, AsyncIterable
-from datetime import UTC, datetime
 from typing import Any
 
 from pydantic import BaseModel
@@ -43,16 +42,18 @@ class SseStreamAdapter:
     async def format(
         cls,
         events: AsyncIterable[WorkflowExecutionEvent],
-        step_labels: dict[str, str] | None = None,
     ) -> AsyncGenerator[str, None]:  # noqa: UP043
         """Convert asynchronous workflow domain events into standard SSE text frames."""
         async for event in events:
             if isinstance(event, StepTransitionEvent):
-                step_payload: dict[str, Any] = {"step": event.step}
-                if step_labels is not None:
-                    step_payload["label"] = step_labels.get(event.step, event.step)
-                    step_payload["timestamp"] = datetime.now(UTC).timestamp()
-                yield format_sse("step", step_payload)
+                yield format_sse(
+                    "step",
+                    {
+                        "step": event.step,
+                        "label": event.label,
+                        "timestamp": event.timestamp,
+                    },
+                )
             elif isinstance(event, TokenDeltaEvent):
                 yield format_sse("token", {"delta": event.delta})
             elif isinstance(event, ExecutionCompletedEvent):

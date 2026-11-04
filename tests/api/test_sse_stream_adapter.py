@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from typing import Any
 
 import pytest
 from pydantic import BaseModel
@@ -25,6 +26,11 @@ class DummyCitationModel(BaseModel):
 class DummyPayload(BaseModel):
     message: str
     count: int
+
+
+def _parse_sse_data(frame: str) -> dict[str, Any]:
+    """Extract and parse JSON data payload from an SSE frame."""
+    return json.loads(frame.split("data: ", 1)[1].rstrip("\n"))
 
 
 def test_format_sse_with_dict():
@@ -62,14 +68,18 @@ def test_format_sse_default_str_fallback():
 
 @pytest.mark.asyncio
 async def test_adapter_step_transition_event():
-    """Verify StepTransitionEvent maps to 'step' SSE frame."""
+    """Verify StepTransitionEvent maps to 'step' SSE frame with step, label, and timestamp."""
 
     async def event_generator():
         yield StepTransitionEvent(step="retrieve")
 
     frames = [frame async for frame in SseStreamAdapter.format(event_generator())]
     assert len(frames) == 1
-    assert frames[0] == 'event: step\ndata: {"step": "retrieve"}\n\n'
+    assert frames[0].startswith("event: step\ndata: ")
+    data = _parse_sse_data(frames[0])
+    assert data["step"] == "retrieve"
+    assert data["label"] == "retrieve"
+    assert isinstance(data["timestamp"], float)
 
 
 @pytest.mark.asyncio
@@ -222,29 +232,36 @@ async def test_adapter_full_lifecycle_sequence():
 
     frames = [frame async for frame in SseStreamAdapter.format(event_generator())]
     assert len(frames) == 5
-    assert frames[0] == 'event: step\ndata: {"step": "start"}\n\n'
+    step_start = _parse_sse_data(frames[0])
+    assert step_start["step"] == "start"
+    assert step_start["label"] == "start"
+    assert isinstance(step_start["timestamp"], float)
+
     assert frames[1] == 'event: token\ndata: {"delta": "All "}\n\n'
     assert frames[2] == 'event: token\ndata: {"delta": "done."}\n\n'
-    assert frames[3] == 'event: step\ndata: {"step": "finish"}\n\n'
+
+    step_finish = _parse_sse_data(frames[3])
+    assert step_finish["step"] == "finish"
+    assert step_finish["label"] == "finish"
+    assert isinstance(step_finish["timestamp"], float)
+
     assert frames[4].startswith("event: metadata\ndata: ")
 
 
 @pytest.mark.asyncio
-async def test_adapter_step_transition_with_step_labels_enrichment():
-    """Verify SseStreamAdapter enriches StepTransitionEvent with label and timestamp when step_labels is provided."""
+async def test_adapter_step_transition_self_contained_event():
+    """Verify SseStreamAdapter formats self-contained StepTransitionEvent with label and timestamp."""
 
     async def event_generator():
-        yield StepTransitionEvent(step="retrieve_kb")
+        yield StepTransitionEvent(step="retrieve_kb", label="Retrieving documents...")
 
-    labels = {"retrieve_kb": "Retrieving documents..."}
-    frames = [frame async for frame in SseStreamAdapter.format(event_generator(), step_labels=labels)]
+    frames = [frame async for frame in SseStreamAdapter.format(event_generator())]
     assert len(frames) == 1
-    frame = frames[0]
-    assert frame.startswith("event: step\ndata: ")
-    data = json.loads(frame.split("data: ", 1)[1].rstrip("\n"))
+    assert frames[0].startswith("event: step\ndata: ")
+    data = _parse_sse_data(frames[0])
     assert data["step"] == "retrieve_kb"
     assert data["label"] == "Retrieving documents..."
-    assert isinstance(data["timestamp"], (int, float))
+    assert isinstance(data["timestamp"], float)
 
 
 def test_app_api_package_exports():
