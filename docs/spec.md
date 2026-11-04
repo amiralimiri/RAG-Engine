@@ -1,8 +1,8 @@
-# Technical Specification: Deepen Conversation Memory with Session Aggregate and Atomic Branching Seam
+# Technical Specification: Deepen Tool Abstraction and Evidence Seam
 
-- **ADR Reference:** `docs/adr/0023-deepen-conversation-memory-session-aggregate.md`
-- **Target Subsystems:** `app/rag/memory/`, `app/api/`, `tests/rag/`, `tests/api/`
-- **Specification Document:** `docs/spec.md` & `docs/specs/0023-deepen-conversation-memory-session-aggregate-spec.md`
+- **ADR Reference:** `docs/adr/0024-deepen-tool-abstraction-and-evidence-seam.md` (supersedes ADR-0008)
+- **Target Subsystems:** `app/rag/tools/`, `app/rag/engine.py`, `app/rag/workflows/react_agent.py`, `app/rag/workflows/self_corrective.py`, `app/rag/workflows/listeners.py`, `tests/rag/`
+- **Specification Document:** `docs/spec.md` & `docs/specs/0024-deepen-tool-abstraction-and-evidence-seam-spec.md`
 - **Status:** Proposed / Ready for Review
 - **Triage Label:** `ready-for-agent`
 
@@ -10,235 +10,199 @@
 
 ## Problem Statement
 
-In ADR 0016 and ADR 0017, the `ConversationMemoryAdapter` protocol seam was introduced and deepened on the write path (`aappend_turn`) to provide atomic turn persistence and bounded message queries. However, the read-path and session-branching architecture remained shallow, fragmented, and leaky:
+In ADR 0008, the unified `BaseTool` abstraction was introduced with `response_format="content_and_artifact"` to bridge fixed DAG workflows and autonomous ReAct agents. While this established common tool classes, three major architectural friction points compromise testability, type safety, and extensibility:
 
-1. **Disjointed Domain Models & Missing Session Aggregate**:
-   `app/rag/memory/base.py` defined `SessionInfo` (metadata only) and `ConversationTurn` (turn only). There was no domain entity representing an entire conversation session. As a result, domain logic was unable to treat a session as a coherent aggregate entity.
-2. **Multi-Query Read Friction in Callers**:
-   To retrieve a full conversation session (e.g. `GET /api/chat/{session_id}`), callers were forced to make two distinct asynchronous database round trips: first `aget_session(session_id)` to get metadata, then `aget_turns(session_id)` to get turn history. The caller was then responsible for manually stitching these disparate entities together.
-3. **Fragmented 4-Step Session Branching (`POST /api/chat/{session_id}/fork`)**:
-   `ConversationMemoryAdapter.afork_session` returned only a raw string `new_session_id`. Consequently, the HTTP presentation route in `app/api/routes.py` was forced to execute a 4-step orchestration:
-   - Pre-check source session existence via `await memory.aget_session(session_id)`
-   - Execute fork via `await memory.afork_session(session_id, ...)`
-   - Re-query child metadata via `await memory.aget_session(new_session_id)`
-   - Query child turns via `await memory.aget_turns(new_session_id)`
-   - Manually map disjointed records into `SessionDetailResponse.from_domain(new_session, new_turns)`
-   This created unnecessary network/database latency, increased transaction isolation hazards, and bloated the presentation layer.
-4. **Inconsistent Invariant Enforcement Across Adapters**:
-   When forking a non-existent parent session, `SQLiteConversationStore` threw a raw `sqlite3.IntegrityError` due to foreign keys, while `InMemoryConversationStore` silently created an orphaned fork (`Fork of <missing-id>`). Callers could not rely on consistent domain exception semantics.
-5. **Presentation Layer Stitching & Transport Coupling**:
-   `SessionDetailResponse.from_domain` in `app/api/schemas.py` required two separate arguments `(info: SessionInfo, turns: list[ConversationTurn])`, exposing the underlying database split to transport serializers.
+1. **Heterogeneous, Untyped Dictionary Artifacts & Regex Fallbacks**:
+   Tools currently return ad-hoc, heterogeneous dictionaries (`{"documents": ..., "citations": ...}` in retriever vs `{"citations": ..., "retrieved_contexts": ...}` in web search). In `ReActAgentWorkflow.to_workflow_output()`, checking `isinstance(artifact, list)` fails on every run because the artifact is a dictionary. Consequently, the workflow silently falls back to scraping tool message strings with fragile regular expressions (`re.findall(r"\[Source:\s*([^\]]+)\]", ...)` and `re.findall(r"Title:\s*([^\n]+)\nURL:\s*([^\n]+)", ...)`).
+2. **Global State & Monkey-Patching for Config Injection**:
+   `DualOutputStructuredTool` intercepts invocations to store `RunnableConfig` in a global `ContextVar` (`_TOOL_INVOKE_CONFIG`), passes synthetic `tool_call_id="__direct__"` into `super().run()`, and inspects resulting `ToolMessage` instances to return `(content, artifact)`. Individual tools then call `get_invoke_config()` to recover the config. Modern LangChain supports native `RunnableConfig` injection directly into tool functions without global state or synthetic call IDs.
+3. **Tight Workflow Coupling to Tool Names**:
+   `ReActAgentWorkflow` hardcodes specific tool names (`"knowledge_base_search"`, `"web_search"`) to resolve `source_used`. Adding a new tool (e.g. Jira, Confluence, GitHub) requires modifying workflow internals. Similarly, `app/rag/engine.py` maintains manual citation deduplication loops in generation nodes.
+4. **Tuple Duck-Typing at Invocation Seams**:
+   Fixed DAG nodes in `app/rag/engine.py` require a defensive `_unpack_tool_output` helper to inspect whether raw output is a tuple, an object with an `.artifact` attribute, or a raw string, obscuring the tool seam interface.
 
 ---
 
 ## Solution
 
-Deepen the `ConversationMemoryAdapter` protocol seam and concrete adapters (`SQLiteConversationStore`, `InMemoryConversationStore`, `NoOpMemoryStore`) by introducing a cohesive `ConversationSession` aggregate, making session retrieval and branching atomic 1-call operations:
+Deepen `app/rag/tools/` into a self-contained, deep module with first-class domain models, an explicit `RAGTool` execution seam, pure LangChain config injection, and a polymorphic evidence aggregator:
 
-1. **`ConversationSession` Domain Aggregate (`app/rag/memory/base.py`)**:
-   Introduce `ConversationSession` subtyping `SessionInfo`:
-   ```python
-   class ConversationSession(SessionInfo):
-       """Canonical domain aggregate representing a complete conversation session with turns."""
-
-       turns: list[ConversationTurn] = Field(default_factory=list)
-   ```
-   Subtyping `SessionInfo` guarantees 100% backward compatibility with any consumer reading metadata properties (`session.session_id`, `session.title`, `session.turn_count`, `session.created_at`, `session.updated_at`, `session.parent_session_id`, `session.forked_from_turn`).
-2. **Deepen Session Retrieval Seam (`aget_session`)**:
-   Deepen `ConversationMemoryAdapter.aget_session(session_id: str, limit: int | None = None) -> ConversationSession | None`:
-   - In `SQLiteConversationStore`: Fetch both session metadata and turns within a single database transaction. If `limit` is specified, query the latest $N$ turns via `ORDER BY turn_index DESC LIMIT ?` and reverse the sequence in Python to guarantee that `session.turns` is always sorted chronologically ascending (`turn_index ASC`). If `limit is None`, fetch directly `ORDER BY turn_index ASC`.
-   - In `InMemoryConversationStore`: Return a deep copy of `ConversationSession` with its turn slice ordered chronologically.
-   - In `NoOpMemoryStore`: Return `None`.
-3. **Atomic Session Branching Seam (`afork_session`)**:
-   Deepen `ConversationMemoryAdapter.afork_session(source_session_id: str, upto_turn_index: int, new_session_id: str | None = None) -> ConversationSession`:
-   - **Domain Invariants**: Both SQLite and in-memory stores validate preconditions:
-     - If `source_session_id` does not exist: raise `KeyError(f"Session not found: {source_session_id}")`.
-     - If `upto_turn_index < -1`: raise `ValueError(f"Invalid upto_turn_index: {upto_turn_index}. Must be >= -1.")`.
-   - **Zero Additional I/O**: The adapter constructs and returns the newly cloned `ConversationSession` directly from the active write transaction without subsequent read queries.
-   - **Ephemeral Return on `NoOpMemoryStore`**: Returns an ephemeral `ConversationSession(session_id=new_session_id or uuid.uuid4().hex, turns=[], ...)` ensuring callers never handle `None`.
-4. **Streamline Presentation Serialization & HTTP Routes (`app/api/`)**:
-   - Update `SessionDetailResponse.from_domain` to accept `session: ConversationSession | SessionInfo, turns: list[ConversationTurn] | None = None`. If `session` is `ConversationSession`, it extracts `session.turns`; if `session` is `SessionInfo`, it uses `turns`.
-   - Collapse `GET /api/chat/{session_id}` into 1 query:
-     ```python
-     session = await memory.aget_session(session_id)
-     if not session:
-         raise HTTPException(status_code=404, detail="Session not found")
-     return SessionDetailResponse.from_domain(session)
-     ```
-   - Collapse `POST /api/chat/{session_id}/fork` into 1 atomic call:
-     ```python
-     try:
-         new_session = await memory.afork_session(session_id, payload.upto_turn_index, payload.new_session_id)
-         return SessionDetailResponse.from_domain(new_session)
-     except KeyError as exc:
-         raise HTTPException(status_code=404, detail=str(exc)) from exc
-     except ValueError as exc:
-         raise HTTPException(status_code=400, detail=str(exc)) from exc
-     ```
-5. **Preserve Low-Level Seams**:
-   Retain `aget_turns`, `asave_turn`, `atruncate_from`, `aget_messages`, `alist_sessions`, and `aclear` on `ConversationMemoryAdapter` for test fixture seeding, explicit truncation endpoints, and LLM context binding in `ExecutionContextBinder`.
+1. **Canonical Domain Models (`app/rag/tools/base.py`)**:
+   - `Citation(BaseModel)`: Strongly-typed source attribution (`title: str`, `url: str = ""`, `type: str = "general"`).
+   - `ToolEvidenceArtifact(BaseModel)`: Unified domain artifact returned by all tools:
+     - `citations: list[Citation]`
+     - `retrieved_contexts: list[str]`
+     - `source_used: str` (self-describing evidence identifier)
+     - `raw_payload: Any = None` (optional underlying provider documents/payload)
+     - Implements dict-like subscripting fallback (`__getitem__`, `get`) for backward compatibility with legacy tests.
+   - `ToolResult(BaseModel)`: High-leverage execution result for direct DAG callers:
+     - `content: str`
+     - `artifact: ToolEvidenceArtifact`
+     - Implements `__iter__` to yield `(self.content, self.artifact)` for ergonomic 2-tuple unpacking.
+2. **Deep `RAGTool` Seam & Zero-Shim Execution**:
+   - Introduce `RAGTool(StructuredTool)` with explicit direct execution entrypoints:
+     - `async def aexecute(self, input_args: dict[str, Any] | BaseModel | str, config: RunnableConfig | None = None) -> ToolResult`
+     - `def execute(self, input_args: dict[str, Any] | BaseModel | str, config: RunnableConfig | None = None) -> ToolResult`
+   - For autonomous ReAct agents (`create_agent` / LangGraph `ToolNode`), standard `.ainvoke()` produces a `ToolMessage` with `ToolEvidenceArtifact` on `.artifact`.
+   - Tool functions declare `config: RunnableConfig | None = None` and receive runtime configs via native LangChain injection.
+   - Prune obsolete symbols: remove `DualOutputStructuredTool`, `_TOOL_INVOKE_CONFIG`, `_UNSET`, and `get_invoke_config()`.
+3. **Polymorphic Evidence Aggregator (`aggregate_tool_evidence`)**:
+   - Provide `aggregate_tool_evidence(messages_or_artifacts: Sequence[Any]) -> AggregatedEvidence` in `app/rag/tools/`.
+   - Automatically extracts `ToolEvidenceArtifact` instances from message history, deduplicates citations by `(title, url)`, aggregates contexts, and dynamically resolves `source_used`:
+     - 0 tools executed &rarr; `"direct"`
+     - 1 tool executed &rarr; tool artifact's `source_used`
+     - 2+ distinct tool sources &rarr; `"react_agent"`
+   - Eliminate all regex scraping fallbacks and tool name checks from `ReActAgentWorkflow.to_workflow_output()`.
+4. **Fixed DAG Node Simplification (`app/rag/engine.py`)**:
+   - Update `node_retrieve_kb` and `node_search_web` to invoke `await tool.aexecute(..., config=config)`.
+   - Directly extract `result.content`, `result.artifact.citations`, and `result.artifact.retrieved_contexts`.
+   - Delete `_unpack_tool_output`.
+5. **Deterministic Test Double (`FakeRAGTool`)**:
+   - Provide an in-memory `FakeRAGTool(RAGTool)` test double with configurable returns and call inspection for deterministic unit tests.
 
 ---
 
 ## User Stories
 
-1. As an API client fetching session history via `GET /api/chat/{session_id}`, I want the endpoint to resolve my session metadata and turns in a single atomic database query, so that my chat UI hydrates with minimal latency and zero race conditions.
-2. As an API client branching a conversation via `POST /api/chat/{session_id}/fork`, I want the endpoint to clone turns and return the complete new session aggregate in one call, so that I immediately receive the forked session details without delay.
-3. As an API client attempting to fork a non-existent session, I want to receive an HTTP 404 response with a clear error message, so that I can notify the user that the parent conversation is missing.
-4. As an API client providing an invalid `upto_turn_index` (e.g. `< -1`), I want to receive an HTTP 400 response with descriptive validation details, so that client bugs are detected immediately.
-5. As a developer writing multi-turn conversational agents, I want `ConversationSession` to be a first-class domain model subtyping `SessionInfo`, so that I can pass a full session object across layers without losing metadata.
-6. As a developer using `ConversationSession`, I want `session.turns` to always be sorted in ascending chronological order (`turn_index ASC`), so that messages read naturally from oldest to newest.
-7. As a developer querying a session with `limit=N`, I want to receive the most recent $N$ turns in ascending chronological order, so that long conversations show the latest turns without requiring client-side inversion.
-8. As a backend engineer, I want `SQLiteConversationStore.aget_session` to query session metadata and turns in a single transaction, so that SQLite connections are released immediately.
-9. As a backend engineer, I want `SQLiteConversationStore.afork_session` to raise `KeyError` when the parent session does not exist, so that foreign key errors are translated into clean domain exceptions.
-10. As a test author, I want `InMemoryConversationStore.afork_session` to enforce the same `KeyError` and `ValueError` invariants as SQLite, so that unit tests catch domain violations identically to production.
-11. As a test author, I want `InMemoryConversationStore.afork_session` to return a complete `ConversationSession` aggregate, so that in-memory tests never require follow-up reads or manual mock wiring.
-12. As a platform developer running in stateless mode (`NoOpMemoryStore`), I want `afork_session` to return an ephemeral `ConversationSession` object with an empty turns list, so that callers never encounter `None` or attribute errors.
-13. As a presentation layer engineer, I want `SessionDetailResponse.from_domain` to accept a single `ConversationSession` parameter, so that route handlers avoid separate `turns` parameters.
-14. As a test author maintaining legacy test suites, I want `SessionDetailResponse.from_domain(info, turns)` to remain supported polymorphically, so that existing unit tests continue to pass without churn.
-15. As an IT support assistant user, I want session branching at Turn 0 (`upto_turn_index = -1`) to create an empty child session linked to the parent, so that I can explore fresh inquiries with traceable lineage.
-16. As a database maintainer, I want child sessions created via `afork_session` to automatically compute their title as `{source_title} (Fork)` and maintain correct `turn_count`, so that session summaries in `GET /api/chat/sessions` accurately reflect the branch.
+1. As a developer adding a new retrieval tool (e.g., Jira or Confluence), I want to return a typed `ToolEvidenceArtifact` with a self-describing `source_used`, so that all existing workflows and evaluation listeners automatically support my tool without modifying workflow routing code.
+2. As a workflow developer, I want `tool.aexecute(input, config=config)` to return a typed `ToolResult`, so that I do not have to write duck-typing unpack helpers or handle synthetic tool call IDs.
+3. As a maintainer of `ReActAgentWorkflow`, I want evidence citations and retrieved contexts to be extracted directly from `ToolEvidenceArtifact`, so that the agent never relies on brittle regex parsing of tool string prose.
+4. As an engineer writing tests for tool invocations, I want `ToolResult` to support 2-tuple unpacking `(content, artifact) = result`, so that existing test assertions remain clean and expressive.
+5. As an engineer configuring Langfuse tracing, I want runtime `RunnableConfig` to be injected into tool implementations natively by LangChain, so that global `ContextVar` monkey-patches and thread-safety hazards are eliminated.
+6. As a developer debugging evaluation pipelines, I want all citations across all tools to have a standard `Citation` schema (`title`, `url`, `type`), so that UI citation badges and evaluation metrics do not encounter inconsistent dictionary keys.
+7. As an engineer writing unit tests for workflows, I want a `FakeRAGTool` test double, so that I can mock tool executions deterministically without setting up complex LangChain mock structures or external network calls.
+8. As a frontend client consuming chat responses, I want citations generated by autonomous ReAct agents to match citations generated by fixed DAG workflows, so that citation display is consistent regardless of execution workflow.
+9. As an engineer monitoring system performance, I want `node_retrieve_kb` and `node_search_web` to natively await `aexecute`, so that threadpools are not blocked during streaming token generation.
+10. As a code reviewer, I want zero obsolete shims (`DualOutputStructuredTool`, `_TOOL_INVOKE_CONFIG`) remaining in `app/rag/tools/`, so that the codebase adheres strictly to the repo's Zero-Shim architecture standard.
 
 ---
 
 ## Implementation Decisions
 
-### Domain Models & Protocol Seam
-- **Module**: `app/rag/memory/base.py`
-- **Interface Modifications**:
-  - Define `ConversationSession(SessionInfo)` with `turns: list[ConversationTurn] = Field(default_factory=list)`.
-  - Update `ConversationMemoryAdapter.aget_session`:
-    ```python
-    async def aget_session(
-        self,
-        session_id: str,
-        limit: int | None = None,
-    ) -> ConversationSession | None:
-        """Retrieve full conversation session aggregate with chronological turn history."""
-        ...
-    ```
-  - Update `ConversationMemoryAdapter.afork_session`:
-    ```python
-    async def afork_session(
-        self,
-        source_session_id: str,
-        upto_turn_index: int,
-        new_session_id: str | None = None,
-    ) -> ConversationSession:
-        """Clone turns [0 .. upto_turn_index] into a child session and return the complete aggregate."""
-        ...
-    ```
-  - Retain all other existing protocol methods: `aget_messages`, `aget_turns`, `aappend_turn`, `asave_turn`, `aclear`, `atruncate_from`, `alist_sessions`.
+1. **`Citation` Value Object (`app/rag/tools/base.py`)**:
+   ```python
+   class Citation(BaseModel):
+       """Strongly-typed reference citation attributed to retrieved evidence."""
+       title: str
+       url: str = ""
+       type: str = "general"
+   ```
+2. **`ToolEvidenceArtifact` Domain Model (`app/rag/tools/base.py`)**:
+   ```python
+   class ToolEvidenceArtifact(BaseModel):
+       """Canonical structured evidence payload returned alongside tool display text."""
+       citations: list[Citation] = Field(default_factory=list)
+       retrieved_contexts: list[str] = Field(default_factory=list)
+       source_used: str = "direct"
+       raw_payload: Any = None
 
-### Concrete Memory Adapters
-- **Module**: `app/rag/memory/sqlite.py` (`SQLiteConversationStore`)
-  - In `aget_session(session_id, limit=None)`:
-    - Execute read in `run_in_threadpool` using `self._connection()`.
-    - Fetch row from `conversation_sessions`. If `None`, return `None`.
-    - If `limit` is specified: query `SELECT ... FROM conversation_turns WHERE session_id = ? ORDER BY turn_index DESC LIMIT ?`, then reverse rows.
-    - If `limit is None`: query `SELECT ... FROM conversation_turns WHERE session_id = ? ORDER BY turn_index ASC`.
-    - Deserialize JSON columns (`attachments_json`, `citations_json`) into `ConversationTurn` objects.
-    - Compute `turn_count` from row or actual turns.
-    - Return `ConversationSession(**session_data, turns=turns)`.
-  - In `afork_session(source_session_id, upto_turn_index, new_session_id=None)`:
-    - Validate `upto_turn_index >= -1`; if not, raise `ValueError`.
-    - Within `self._write_lock` and `with conn:`:
-      - Query source session row. If not found, raise `KeyError(f"Session not found: {source_session_id}")`.
-      - Generate `target_id = new_session_id or uuid.uuid4().hex`.
-      - Insert into `conversation_sessions`.
-      - If `upto_turn_index >= 0`: insert cloned turns into `conversation_turns` using `SELECT ... WHERE session_id = ? AND turn_index <= ? ORDER BY turn_index ASC`.
-      - Query cloned turns for `target_id` and construct `ConversationSession`.
-      - Return `ConversationSession`.
-- **Module**: `app/rag/memory/in_memory.py` (`InMemoryConversationStore`)
-  - In `aget_session(session_id, limit=None)`:
-    - Acquire `self._lock`.
-    - Check `self._sessions.get(session_id)`. If `None`, return `None`.
-    - Retrieve turns from `self._turns.get(session_id, [])`.
-    - If `limit` is specified: take `turns[-limit:]`.
-    - Return deep copy of `ConversationSession(**session.model_dump(), turns=slice)`.
-  - In `afork_session(source_session_id, upto_turn_index, new_session_id=None)`:
-    - Validate `upto_turn_index >= -1`; if not, raise `ValueError`.
-    - Acquire `self._lock`.
-    - Check `self._sessions.get(source_session_id)`. If `None`, raise `KeyError(f"Session not found: {source_session_id}")`.
-    - Clone turns with updated `session_id = target_id`.
-    - Persist `SessionInfo` in `self._sessions` and cloned turns in `self._turns`.
-    - Return `ConversationSession(**session_info.model_dump(), turns=cloned_turns)`.
-- **Module**: `app/rag/memory/noop.py` (`NoOpMemoryStore`)
-  - `aget_session`: returns `None`.
-  - `afork_session`: returns ephemeral `ConversationSession(session_id=new_session_id or uuid.uuid4().hex, title="Ephemeral Fork", turns=[])`.
+       def __getitem__(self, key: str) -> Any:
+           return getattr(self, key)
 
-### Presentation Layer Schemas & Routes
-- **Module**: `app/api/schemas.py`
-  - Update `SessionDetailResponse.from_domain`:
-    ```python
-    @classmethod
-    def from_domain(
-        cls,
-        session: ConversationSession | SessionInfo,
-        turns: list[ConversationTurn] | None = None,
-    ) -> SessionDetailResponse:
-        resolved_turns = session.turns if isinstance(session, ConversationSession) else (turns or [])
-        return cls(
-            session_id=session.session_id,
-            title=session.title,
-            parent_session_id=session.parent_session_id,
-            forked_from_turn=session.forked_from_turn,
-            created_at=session.created_at,
-            updated_at=session.updated_at,
-            turn_count=session.turn_count,
-            turns=[ChatTurnResponse.from_domain(t) for t in resolved_turns],
-        )
-    ```
-- **Module**: `app/api/routes.py`
-  - `get_chat_session(session_id: str)`:
-    - Call `session = await memory.aget_session(session_id)`.
-    - If `session is None`, raise `HTTPException(status_code=404, detail="Session not found")`.
-    - Return `SessionDetailResponse.from_domain(session)`.
-  - `fork_chat_session(session_id: str, payload: ForkRequest)`:
-    - Wrap in `try ... except KeyError ... except ValueError`:
-      ```python
-      try:
-          new_session = await memory.afork_session(session_id, payload.upto_turn_index, payload.new_session_id)
-          return SessionDetailResponse.from_domain(new_session)
-      except KeyError as exc:
-          raise HTTPException(status_code=404, detail=str(exc)) from exc
-      except ValueError as exc:
-          raise HTTPException(status_code=400, detail=str(exc)) from exc
-      ```
+       def get(self, key: str, default: Any = None) -> Any:
+           return getattr(self, key, default)
+   ```
+3. **`ToolResult` Container (`app/rag/tools/base.py`)**:
+   ```python
+   class ToolResult(BaseModel):
+       """Execution result container for direct workflow callers."""
+       model_config = ConfigDict(arbitrary_types_allowed=True)
+
+       content: str
+       artifact: ToolEvidenceArtifact
+
+       def __iter__(self):
+           return iter((self.content, self.artifact))
+   ```
+4. **`RAGTool` Class & Factory (`app/rag/tools/base.py`)**:
+   - Subclasses `StructuredTool` from `langchain_core.tools`.
+   - `aexecute`: converts input to dictionary (if `BaseModel` or `str`), runs `arun` with native `config`, and wraps the resulting `(content, artifact)` or `ToolMessage` into `ToolResult`.
+   - `execute`: synchronous version of `aexecute`.
+   - `rag_tool(func, coroutine, name, description, args_schema) -> RAGTool`: clean instantiation factory setting `response_format="content_and_artifact"`.
+5. **Pruning Obsolete Symbols (Zero-Shim Standard)**:
+   - Completely remove `DualOutputStructuredTool`, `_TOOL_INVOKE_CONFIG`, `_UNSET`, and `get_invoke_config()` from `app/rag/tools/base.py`.
+   - In `app/rag/tools/retriever.py` and `app/rag/tools/search.py`:
+     - Delete `get_invoke_config()` and ContextVar reads.
+     - Accept `config: RunnableConfig | None = None` directly in `_run` and `_arun`.
+     - Return `(content, ToolEvidenceArtifact(...))`.
+6. **Centralized Polymorphic Evidence Aggregation (`app/rag/tools/base.py`)**:
+   ```python
+   class AggregatedEvidence(BaseModel):
+       citations: list[Citation] = Field(default_factory=list)
+       retrieved_contexts: list[str] = Field(default_factory=list)
+       source_used: str = "direct"
+
+   def aggregate_tool_evidence(messages_or_artifacts: Sequence[Any]) -> AggregatedEvidence:
+       ...
+   ```
+   - Scans sequence for `ToolEvidenceArtifact` (or `ToolMessage.artifact`).
+   - Deduplicates citations by unique `(title, url)`.
+   - Collects all `retrieved_contexts` preserving first-seen order.
+   - Resolves `source_used`: `"direct"` if empty, single source if uniform, `"react_agent"` if multiple distinct sources.
+7. **Refactor `ReActAgentWorkflow` (`app/rag/workflows/react_agent.py`)**:
+   - In `to_workflow_output`:
+     - Replace regex scraping and hardcoded tool checks with `evidence = aggregate_tool_evidence(messages)`.
+     - Assign `citations = [c.model_dump() for c in evidence.citations]`.
+     - Assign `retrieved_contexts = evidence.retrieved_contexts`.
+     - Assign `source_used = evidence.source_used`.
+   - Delete obsolete `_extract_tools_called` and `_resolve_source_used`.
+8. **Refactor `create_agentic_rag_graph` (`app/rag/engine.py`)**:
+   - In `node_retrieve_kb`:
+     ```python
+     result = await active_kb_tool.aexecute({"query": search_query}, config=config)
+     return {
+         "kb_docs": result.artifact.raw_payload or [],
+         "retrieved_contexts": result.artifact.retrieved_contexts,
+         "citations": [c.model_dump() for c in result.artifact.citations],
+         "trace": [f"Private KB retrieval → {len(result.artifact.retrieved_contexts)} chunks"],
+     }
+     ```
+   - In `node_search_web`:
+     ```python
+     result = await active_web_tool.aexecute({"query": search_query}, config=config)
+     return {
+         "web_results": result.content,
+         "citations": [c.model_dump() for c in result.artifact.citations],
+         "source_used": "web",
+         "retrieved_contexts": result.artifact.retrieved_contexts,
+         "trace": ["Web fallback → Tavily search"],
+     }
+     ```
+   - Delete `_unpack_tool_output`.
+9. **`FakeRAGTool` Test Double (`app/rag/tools/base.py`)**:
+   - Extends `RAGTool`. Allows injecting fixed or sequential `content` and `artifact`.
+   - Records all `execute` and `aexecute` calls with inputs and configs.
 
 ---
 
 ## Testing Decisions
 
-### What Makes a Good Test
-- **Test External Behavior, Not Implementation**: Tests must verify that calling `aget_session` returns a `ConversationSession` with correct metadata and chronological turns, and that `afork_session` creates the cloned session with lineage and returns the aggregate.
-- **Invariant Assertions**: Verify that missing parent sessions raise `KeyError` across both SQLite and In-Memory stores, and invalid `upto_turn_index < -1` raises `ValueError`.
-- **Chronological Order Under Limit**: Verify that querying `aget_session(session_id, limit=2)` on a session with 5 turns returns the last 2 turns in chronological ascending order (`[Turn 3, Turn 4]`).
-- **Zero Mock Presentation Tests**: Verify `GET /api/chat/{session_id}` and `POST /api/chat/{session_id}/fork` via `TestClient` or ASGI client, asserting HTTP 200, 400, and 404 status codes and JSON payloads matching `SessionDetailResponse`.
-
-### Modules Tested
-- `tests/rag/test_conversation_memory_base.py`: Protocol conformance and `ConversationSession` inheritance.
-- `tests/rag/test_conversation_memory_sqlite.py`: `SQLiteConversationStore` implementation of `aget_session`, `afork_session`, limit tail-windowing, and `KeyError`/`ValueError` exceptions.
-- `tests/rag/test_conversation_memory_in_memory.py`: `InMemoryConversationStore` aggregate return, turn slicing, and error invariants.
-- `tests/api/test_routes_chat_memory.py`: HTTP routes for single-query session detail and atomic fork responses.
-
-### Prior Art
-- `tests/rag/test_conversation_memory_sqlite.py` (ADR-0016 / ADR-0017 suite)
-- `tests/rag/test_conversation_memory_in_memory.py`
-- `tests/api/test_routes_chat_memory.py`
+1. **Unit Testing External Seam Behavior**:
+   - Test `RAGTool.execute` and `RAGTool.aexecute` across string, dict, and BaseModel inputs.
+   - Verify `ToolResult` unpacks cleanly as `content, artifact = res`.
+   - Verify `ToolEvidenceArtifact` maintains typed fields while supporting dictionary key lookups.
+   - Verify `config: RunnableConfig` is received inside `_run` and `_arun` via native LangChain injection without `_TOOL_INVOKE_CONFIG`.
+2. **Dynamic Aggregator Testing**:
+   - Verify `aggregate_tool_evidence` with empty messages produces `source_used="direct"`.
+   - Verify single tool produces tool-specific `source_used` (e.g. `"vectorstore"` or `"web_search"`).
+   - Verify multiple distinct tools produce `source_used="react_agent"`.
+   - Verify duplicate citations across multiple tool messages are deduplicated by `(title, url)`.
+3. **Workflow Integration & Regression**:
+   - Verify `ReActAgentWorkflow` extracts structured citations without regex scraping.
+   - Verify `SelfCorrectiveRagWorkflow` runs end-to-end through `retrieve_kb` and `search_web`.
+   - Run the complete project test suite (`pytest`) to ensure zero regressions across memory, streaming, telemetry, and evaluation.
 
 ---
 
 ## Out of Scope
 
-- Modifying the write path (`aappend_turn`) or pre-rewind message queries (`before_turn_index`), which were finalized in ADR-0017.
-- Changing `ExecutionContextBinder._ahydrate_messages`, which continues to use bounded `aget_messages(limit, before_turn_index)`.
-- Introducing distributed caching or Redis adapters for session caching.
-- Modifying frontend UI components or client-side TypeScript types.
+1. Introducing new external search providers (e.g. Bing Search, Google Search) or new vector databases.
+2. Modifying the 10-node DAG topology or LangGraph state machine structure in `app/rag/engine.py`.
+3. Changing HTTP presentation route contracts (`/api/chat`, `/api/chat/stream`).
 
 ---
 
 ## Further Notes
 
-- By making `ConversationSession` inherit from `SessionInfo`, all existing code reading `session.session_id`, `session.title`, or `session.turn_count` remains 100% compatible.
-- The return type change of `afork_session` from `str` to `ConversationSession` improves caller locality: callers wanting the session ID simply access `result.session_id`.
+- This specification adheres strictly to the Phase Gating Invariant: production implementation work begins only after this specification is reviewed and approved.
+- All changes maintain 100% backward compatibility for API consumers, while internally transitioning from untyped dictionaries and regex scraping to strongly-typed domain models.

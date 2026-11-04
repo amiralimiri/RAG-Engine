@@ -56,9 +56,25 @@ Bidirectional mapping methods (`to_initial_state` and `to_chat_response`) on `Wo
 The standardized collection of LangChain `BaseTool` implementations (`app/rag/tools/`) providing typed Pydantic input schemas, native asynchronous (`ainvoke`) execution, and dual-output (`content_and_artifact`) contracts consumable identically by fixed DAG nodes and autonomous ReAct agents.
 _Avoid_: Helper functions, search clients, ad-hoc retrievers
 
-### Tool Artifact
-The strongly-typed structured payload returned alongside human-readable tool prose in `response_format="content_and_artifact"`, encapsulating raw data (`list[Document]`, citations list, external URLs) for direct consumption by workflow state nodes without string re-parsing.
-_Avoid_: Raw tool output, metadata dictionary
+### RAG Tool
+A deep tool class (`RAGTool`) subtyping LangChain's `StructuredTool`, exposing first-class `execute` and `aexecute` entrypoints returning strongly-typed `ToolResult` containers for direct workflow DAG callers, while maintaining standard LangChain `invoke`/`ainvoke` contracts for autonomous ReAct agents. Injects `RunnableConfig` natively without global context variables.
+_Avoid_: DualOutputStructuredTool, generic tool wrapper, tool helper
+
+### Tool Evidence Artifact (Tool Artifact)
+A strongly-typed domain model (`ToolEvidenceArtifact`) returned alongside human-readable tool prose in `response_format="content_and_artifact"`, encapsulating normalized `citations: list[Citation]`, `retrieved_contexts: list[str]`, `source_used: str`, and optional `raw_payload: Any` for direct consumption by workflow state nodes, autonomous agents, and evaluation listeners without string re-parsing or regex scraping.
+_Avoid_: Raw tool output, metadata dictionary, heterogeneous artifact dict
+
+### Tool Result
+A strongly-typed container (`ToolResult`) returned by the tool execution seam (`execute_tool` / `aexecute_tool`) for direct workflow DAG callers, encapsulating `content: str` and `artifact: ToolEvidenceArtifact`. Eliminates tuple duck-typing and message unwrapping at tool invocation sites.
+_Avoid_: Tool tuple, raw tool output, unpack helper
+
+### Aggregated Tool Evidence
+An immutable domain value object (`AggregatedEvidence`) produced by `aggregate_tool_evidence` in `app/rag/tools/`, encapsulating deduplicated `citations: list[Citation]`, ordered `retrieved_contexts: list[str]`, and dynamically resolved `source_used: str` across one or many executed tools, decoupling workflows and evaluation listeners from specific tool names.
+_Avoid_: Extracted evidence tuple, workflow evidence helper, citation map
+
+### Citation
+A strongly-typed domain value object (`Citation`) representing a verifiable source attributed to retrieved evidence, encapsulating `title: str`, `url: str`, and `type: str` (e.g. `private_kb`, `web`).
+_Avoid_: Citation dict, raw link tuple
 
 ### Evaluation Context
 A normalized data structure (`EvalContext`) extracted from arbitrary workflow states containing `source_used` and `retrieved_contexts`, enabling online evaluation tasks to grade answers across diverse topologies without assuming fixed vectorstore structures.
