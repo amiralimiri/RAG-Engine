@@ -3,11 +3,17 @@
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime
 from typing import Any
 
 from langchain_core.messages import BaseMessage
 
-from app.rag.memory.base import ConversationMemoryAdapter, ConversationTurn, SessionInfo
+from app.rag.memory.base import (
+    ConversationMemoryAdapter,
+    ConversationSession,
+    ConversationTurn,
+    SessionInfo,
+)
 
 
 class NoOpMemoryStore(ConversationMemoryAdapter):
@@ -73,14 +79,29 @@ class NoOpMemoryStore(ConversationMemoryAdapter):
         source_session_id: str,
         upto_turn_index: int,
         new_session_id: str | None = None,
-    ) -> str:
-        """Return provided or newly generated session id without state persistence."""
-        return new_session_id or uuid.uuid4().hex
+    ) -> ConversationSession:
+        """Return an ephemeral ConversationSession without state persistence."""
+        target_id = new_session_id or uuid.uuid4().hex
+        now = datetime.now(UTC)
+        return ConversationSession(
+            session_id=target_id,
+            title="Ephemeral Fork",
+            parent_session_id=source_session_id,
+            forked_from_turn=upto_turn_index,
+            created_at=now,
+            updated_at=now,
+            turn_count=0,
+            turns=[],
+        )
 
     async def alist_sessions(self, limit: int = 50) -> list[SessionInfo]:
         """Return an empty list of sessions."""
         return []
 
-    async def aget_session(self, session_id: str) -> SessionInfo | None:
+    async def aget_session(
+        self,
+        session_id: str,
+        limit: int | None = None,
+    ) -> ConversationSession | None:
         """Return None as no sessions are stored."""
         return None

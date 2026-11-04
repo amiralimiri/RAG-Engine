@@ -10,6 +10,7 @@ from pydantic import SecretStr
 from app.core.config import Settings
 from app.rag.memory import (
     ConversationMemoryAdapter,
+    ConversationSession,
     ConversationTurn,
     InMemoryConversationStore,
     NoOpMemoryStore,
@@ -49,13 +50,21 @@ async def test_noop_memory_store_protocol_compliance_and_behavior() -> None:
     await store.atruncate_from("session-noop", turn_index=0)
     await store.aclear("session-noop")
 
-    # Forking returns an ID without error
-    fork_id_generated = await store.afork_session("session-noop", upto_turn_index=0)
-    assert isinstance(fork_id_generated, str)
-    assert len(fork_id_generated) > 0
+    # Forking returns an ephemeral ConversationSession without error
+    fork_session_generated = await store.afork_session("session-noop", upto_turn_index=0)
+    assert isinstance(fork_session_generated, ConversationSession)
+    assert len(fork_session_generated.session_id) > 0
+    assert fork_session_generated.turns == []
+    assert fork_session_generated.turn_count == 0
+    assert fork_session_generated.parent_session_id == "session-noop"
+    assert fork_session_generated.forked_from_turn == 0
 
-    fork_id_explicit = await store.afork_session("session-noop", upto_turn_index=0, new_session_id="custom-child-id")
-    assert fork_id_explicit == "custom-child-id"
+    fork_session_explicit = await store.afork_session("session-noop", upto_turn_index=0, new_session_id="custom-child-id")
+    assert isinstance(fork_session_explicit, ConversationSession)
+    assert fork_session_explicit.session_id == "custom-child-id"
+    assert fork_session_explicit.turns == []
+    assert fork_session_explicit.parent_session_id == "session-noop"
+    assert fork_session_explicit.forked_from_turn == 0
 
 
 @pytest.mark.asyncio
@@ -299,8 +308,17 @@ async def test_in_memory_fork_session() -> None:
         )
 
     # Fork at turn 1 (copying turns 0 and 1)
-    fork_id = await store.afork_session("session-parent", upto_turn_index=1)
+    forked_session = await store.afork_session("session-parent", upto_turn_index=1)
+    assert isinstance(forked_session, ConversationSession)
+    fork_id = forked_session.session_id
     assert fork_id != "session-parent"
+    assert len(forked_session.turns) == 2
+    assert [t.turn_index for t in forked_session.turns] == [0, 1]
+    assert all(t.session_id == fork_id for t in forked_session.turns)
+    assert forked_session.parent_session_id == "session-parent"
+    assert forked_session.forked_from_turn == 1
+    assert forked_session.turn_count == 2
+    assert "(Fork)" in forked_session.title or "Parent query 0" in forked_session.title
 
     # Parent remains unaffected
     parent_turns = await store.aget_turns("session-parent")
@@ -317,10 +335,12 @@ async def test_in_memory_fork_session() -> None:
     # Verify session lineage
     child_session = await store.aget_session(fork_id)
     assert child_session is not None
+    assert isinstance(child_session, ConversationSession)
     assert child_session.parent_session_id == "session-parent"
     assert child_session.forked_from_turn == 1
     assert child_session.turn_count == 2
     assert "(Fork)" in child_session.title or "Parent query 0" in child_session.title
+    assert len(child_session.turns) == 2
 
 
 @pytest.mark.asyncio
@@ -337,24 +357,31 @@ async def test_in_memory_fork_session_turn_zero() -> None:
         )
     )
 
-    fork_id = await store.afork_session(
+    forked_session = await store.afork_session(
         "session-source",
         upto_turn_index=-1,
         new_session_id="session-zero-child",
     )
-    assert fork_id == "session-zero-child"
+    assert isinstance(forked_session, ConversationSession)
+    assert forked_session.session_id == "session-zero-child"
+    assert forked_session.turns == []
+    assert forked_session.parent_session_id == "session-source"
+    assert forked_session.forked_from_turn == -1
+    assert forked_session.turn_count == 0
 
     # Child has 0 turns
-    child_turns = await store.aget_turns(fork_id)
+    child_turns = await store.aget_turns("session-zero-child")
     assert child_turns == []
 
     # Lineage is preserved
-    child_session = await store.aget_session(fork_id)
+    child_session = await store.aget_session("session-zero-child")
     assert child_session is not None
+    assert isinstance(child_session, ConversationSession)
     assert child_session.session_id == "session-zero-child"
     assert child_session.parent_session_id == "session-source"
     assert child_session.forked_from_turn == -1
     assert child_session.turn_count == 0
+    assert child_session.turns == []
 
 
 @pytest.mark.asyncio
@@ -603,3 +630,137 @@ async def test_in_memory_append_turn_preserves_attachments_citations_and_metadat
     turn.attachments.append({"name": "mutated.txt"})
     fresh_turns = await store.aget_turns(session_id)
     assert len(fresh_turns[0].attachments) == 1
+
+
+@pytest.mark.asyncio
+async def test_in_memory_aget_session_full_aggregate_and_limit_windowing() -> None:
+    """Validate that aget_session returns a complete ConversationSession with chronological turns and limit windowing."""
+    store = InMemoryConversationStore()
+    session_id = "session-aggregate-test"
+
+    # Non-existent session returns None
+    assert await store.aget_session("missing-session") is None
+    assert await store.aget_session("missing-session", limit=5) is None
+
+    # Seed 5 turns: 0, 1, 2, 3, 4
+    for idx in range(5):
+        await store.aappend_turn(
+            session_id=session_id,
+            user_query=f"Question {idx}",
+            assistant_answer=f"Answer {idx}",
+        )
+
+    # 1. Full aggregate without limit
+    full_session = await store.aget_session(session_id)
+    assert full_session is not None
+    assert isinstance(full_session, ConversationSession)
+    assert full_session.session_id == session_id
+    assert full_session.turn_count == 5
+    assert len(full_session.turns) == 5
+    assert [t.turn_index for t in full_session.turns] == [0, 1, 2, 3, 4]
+
+    # 2. Limit windowing: limit=2 returns latest 2 turns ordered ascending
+    limited_session = await store.aget_session(session_id, limit=2)
+    assert limited_session is not None
+    assert isinstance(limited_session, ConversationSession)
+    assert limited_session.session_id == session_id
+    assert limited_session.turn_count == 5  # Total session turn count preserved
+    assert len(limited_session.turns) == 2
+    assert [t.turn_index for t in limited_session.turns] == [3, 4]
+    assert limited_session.turns[0].user_query == "Question 3"
+    assert limited_session.turns[1].user_query == "Question 4"
+
+    # 3. Limit=0 returns empty turns list
+    zero_limited = await store.aget_session(session_id, limit=0)
+    assert zero_limited is not None
+    assert zero_limited.turns == []
+    assert zero_limited.turn_count == 5
+
+    # 4. Limit exceeding turn count returns all turns
+    large_limited = await store.aget_session(session_id, limit=10)
+    assert large_limited is not None
+    assert len(large_limited.turns) == 5
+    assert [t.turn_index for t in large_limited.turns] == [0, 1, 2, 3, 4]
+
+    # 5. Deep copy isolation: mutating turns on returned aggregate does not mutate store
+    full_session.turns[0].user_query = "Mutated Question"
+    re_fetched = await store.aget_session(session_id)
+    assert re_fetched is not None
+    assert re_fetched.turns[0].user_query == "Question 0"
+
+
+@pytest.mark.asyncio
+async def test_in_memory_afork_session_aggregate_and_invariants() -> None:
+    """Validate afork_session preconditions, KeyError, ValueError, and aggregate return."""
+    store = InMemoryConversationStore()
+    source_id = "session-parent-invariants"
+
+    # Invariant: source session not found raises KeyError
+    with pytest.raises(KeyError, match=f"Session not found: {source_id}"):
+        await store.afork_session(source_id, upto_turn_index=0)
+
+    # Invariant: upto_turn_index < -1 raises ValueError
+    with pytest.raises(ValueError, match=r"Invalid upto_turn_index: -2\. Must be >= -1\."):
+        await store.afork_session(source_id, upto_turn_index=-2)
+
+    # Seed parent session with 4 turns
+    for idx in range(4):
+        await store.aappend_turn(
+            session_id=source_id,
+            user_query=f"Parent Q{idx}",
+            assistant_answer=f"Parent A{idx}",
+        )
+
+    # Invariant: even with existing parent, upto_turn_index < -1 raises ValueError
+    with pytest.raises(ValueError, match=r"Invalid upto_turn_index: -5\. Must be >= -1\."):
+        await store.afork_session(source_id, upto_turn_index=-5)
+
+    # Valid fork at turn 2 (turns 0, 1, 2)
+    custom_child_id = "custom-fork-aggregate"
+    forked = await store.afork_session(source_id, upto_turn_index=2, new_session_id=custom_child_id)
+    assert isinstance(forked, ConversationSession)
+    assert forked.session_id == custom_child_id
+    assert forked.parent_session_id == source_id
+    assert forked.forked_from_turn == 2
+    assert forked.turn_count == 3
+    assert len(forked.turns) == 3
+    assert [t.turn_index for t in forked.turns] == [0, 1, 2]
+    assert all(t.session_id == custom_child_id for t in forked.turns)
+    assert forked.turns[2].user_query == "Parent Q2"
+    assert "(Fork)" in forked.title
+
+    # Mutating returned forked turns does not affect stored child session
+    forked.turns[0].user_query = "Corrupted Q0"
+    stored_child = await store.aget_session(custom_child_id)
+    assert stored_child is not None
+    assert stored_child.turns[0].user_query == "Parent Q0"
+
+
+@pytest.mark.asyncio
+async def test_noop_memory_store_aget_session_and_afork_session() -> None:
+    """Validate that NoOpMemoryStore aget_session returns None and afork_session returns ephemeral ConversationSession."""
+    store = NoOpMemoryStore()
+
+    # aget_session returns None regardless of session_id or limit
+    assert await store.aget_session("any-session") is None
+    assert await store.aget_session("any-session", limit=10) is None
+
+    # afork_session returns ephemeral ConversationSession with empty turns
+    ephemeral_generated = await store.afork_session("source-session", upto_turn_index=3)
+    assert isinstance(ephemeral_generated, ConversationSession)
+    assert len(ephemeral_generated.session_id) > 0
+    assert ephemeral_generated.title == "Ephemeral Fork"
+    assert ephemeral_generated.parent_session_id == "source-session"
+    assert ephemeral_generated.forked_from_turn == 3
+    assert ephemeral_generated.turn_count == 0
+    assert ephemeral_generated.turns == []
+
+    # afork_session with explicit child id
+    ephemeral_explicit = await store.afork_session("source-session", upto_turn_index=-1, new_session_id="child-123")
+    assert isinstance(ephemeral_explicit, ConversationSession)
+    assert ephemeral_explicit.session_id == "child-123"
+    assert ephemeral_explicit.parent_session_id == "source-session"
+    assert ephemeral_explicit.forked_from_turn == -1
+    assert ephemeral_explicit.turn_count == 0
+    assert ephemeral_explicit.turns == []
+

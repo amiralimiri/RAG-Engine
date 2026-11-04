@@ -7,7 +7,7 @@
   - `app/rag/memory/noop.py`
   - `tests/rag/test_conversation_memory_in_memory.py`
 - **Blocked by:** Ticket 01
-- **Status:** ready-for-agent
+- **Status:** closed
 
 ---
 
@@ -17,11 +17,11 @@ Implement the deepened `aget_session` and `afork_session` methods in `InMemoryCo
 
 ## Acceptance criteria
 
-- [ ] `InMemoryConversationStore.aget_session(session_id, limit=None)` returns `ConversationSession | None` containing the chronological `turns` sequence.
-- [ ] When `limit` is provided to `InMemoryConversationStore.aget_session`, only the latest $N$ turns are returned, ordered ascending by `turn_index`.
-- [ ] `InMemoryConversationStore.afork_session` raises `KeyError` if `source_session_id` is not present in `self._sessions`.
-- [ ] `InMemoryConversationStore.afork_session` raises `ValueError` if `upto_turn_index < -1`.
-- [ ] `InMemoryConversationStore.afork_session` returns `ConversationSession` containing the cloned turn subset and accurate metadata.
-- [ ] `NoOpMemoryStore.aget_session(session_id)` returns `None`.
-- [ ] `NoOpMemoryStore.afork_session(...)` returns an ephemeral `ConversationSession` with `session_id=new_session_id or uuid` and `turns=[]`.
-- [ ] `tests/rag/test_conversation_memory_in_memory.py` covers full aggregate return, limit windowing, and invariant exceptions.
+- [x] `InMemoryConversationStore.aget_session(session_id, limit=None)` returns `ConversationSession | None` containing the chronological `turns` sequence.
+- [x] When `limit` is provided to `InMemoryConversationStore.aget_session`, only the latest $N$ turns are returned, ordered ascending by `turn_index`.
+- [x] `InMemoryConversationStore.afork_session` raises `KeyError` if `source_session_id` is not present in `self._sessions`.
+- [x] `InMemoryConversationStore.afork_session` raises `ValueError` if `upto_turn_index < -1`.
+- [x] `InMemoryConversationStore.afork_session` returns `ConversationSession` containing the cloned turn subset and accurate metadata.
+- [x] `NoOpMemoryStore.aget_session(session_id)` returns `None`.
+- [x] `NoOpMemoryStore.afork_session(...)` returns an ephemeral `ConversationSession` with `session_id=new_session_id or uuid` and `turns=[]`.
+- [x] `tests/rag/test_conversation_memory_in_memory.py` covers full aggregate return, limit windowing, and invariant exceptions.

@@ -9,7 +9,12 @@ from typing import Any
 
 from langchain_core.messages import BaseMessage
 
-from app.rag.memory.base import ConversationMemoryAdapter, ConversationTurn, SessionInfo
+from app.rag.memory.base import (
+    ConversationMemoryAdapter,
+    ConversationSession,
+    ConversationTurn,
+    SessionInfo,
+)
 
 
 class InMemoryConversationStore(ConversationMemoryAdapter):
@@ -166,13 +171,19 @@ class InMemoryConversationStore(ConversationMemoryAdapter):
         source_session_id: str,
         upto_turn_index: int,
         new_session_id: str | None = None,
-    ) -> str:
+    ) -> ConversationSession:
         """Clone turns [0 .. upto_turn_index] into a child session and track lineage."""
+        if upto_turn_index < -1:
+            raise ValueError(f"Invalid upto_turn_index: {upto_turn_index}. Must be >= -1.")
+
         with self._lock:
+            if source_session_id not in self._sessions:
+                raise KeyError(f"Session not found: {source_session_id}")
+
             target_id = new_session_id or uuid.uuid4().hex
             now = datetime.now(UTC)
 
-            parent_session = self._sessions.get(source_session_id)
+            parent_session = self._sessions[source_session_id]
             if parent_session and parent_session.title:
                 title = f"{parent_session.title} (Fork)"
             else:
@@ -191,7 +202,7 @@ class InMemoryConversationStore(ConversationMemoryAdapter):
                         )
 
             self._turns[target_id] = cloned_turns
-            self._sessions[target_id] = SessionInfo(
+            session_info = SessionInfo(
                 session_id=target_id,
                 title=title,
                 parent_session_id=source_session_id,
@@ -200,8 +211,12 @@ class InMemoryConversationStore(ConversationMemoryAdapter):
                 updated_at=now,
                 turn_count=len(cloned_turns),
             )
+            self._sessions[target_id] = session_info
 
-            return target_id
+            return ConversationSession(
+                **session_info.model_dump(),
+                turns=[t.model_copy(deep=True) for t in cloned_turns],
+            )
 
     async def alist_sessions(self, limit: int = 50) -> list[SessionInfo]:
         """Enumerate recent sessions ordered by recency."""
@@ -213,8 +228,25 @@ class InMemoryConversationStore(ConversationMemoryAdapter):
             )
             return [s.model_copy(deep=True) for s in sorted_sessions[:limit]]
 
-    async def aget_session(self, session_id: str) -> SessionInfo | None:
-        """Retrieve session metadata by session ID."""
+    async def aget_session(
+        self,
+        session_id: str,
+        limit: int | None = None,
+    ) -> ConversationSession | None:
+        """Retrieve full conversation session aggregate with chronological turn history."""
         with self._lock:
             session = self._sessions.get(session_id)
-            return session.model_copy(deep=True) if session else None
+            if session is None:
+                return None
+
+            turns = self._turns.get(session_id, [])
+            if limit is not None:
+                selected = turns[-limit:] if limit > 0 else []
+            else:
+                selected = list(turns)
+
+            cloned_turns = [t.model_copy(deep=True) for t in selected]
+            return ConversationSession(
+                **session.model_dump(),
+                turns=cloned_turns,
+            )
