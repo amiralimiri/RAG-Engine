@@ -126,7 +126,8 @@ async def fork_chat_session(session_id: str, payload: ForkRequest) -> SessionDet
         )
         return SessionDetailResponse.from_domain(new_session)
     except KeyError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        error_detail = exc.args[0] if exc.args else str(exc)
+        raise HTTPException(status_code=404, detail=error_detail) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
