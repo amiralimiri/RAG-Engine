@@ -229,6 +229,8 @@ def test_telemetry_tags_compilation_and_deduplication():
     assert "tag-kw" in tags
     assert "tag-cfg" in tags
     assert tags.count("tag-shared") == 1
+    assert bound.config.get("tags") == tags
+    assert bound.as_runnable_config().get("tags") == tags
 
 
 def test_telemetry_trace_id_sanitization_and_uuid_fallback():

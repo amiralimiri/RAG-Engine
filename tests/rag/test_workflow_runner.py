@@ -1887,7 +1887,7 @@ def test_chat_request_and_workflow_input_accept_variant_and_parameters():
     assert req.parameters == {"temperature": 0.5, "chunk_size": 512}
 
     runner = WorkflowRunner()
-    wf_input = runner._to_workflow_input(req)
+    wf_input = runner.binder._to_workflow_input(req)
     assert isinstance(wf_input, WorkflowInput)
     assert wf_input.question == "How does variant resolution work?"
     assert wf_input.variant_id == "exp_variant"
@@ -1899,7 +1899,7 @@ def test_chat_request_and_workflow_input_accept_variant_and_parameters():
         variant_id="direct_variant",
         parameters={"top_k": 10},
     )
-    bridged = runner._to_workflow_input(wf_input2)
+    bridged = runner.binder._to_workflow_input(wf_input2)
     assert bridged.variant_id == "direct_variant"
     assert bridged.parameters == {"top_k": 10}
 
@@ -2061,10 +2061,11 @@ def test_multi_dimensional_telemetry_tags_propagation():
     assert "latency-critical" in tags
     assert "user-tag" in tags
 
-    # Verify run_config tags contains user-provided tags
+    # Verify run_config tags contains compiled and user-provided tags
     call_args = mock_wf.mock_graph.invoke.call_args
     config = call_args[1].get("config") if "config" in call_args[1] else call_args[0][1]
-    assert config["tags"] == ["user-tag"]
+    assert "user-tag" in config["tags"]
+    assert config["tags"] == tags
 
 
 def test_pluggable_workflow_variant_cached_graph_compilation():

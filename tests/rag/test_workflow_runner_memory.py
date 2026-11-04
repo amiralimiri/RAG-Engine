@@ -660,8 +660,8 @@ async def test_runner_hydrate_memory_uses_single_aget_messages(monkeypatch: pyte
         session_id="test-session-hydrate",
         rewind_turn_index=3,
     )
-    hydrated = await runner.binder._ahydrate_messages(req_rewind)
-    assert hydrated == fake_messages
+    bound_rewind = await runner.binder.abind(req_rewind)
+    assert bound_rewind.hydrated_messages == fake_messages
     memory.aget_messages.assert_awaited_once_with(
         "test-session-hydrate",
         limit=6,
@@ -675,8 +675,8 @@ async def test_runner_hydrate_memory_uses_single_aget_messages(monkeypatch: pyte
         question="Normal question",
         session_id="test-session-hydrate",
     )
-    hydrated_normal = await runner.binder._ahydrate_messages(req_normal)
-    assert hydrated_normal == fake_messages
+    bound_normal = await runner.binder.abind(req_normal)
+    assert bound_normal.hydrated_messages == fake_messages
     memory.aget_messages.assert_awaited_once_with(
         "test-session-hydrate",
         limit=6,
@@ -743,8 +743,8 @@ async def test_runner_hydrate_memory_does_not_mutate_request_messages(monkeypatc
         session_id="test-session-immutable",
         messages=None,
     )
-    hydrated = await runner.binder._ahydrate_messages(req)
-    assert hydrated == fake_messages
+    bound = await runner.binder.abind(req)
+    assert bound.hydrated_messages == fake_messages
     assert req.messages is None  # Must NOT be mutated in-place
 
 

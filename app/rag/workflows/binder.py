@@ -410,7 +410,7 @@ class ExecutionContextBinder:
         history_turns_loaded = turn_count if getattr(request, "session_id", None) else 0
 
         # Telemetry compilation
-        trace_id, handler, _tags, _telemetry_metadata = self._compile_telemetry(
+        trace_id, handler, compiled_tags, _telemetry_metadata = self._compile_telemetry(
             wf_name,
             wf_def,
             profile,
@@ -472,10 +472,24 @@ class ExecutionContextBinder:
         run_metadata.update(cfg_meta)
         run_config["metadata"] = run_metadata
 
-        if kwargs.get("tags"):
-            run_config["tags"] = kwargs["tags"]
-        elif config and "tags" in config:
-            run_config["tags"] = config["tags"]
+        # Store compiled telemetry tags in RunnableConfig, merging order-preserving with any user-supplied tags
+        merged_tags: list[str] = []
+        seen_tags: set[str] = set()
+        for tag in compiled_tags:
+            if tag not in seen_tags:
+                seen_tags.add(tag)
+                merged_tags.append(tag)
+        if isinstance(run_config.get("tags"), list):
+            for tag in run_config["tags"]:
+                if tag not in seen_tags:
+                    seen_tags.add(tag)
+                    merged_tags.append(tag)
+        if kwargs.get("tags") and isinstance(kwargs["tags"], list):
+            for tag in kwargs["tags"]:
+                if tag not in seen_tags:
+                    seen_tags.add(tag)
+                    merged_tags.append(tag)
+        run_config["tags"] = merged_tags
 
         configurable = dict(run_config.get("configurable", {}))
         thread_id = session_id or uuid.uuid4().hex

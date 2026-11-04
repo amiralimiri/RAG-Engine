@@ -4,12 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import inspect
-from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from typing import Any, cast
 
 import structlog
 from fastapi import HTTPException
-from langchain_core.messages import BaseMessage
 from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
@@ -203,23 +202,6 @@ class WorkflowRunner:
     def _resolve_workflow(self, workflow_name: str) -> WorkflowDefinition:
         """Resolve workflow definition from binder, auto-registering defaults if empty."""
         return self._binder.resolve_workflow(workflow_name)
-
-    def _to_workflow_input(
-        self,
-        request: Any,
-        trace_id: str | None = None,
-        variant_id: str | None = None,
-        parameters: dict[str, Any] | None = None,
-        messages: Sequence[BaseMessage | dict[str, Any]] | None = None,
-    ) -> WorkflowInput:
-        """Ensure telemetry trace_id, variant_id, parameters, and messages are bound to domain WorkflowInput."""
-        return self._binder._to_workflow_input(
-            request,
-            trace_id=trace_id,
-            variant_id=variant_id,
-            parameters=parameters,
-            messages=messages,
-        )
 
     async def _adispatch_listeners(
         self,

@@ -58,7 +58,7 @@ def test_workflow_runner_telemetry_llm_execution(runner_and_mock_graph):
     config = kwargs.get("config") if "config" in kwargs else (args[1] if len(args) > 1 else {})
     assert "callbacks" in config
     assert len(config["callbacks"]) == 1
-    assert "tags" not in config or not config["tags"]
+    assert "workflow:fix_single_llm" in config.get("tags", [])
 
 
 def test_ask_llm_passes_callback(runner_and_mock_graph):
@@ -98,7 +98,7 @@ def test_ask_llm_accepts_all_telemetry_kwargs(runner_and_mock_graph):
     _, kwargs = mock_invoke.call_args
     config = kwargs.get("config", {})
     assert config.get("callbacks") == [dummy_cb]
-    assert config.get("tags") == ["unit-test"]
+    assert "unit-test" in config.get("tags", [])
     assert config.get("metadata", {}).get("env") == "test"
     assert config.get("configurable", {}).get("thread_id") == "session-123"
 
@@ -118,5 +118,5 @@ def test_ask_llm_propagates_tags_and_metadata_without_callback(runner_and_mock_g
     mock_invoke.assert_called_once()
     _, kwargs = mock_invoke.call_args
     config = kwargs.get("config", {})
-    assert config.get("tags") == ["standalone-tag"]
+    assert "standalone-tag" in config.get("tags", [])
     assert config.get("metadata", {}).get("source") == "cli"
