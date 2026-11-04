@@ -143,3 +143,11 @@ A concrete adapter satisfying the `PromptStore` seam:
 ### Rendered Prompt
 A strongly-typed domain model (`RenderedPrompt`) produced by `PromptStore.render`, encapsulating the compiled prompt text (`text`), pre-merged execution configuration with trace and observation metadata (`config`), and the underlying provider prompt reference (`raw_prompt`).
 _Avoid_: Formatted prompt string, prompt tuple, template dict
+
+### Execution Context Binder
+The deep execution preparation module (`app/rag/workflows/binder.py`) orchestrating 3-tier parameter precedence resolution, telemetry tag composition, read-path conversational memory hydration, and state normalization behind a compact `bind`/`abind` interface, decoupling execution configuration from LangGraph runtime loops.
+_Avoid_: Runner helper, prep handler, parameter manager
+
+### Bound Execution Context
+An immutable domain value object (`BoundExecutionContext`) produced by `ExecutionContextBinder`, encapsulating the resolved workflow definition, initial graph state, pre-merged runnable configuration with callbacks, and telemetry identifiers ready for immediate graph invocation.
+_Avoid_: Prep tuple, runner context dict, execution config dictionary
