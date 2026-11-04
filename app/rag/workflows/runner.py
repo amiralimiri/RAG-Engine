@@ -677,7 +677,7 @@ class WorkflowRunner:
 
                 # 1. Step transitions
                 if stream_steps and ev_type == "on_chain_start" and node_name in step_labels:
-                    yield StepTransitionEvent(step=node_name)
+                    yield StepTransitionEvent(step=node_name, label=step_labels[node_name])
 
                 # 2. Whitelisted Token Delta Streaming (Filtered: tool calls & empty strings suppressed)
                 elif ev_type == "on_chat_model_stream" and node_name in generation_nodes:

@@ -43,6 +43,7 @@ from app.rag.workflows.listeners import (
 )
 from app.rag.workflows.registry import WorkflowRegistry, get_workflow_registry
 from app.rag.workflows.runner import (
+    DEFAULT_STEP_LABELS,
     ExecutionResult,
     WorkflowRunner,
     _background_tasks,
@@ -624,7 +625,9 @@ def parse_sse_events(raw_chunks: list[Any]) -> list[dict[str, Any]]:
     events = []
     for chunk in raw_chunks:
         if isinstance(chunk, StepTransitionEvent):
-            events.append({"event": "step", "data": {"step": chunk.step, "label": chunk.step, "timestamp": 0.0}})
+            events.append(
+                {"event": "step", "data": {"step": chunk.step, "label": chunk.label, "timestamp": chunk.timestamp}}
+            )
         elif isinstance(chunk, TokenDeltaEvent):
             events.append({"event": "token", "data": {"delta": chunk.delta}})
         elif isinstance(chunk, ExecutionCompletedEvent):
@@ -857,6 +860,8 @@ async def test_stream_emits_whitelisted_steps_filtered_tokens_and_metadata():
     step_events = [e for e in events if e["event"] == "step"]
     assert len(step_events) == 1
     assert step_events[0]["data"]["step"] == "step_1"
+    assert step_events[0]["data"]["label"] == "Analyzing question..."
+    assert step_events[0]["data"]["timestamp"] > 0
 
     # 2. Token events verification
     token_events = [e for e in events if e["event"] == "token"]
@@ -873,6 +878,69 @@ async def test_stream_emits_whitelisted_steps_filtered_tokens_and_metadata():
     assert meta["trace"] == ["step_1", "generate"]
     assert meta["citations"][0]["title"] == "network_guide.pdf"
     assert meta["rewritten_query"] == "rewritten query"
+
+
+@pytest.mark.asyncio
+async def test_stream_resolves_step_labels_from_custom_workflow_definition():
+    """Verify runner.stream resolves custom step labels from workflow info onto StepTransitionEvent."""
+    custom_registry = WorkflowRegistry()
+    mock_wf = MockWorkflow(
+        "custom_labels_wf",
+        step_labels={"custom_node": "Analyzing internal schemas and constraints..."},
+    )
+
+    async def mock_events(*args, **kwargs):
+        yield {"event": "on_chain_start", "metadata": {"langgraph_node": "custom_node"}, "data": {}}
+        yield {
+            "event": "on_chain_end",
+            "metadata": {"langgraph_node": "custom_node"},
+            "data": {"output": {"answer": "Completed custom analysis"}},
+        }
+
+    mock_wf.mock_graph.astream_events = mock_events
+    custom_registry.register(mock_wf)
+
+    runner = WorkflowRunner(registry=custom_registry)
+    request = WorkflowInput(question="Analyze schemas", workflow="custom_labels_wf")
+
+    events = [ev async for ev in runner.stream(request)]
+    step_events = [ev for ev in events if isinstance(ev, StepTransitionEvent)]
+
+    assert len(step_events) == 1
+    assert step_events[0].step == "custom_node"
+    assert step_events[0].label == "Analyzing internal schemas and constraints..."
+    assert step_events[0].timestamp > 0
+
+
+@pytest.mark.asyncio
+async def test_stream_resolves_default_step_labels_when_workflow_omits_them():
+    """Verify runner.stream resolves DEFAULT_STEP_LABELS when workflow definition has no custom labels."""
+    custom_registry = WorkflowRegistry()
+    # MockWorkflow with empty dict falls back to DEFAULT_STEP_LABELS in runner
+    mock_wf = MockWorkflow("default_labels_wf")
+    mock_wf.info.step_labels = {}  # explicitly empty
+
+    async def mock_events(*args, **kwargs):
+        yield {"event": "on_chain_start", "metadata": {"langgraph_node": "route_question"}, "data": {}}
+        yield {
+            "event": "on_chain_end",
+            "metadata": {"langgraph_node": "route_question"},
+            "data": {"output": {"answer": "Route completed"}},
+        }
+
+    mock_wf.mock_graph.astream_events = mock_events
+    custom_registry.register(mock_wf)
+
+    runner = WorkflowRunner(registry=custom_registry)
+    request = WorkflowInput(question="Where should this go?", workflow="default_labels_wf")
+
+    events = [ev async for ev in runner.stream(request)]
+    step_events = [ev for ev in events if isinstance(ev, StepTransitionEvent)]
+
+    assert len(step_events) == 1
+    assert step_events[0].step == "route_question"
+    assert step_events[0].label == DEFAULT_STEP_LABELS["route_question"]
+    assert step_events[0].timestamp > 0
 
 
 @pytest.mark.asyncio
