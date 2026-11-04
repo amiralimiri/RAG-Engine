@@ -114,6 +114,10 @@ A concrete adapter satisfying the `ConversationMemoryAdapter` storage seam:
 - `InMemoryConversationStore`: Fast, isolated in-memory store for deterministic unit testing (`pytest`) and ephemeral executions.
 - `NoOpMemoryStore`: Stateless pass-through store when conversation memory is explicitly disabled.
 
+### Conversation Session
+A strongly-typed domain aggregate model (`ConversationSession`) subtyping `SessionInfo`, encapsulating both the session metadata (`session_id`, `title`, `parent_session_id`, `forked_from_turn`, `created_at`, `updated_at`, `turn_count`) and its chronological sequence of `turns: list[ConversationTurn]`. Eliminates caller-side assembly of disjointed session entities.
+_Avoid_: Session tuple, raw session dictionary, fragmented session payload
+
 ### Conversation Turn
 A strongly-typed domain model (`ConversationTurn`) representing a single completed conversational exchange within a session, encapsulating `session_id`, 0-based `turn_index`, `user_query`, `assistant_answer`, `attachments`, `citations`, `source_used`, `trace_id`, and `created_at`. Strictly excludes intermediate tool scratchpads.
 
@@ -125,7 +129,8 @@ The deep entrypoint (`aappend_turn`) on `ConversationMemoryAdapter` that atomica
 _Avoid_: Manual turn counting, separate truncate-then-save calls, caller-managed indexing
 
 ### Conversation Branching (Forking)
-The capability (`afork_session`) to clone conversation turns $[0 \dots k]$ into a new child session (`new_session_id`) with lineage metadata (`parent_session_id`, `forked_from_turn`), enabling alternative exploration branches without modifying the original session.
+The capability (`afork_session`) to clone conversation turns $[0 \dots k]$ into a new child session (`new_session_id`) with lineage metadata (`parent_session_id`, `forked_from_turn`) returning the complete `ConversationSession` aggregate atomically, enabling alternative exploration branches without modifying the original session or issuing subsequent read queries.
+_Avoid_: String session ID return, manual fork hydration, multi-step branching query
 
 ### Query Condensation (Contextualization)
 A fast pre-retrieval graph step (`condense_query`) in multi-turn workflows that resolves pronouns and ambiguous references against prior conversational turns (`messages[:-1]`) into a standalone retrieval query (`current_query`) before vector store or web search dispatch.
