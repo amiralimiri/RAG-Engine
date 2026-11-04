@@ -355,12 +355,13 @@ async def test_end_to_end_2_turn_context_and_memory_hydration(fake_retriever):
 
     # --- Turn 2 ---
     req2 = WorkflowInput(question="How do I install it on Linux?", session_id=session_id, workflow="test_sc_rag")
-    resp2 = await runner.aexecute(req2)
+    bound2 = await runner.binder.abind(req2)
+    resp2 = await runner.aexecute(req2, bound=bound2)
 
-    # Verify request.messages was assigned hydrated turns
-    assert req2.messages is not None
-    assert len(req2.messages) == 2  # 1 turn = HumanMessage + AIMessage
-    first_msg = req2.messages[0]
+    # Verify bound.hydrated_messages contains hydrated turns
+    assert bound2.hydrated_messages is not None
+    assert len(bound2.hydrated_messages) == 2  # 1 turn = HumanMessage + AIMessage
+    first_msg = bound2.hydrated_messages[0]
     assert isinstance(first_msg, BaseMessage)
     assert first_msg.content == "What VPN do we use?"
 

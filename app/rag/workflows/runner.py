@@ -14,11 +14,8 @@ from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
 from app.core.concurrency import run_async_safely
-from app.core.config import get_settings
 from app.core.telemetry import (
-    extract_trace_id,
     flush_telemetry,
-    get_langfuse_callback,
 )
 from app.rag.evaluation import Evaluator, get_evaluator
 from app.rag.memory import (
@@ -128,7 +125,7 @@ class WorkflowRunner:
             self._binder = ExecutionContextBinder(
                 registry=self.registry,
                 memory=memory,
-                callback_factory=callback_factory or self._canonical_callback_factory,
+                callback_factory=callback_factory,
                 trace_extractor=trace_extractor,
                 settings=settings,
             )
@@ -136,7 +133,6 @@ class WorkflowRunner:
         self._evaluator = evaluator
         self._telemetry_flusher = telemetry_flusher
         self._eval_task_fn = eval_task_fn
-        self._settings: Any = None
         self._background_tasks: set[asyncio.Task[Any]] = set()
 
         if listeners is not None:
@@ -155,10 +151,6 @@ class WorkflowRunner:
                     )
                 )
             self._listeners = defaults
-
-    @staticmethod
-    def _canonical_callback_factory(*args: Any, **kwargs: Any) -> Any:
-        return get_langfuse_callback(*args, **kwargs)
 
     @property
     def binder(self) -> ExecutionContextBinder:
@@ -192,10 +184,7 @@ class WorkflowRunner:
     @property
     def callback_factory(self) -> Callable[..., Any]:
         """Injected Langfuse callback factory or canonical default."""
-        cb = self._binder.callback_factory
-        if cb is self._canonical_callback_factory:
-            return get_langfuse_callback
-        return cb
+        return self._binder.callback_factory
 
     @property
     def trace_extractor(self) -> Callable[[Any], str | None]:
@@ -956,7 +945,6 @@ __all__ = [
     "ExecutionResult",
     "WorkflowRunner",
     "_background_tasks",
-    "get_langfuse_callback",
     "get_workflow_runner",
     "is_tool_call_chunk",
     "reset_workflow_runner",
