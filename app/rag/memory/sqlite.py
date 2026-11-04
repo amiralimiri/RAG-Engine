@@ -97,12 +97,8 @@ def _row_to_session_info(row: sqlite3.Row) -> SessionInfo:
 
 def _row_to_turn(row: sqlite3.Row) -> ConversationTurn:
     """Map a database row to a canonical ConversationTurn domain model."""
-    attachments: list[dict[str, Any]] = (
-        json.loads(row["attachments_json"]) if row["attachments_json"] else []
-    )
-    citations: list[dict[str, Any]] = (
-        json.loads(row["citations_json"]) if row["citations_json"] else []
-    )
+    attachments: list[dict[str, Any]] = json.loads(row["attachments_json"]) if row["attachments_json"] else []
+    citations: list[dict[str, Any]] = json.loads(row["citations_json"]) if row["citations_json"] else []
     return ConversationTurn(
         session_id=row["session_id"],
         turn_index=row["turn_index"],
@@ -399,8 +395,10 @@ class SQLiteConversationStore(ConversationMemoryAdapter):
                         if row is None:
                             raise KeyError(f"Session not found: {source_session_id}")
 
-                        source_title = row["title"] if row["title"] else source_session_id
-                        title = f"{source_title} (Fork)"
+                        if row["title"]:
+                            title = f"{row['title']} (Fork)"
+                        else:
+                            title = f"Fork of {source_session_id}"
 
                         conn.execute(
                             """

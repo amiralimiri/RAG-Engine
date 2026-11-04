@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import sqlite3
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -714,8 +715,6 @@ async def test_sqlite_aget_session_single_threadpool_execution(
     call_count = 0
     orig_connection = sqlite_store._connection
 
-    from contextlib import contextmanager
-
     @contextmanager
     def counted_connection():
         nonlocal call_count
@@ -731,3 +730,21 @@ async def test_sqlite_aget_session_single_threadpool_execution(
     assert len(session.turns) == 1
     # Exactly one connection block was opened to fetch both metadata and turns
     assert call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_sqlite_afork_session_empty_title_fallback(
+    sqlite_store: SQLiteConversationStore,
+) -> None:
+    """Validate fallback fork title when parent session title is empty."""
+    source_id = "session-empty-title"
+    now_iso = datetime.now(UTC).isoformat()
+    with sqlite_store._connection() as conn:
+        with conn:
+            conn.execute(
+                "INSERT INTO conversation_sessions (session_id, title, created_at, updated_at) VALUES (?, '', ?, ?);",
+                (source_id, now_iso, now_iso),
+            )
+
+    forked = await sqlite_store.afork_session(source_id, upto_turn_index=-1)
+    assert forked.title == f"Fork of {source_id}"
