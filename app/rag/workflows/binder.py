@@ -1,6 +1,5 @@
 """Execution context binder seam preparing execution parameters, telemetry, and memory."""
 
-import sys
 import uuid
 from collections.abc import Callable, Sequence
 from typing import Any
@@ -10,12 +9,9 @@ from fastapi import HTTPException
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from pydantic import BaseModel
 
+from app.core import telemetry
 from app.core.concurrency import run_async_safely
 from app.core.config import get_settings
-from app.core.telemetry import (
-    extract_trace_id,
-    get_langfuse_callback,
-)
 from app.rag.memory import (
     ConversationMemoryAdapter,
     NoOpMemoryStore,
@@ -68,22 +64,12 @@ class ExecutionContextBinder:
     @property
     def callback_factory(self) -> Callable[..., Any]:
         """Injected Langfuse callback factory or canonical default."""
-        if self._callback_factory is not None:
-            return self._callback_factory
-        runner_mod = sys.modules.get("app.rag.workflows.runner")
-        if runner_mod is not None and hasattr(runner_mod, "get_langfuse_callback"):
-            return getattr(runner_mod, "get_langfuse_callback")
-        return get_langfuse_callback
+        return self._callback_factory or telemetry.get_langfuse_callback
 
     @property
     def trace_extractor(self) -> Callable[[Any], str | None]:
         """Injected trace extractor or canonical default."""
-        if self._trace_extractor is not None:
-            return self._trace_extractor
-        runner_mod = sys.modules.get("app.rag.workflows.runner")
-        if runner_mod is not None and hasattr(runner_mod, "extract_trace_id"):
-            return getattr(runner_mod, "extract_trace_id")
-        return extract_trace_id
+        return self._trace_extractor or telemetry.extract_trace_id
 
     @property
     def settings(self) -> Any:

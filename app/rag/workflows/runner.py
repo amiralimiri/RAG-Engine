@@ -14,11 +14,7 @@ from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
 from app.core.concurrency import run_async_safely
-from app.core.telemetry import (
-    extract_trace_id,
-    flush_telemetry,
-    get_langfuse_callback,
-)
+from app.core.telemetry import flush_telemetry
 from app.rag.evaluation import Evaluator, get_evaluator
 from app.rag.memory import (
     ConversationMemoryAdapter,
@@ -188,25 +184,13 @@ class WorkflowRunner:
         """Injected Langfuse callback factory or canonical default."""
         return self._binder.callback_factory
 
-    @callback_factory.setter
-    def callback_factory(self, val: Callable[..., Any] | None) -> None:
-        self._binder._callback_factory = val
-
     @property
     def trace_extractor(self) -> Callable[[Any], str | None]:
         return self._binder.trace_extractor
 
-    @trace_extractor.setter
-    def trace_extractor(self, val: Callable[[Any], str | None] | None) -> None:
-        self._binder._trace_extractor = val
-
     @property
     def telemetry_flusher(self) -> Callable[[], None]:
         return self._telemetry_flusher or flush_telemetry
-
-    @telemetry_flusher.setter
-    def telemetry_flusher(self, val: Callable[[], None] | None) -> None:
-        self._telemetry_flusher = val
 
     def is_tool_call_chunk(self, chunk: Any) -> bool:
         """Filter out token deltas when chunk contains tool call chunks or structured calls."""
@@ -957,9 +941,6 @@ __all__ = [
     "ExecutionResult",
     "WorkflowRunner",
     "_background_tasks",
-    "extract_trace_id",
-    "flush_telemetry",
-    "get_langfuse_callback",
     "get_workflow_runner",
     "is_tool_call_chunk",
     "reset_workflow_runner",

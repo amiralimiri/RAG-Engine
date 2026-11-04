@@ -27,11 +27,11 @@ def test_chat_endpoint_returns_trace_id(client, monkeypatch, register_mock_workf
     mock_handler.last_trace_id = "trace-test-123"
 
     monkeypatch.setattr(
-        "app.rag.workflows.runner.get_langfuse_callback",
+        "app.core.telemetry.get_langfuse_callback",
         lambda **kwargs: mock_handler,
     )
     monkeypatch.setattr(
-        "app.rag.workflows.runner.extract_trace_id",
+        "app.core.telemetry.extract_trace_id",
         lambda handler: getattr(handler, "last_trace_id", None),
     )
 
@@ -62,7 +62,7 @@ def test_chat_endpoint_passes_session_and_user_id_to_ask(client, monkeypatch, cl
     mock_handler = MagicMock()
 
     monkeypatch.setattr(
-        "app.rag.workflows.runner.get_langfuse_callback",
+        "app.core.telemetry.get_langfuse_callback",
         lambda **kwargs: mock_handler,
     )
 

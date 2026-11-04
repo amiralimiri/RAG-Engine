@@ -255,9 +255,9 @@ class TestStreamingContractParity:
         mock_handler.last_trace_id = test_trace_id
         mock_handler.flush = MagicMock()
 
-        monkeypatch.setattr("app.rag.workflows.runner.get_langfuse_callback", lambda **kwargs: mock_handler)
-        monkeypatch.setattr("app.rag.workflows.runner.extract_trace_id", lambda handler: test_trace_id)
-        monkeypatch.setattr("app.rag.workflows.runner.flush_telemetry", lambda: None)
+        monkeypatch.setattr("app.core.telemetry.get_langfuse_callback", lambda **kwargs: mock_handler)
+        monkeypatch.setattr("app.core.telemetry.extract_trace_id", lambda handler: test_trace_id)
+        monkeypatch.setattr("app.core.telemetry.flush_telemetry", lambda: None)
 
         test_answer = "To connect to the corporate VPN, authenticate via Okta MFA and launch GlobalProtect."
         test_source = "vectorstore"
@@ -403,9 +403,9 @@ class TestStreamingContractParity:
         """Verify stream_steps=False suppresses step events while preserving identical tokens and metadata."""
         mock_handler = MagicMock()
         mock_handler.last_trace_id = "trace-steps-suppressed"
-        monkeypatch.setattr("app.rag.workflows.runner.get_langfuse_callback", lambda **kwargs: mock_handler)
-        monkeypatch.setattr("app.rag.workflows.runner.extract_trace_id", lambda handler: "trace-steps-suppressed")
-        monkeypatch.setattr("app.rag.workflows.runner.flush_telemetry", lambda: None)
+        monkeypatch.setattr("app.core.telemetry.get_langfuse_callback", lambda **kwargs: mock_handler)
+        monkeypatch.setattr("app.core.telemetry.extract_trace_id", lambda handler: "trace-steps-suppressed")
+        monkeypatch.setattr("app.core.telemetry.flush_telemetry", lambda: None)
 
         async def mock_astream_events(initial_state, version="v2", config=None):
             yield {"event": "on_chain_start", "metadata": {"langgraph_node": "route_question"}, "data": {}}

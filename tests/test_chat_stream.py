@@ -188,11 +188,11 @@ def client():
 def mock_telemetry_defaults(monkeypatch):
     """Prevent real network telemetry calls during tests."""
     mock_handler = get_mock_handler()
-    monkeypatch.setattr("app.rag.workflows.runner.get_langfuse_callback", lambda **kwargs: mock_handler)
+    monkeypatch.setattr("app.core.telemetry.get_langfuse_callback", lambda **kwargs: mock_handler)
     monkeypatch.setattr(
-        "app.rag.workflows.runner.extract_trace_id", lambda handler: getattr(handler, "last_trace_id", "trace-default")
+        "app.core.telemetry.extract_trace_id", lambda handler: getattr(handler, "last_trace_id", "trace-default")
     )
-    monkeypatch.setattr("app.rag.workflows.runner.flush_telemetry", lambda: None)
+    monkeypatch.setattr("app.core.telemetry.flush_telemetry", lambda: None)
     get_workflow_runner(eval_task_fn=AsyncMock())
 
 
@@ -347,8 +347,8 @@ class TestWireEventSequence:
     async def test_event_sequence_and_payloads(self, monkeypatch, register_mock_workflow):
         """Verify step, token, and metadata events are formatted as valid JSON data blocks."""
         mock_handler = get_mock_handler("trace-seq-001")
-        monkeypatch.setattr("app.rag.workflows.runner.get_langfuse_callback", lambda **kwargs: mock_handler)
-        monkeypatch.setattr("app.rag.workflows.runner.extract_trace_id", lambda handler: "trace-seq-001")
+        monkeypatch.setattr("app.core.telemetry.get_langfuse_callback", lambda **kwargs: mock_handler)
+        monkeypatch.setattr("app.core.telemetry.extract_trace_id", lambda handler: "trace-seq-001")
 
         mock_graph = MagicMock()
         mock_graph.astream_events = self._mock_astream_events
@@ -414,8 +414,8 @@ class TestWireEventSequence:
     async def test_streaming_triggers_online_evaluation_task(self, monkeypatch, register_mock_workflow):
         """Verify streaming chat completion dispatches run_online_evaluation_task with trace_id and contexts."""
         mock_handler = get_mock_handler("trace-eval-stream-1")
-        monkeypatch.setattr("app.rag.workflows.runner.get_langfuse_callback", lambda **kwargs: mock_handler)
-        monkeypatch.setattr("app.rag.workflows.runner.extract_trace_id", lambda handler: "trace-eval-stream-1")
+        monkeypatch.setattr("app.core.telemetry.get_langfuse_callback", lambda **kwargs: mock_handler)
+        monkeypatch.setattr("app.core.telemetry.extract_trace_id", lambda handler: "trace-eval-stream-1")
 
         eval_task_called = asyncio.Event()
         captured_kwargs = {}
@@ -482,8 +482,8 @@ class TestWireEventSequence:
     async def test_non_streaming_fallback_node_emits_static_token(self, monkeypatch, register_mock_workflow):
         """When reaching insufficient fallback node with static answer, an event: token is synthesized."""
         mock_handler = get_mock_handler("trace-insufficient-001")
-        monkeypatch.setattr("app.rag.workflows.runner.get_langfuse_callback", lambda **kwargs: mock_handler)
-        monkeypatch.setattr("app.rag.workflows.runner.extract_trace_id", lambda handler: "trace-insufficient-001")
+        monkeypatch.setattr("app.core.telemetry.get_langfuse_callback", lambda **kwargs: mock_handler)
+        monkeypatch.setattr("app.core.telemetry.extract_trace_id", lambda handler: "trace-insufficient-001")
 
         async def mock_insufficient_stream(*args, **kwargs):
             yield {"event": "on_chain_start", "metadata": {"langgraph_node": "route_question"}, "data": {}}
@@ -526,8 +526,8 @@ class TestWireEventSequence:
     async def test_token_isolation_from_routers_and_graders(self, monkeypatch, register_mock_workflow):
         """Asserts token isolation: router/grader JSON output is never leaked as token deltas."""
         mock_handler = get_mock_handler("trace-iso-002")
-        monkeypatch.setattr("app.rag.workflows.runner.get_langfuse_callback", lambda **kwargs: mock_handler)
-        monkeypatch.setattr("app.rag.workflows.runner.extract_trace_id", lambda handler: "trace-iso-002")
+        monkeypatch.setattr("app.core.telemetry.get_langfuse_callback", lambda **kwargs: mock_handler)
+        monkeypatch.setattr("app.core.telemetry.extract_trace_id", lambda handler: "trace-iso-002")
 
         async def mock_events(*args, **kwargs):
             # Router node emits structured json chunk -> must be ignored
@@ -599,8 +599,8 @@ class TestStreamStepsFeatureFlag:
     async def test_no_step_events_when_stream_steps_false(self, monkeypatch, register_mock_workflow):
         """When stream_steps=False, no event: step frames are emitted before tokens."""
         mock_handler = get_mock_handler("trace-nostep-003")
-        monkeypatch.setattr("app.rag.workflows.runner.get_langfuse_callback", lambda **kwargs: mock_handler)
-        monkeypatch.setattr("app.rag.workflows.runner.extract_trace_id", lambda handler: "trace-nostep-003")
+        monkeypatch.setattr("app.core.telemetry.get_langfuse_callback", lambda **kwargs: mock_handler)
+        monkeypatch.setattr("app.core.telemetry.extract_trace_id", lambda handler: "trace-nostep-003")
 
         mock_graph = MagicMock()
         mock_graph.astream_events = self._mock_astream_events
@@ -634,8 +634,8 @@ class TestClientDisconnection:
     async def test_disconnect_triggers_telemetry_flush(self, monkeypatch, register_mock_workflow):
         """Simulating client disconnect mid-stream invokes callback flush during teardown."""
         mock_handler = get_mock_handler("trace-disc-004")
-        monkeypatch.setattr("app.rag.workflows.runner.get_langfuse_callback", lambda **kwargs: mock_handler)
-        monkeypatch.setattr("app.rag.workflows.runner.extract_trace_id", lambda handler: "trace-disc-004")
+        monkeypatch.setattr("app.core.telemetry.get_langfuse_callback", lambda **kwargs: mock_handler)
+        monkeypatch.setattr("app.core.telemetry.extract_trace_id", lambda handler: "trace-disc-004")
 
         async def mock_astream_events_long(*args, **kwargs):
             yield {
@@ -682,8 +682,8 @@ class TestMidStreamError:
 
     async def test_mid_stream_error_emits_error_event(self, monkeypatch, register_mock_workflow):
         mock_handler = get_mock_handler("trace-err-005")
-        monkeypatch.setattr("app.rag.workflows.runner.get_langfuse_callback", lambda **kwargs: mock_handler)
-        monkeypatch.setattr("app.rag.workflows.runner.extract_trace_id", lambda handler: "trace-err-005")
+        monkeypatch.setattr("app.core.telemetry.get_langfuse_callback", lambda **kwargs: mock_handler)
+        monkeypatch.setattr("app.core.telemetry.extract_trace_id", lambda handler: "trace-err-005")
 
         async def mock_events_with_error(*args, **kwargs):
             yield {"event": "on_chain_start", "metadata": {"langgraph_node": "route_question"}, "data": {}}
@@ -721,8 +721,8 @@ class TestBackwardCompatibility:
     def test_sync_chat_endpoint_works(self, client, monkeypatch, register_mock_workflow):
         """Standard POST /api/chat returns HTTP 200 with complete response dict."""
         mock_handler = get_mock_handler("trace-bc-006")
-        monkeypatch.setattr("app.rag.workflows.runner.get_langfuse_callback", lambda **kwargs: mock_handler)
-        monkeypatch.setattr("app.rag.workflows.runner.extract_trace_id", lambda handler: "trace-bc-006")
+        monkeypatch.setattr("app.core.telemetry.get_langfuse_callback", lambda **kwargs: mock_handler)
+        monkeypatch.setattr("app.core.telemetry.extract_trace_id", lambda handler: "trace-bc-006")
 
         register_mock_workflow(
             "fix_single_llm",
@@ -758,8 +758,8 @@ class TestMultiWorkflowStreamingE2E:
         react_wf = registry.get("react_agent")
 
         mock_handler = get_mock_handler("trace-switch-001")
-        monkeypatch.setattr("app.rag.workflows.runner.get_langfuse_callback", lambda **kwargs: mock_handler)
-        monkeypatch.setattr("app.rag.workflows.runner.extract_trace_id", lambda handler: "trace-switch-001")
+        monkeypatch.setattr("app.core.telemetry.get_langfuse_callback", lambda **kwargs: mock_handler)
+        monkeypatch.setattr("app.core.telemetry.extract_trace_id", lambda handler: "trace-switch-001")
 
         # 1. Stream fix_single_jev
         async def mock_jev_events(*args, **kwargs):
@@ -873,10 +873,8 @@ class TestMultiWorkflowStreamingE2E:
         workflow = registry.get("react_agent")
 
         mock_handler = get_mock_handler(f"trace-react-stream-{node_name}")
-        monkeypatch.setattr("app.rag.workflows.runner.get_langfuse_callback", lambda **kwargs: mock_handler)
-        monkeypatch.setattr(
-            "app.rag.workflows.runner.extract_trace_id", lambda handler: f"trace-react-stream-{node_name}"
-        )
+        monkeypatch.setattr("app.core.telemetry.get_langfuse_callback", lambda **kwargs: mock_handler)
+        monkeypatch.setattr("app.core.telemetry.extract_trace_id", lambda handler: f"trace-react-stream-{node_name}")
 
         async def mock_events(*args, **kwargs):
             # Step 1: LLM node starts
@@ -1008,8 +1006,8 @@ class TestMultiWorkflowStreamingE2E:
         workflow = registry.get("react_agent")
 
         mock_handler = get_mock_handler("trace-stream-multiturn")
-        monkeypatch.setattr("app.rag.workflows.runner.get_langfuse_callback", lambda **kwargs: mock_handler)
-        monkeypatch.setattr("app.rag.workflows.runner.extract_trace_id", lambda handler: "trace-stream-multiturn")
+        monkeypatch.setattr("app.core.telemetry.get_langfuse_callback", lambda **kwargs: mock_handler)
+        monkeypatch.setattr("app.core.telemetry.extract_trace_id", lambda handler: "trace-stream-multiturn")
 
         captured_configs = []
 
@@ -1334,8 +1332,8 @@ class TestRunnerStreamWithSseStreamAdapter:
     async def test_direct_runner_stream_piped_through_sse_adapter(self, monkeypatch, register_mock_workflow):
         """Piping runner.stream(request) through SseStreamAdapter.format() yields discrete SSE wire strings."""
         mock_handler = get_mock_handler("trace-direct-sse-001")
-        monkeypatch.setattr("app.rag.workflows.runner.get_langfuse_callback", lambda **kwargs: mock_handler)
-        monkeypatch.setattr("app.rag.workflows.runner.extract_trace_id", lambda handler: "trace-direct-sse-001")
+        monkeypatch.setattr("app.core.telemetry.get_langfuse_callback", lambda **kwargs: mock_handler)
+        monkeypatch.setattr("app.core.telemetry.extract_trace_id", lambda handler: "trace-direct-sse-001")
 
         async def dummy_events(*args, **kwargs):
             yield {"event": "on_chain_start", "metadata": {"langgraph_node": "route_question"}, "data": {}}
@@ -1388,8 +1386,8 @@ class TestRunnerStreamWithSseStreamAdapter:
     async def test_direct_runner_stream_error_piped_through_sse_adapter(self, monkeypatch, register_mock_workflow):
         """Piping runner.stream(request) when graph raises unhandled error formats event: error SSE frame."""
         mock_handler = get_mock_handler("trace-direct-err-002")
-        monkeypatch.setattr("app.rag.workflows.runner.get_langfuse_callback", lambda **kwargs: mock_handler)
-        monkeypatch.setattr("app.rag.workflows.runner.extract_trace_id", lambda handler: "trace-direct-err-002")
+        monkeypatch.setattr("app.core.telemetry.get_langfuse_callback", lambda **kwargs: mock_handler)
+        monkeypatch.setattr("app.core.telemetry.extract_trace_id", lambda handler: "trace-direct-err-002")
 
         async def failing_events(*args, **kwargs):
             yield {"event": "on_chain_start", "metadata": {"langgraph_node": "route_question"}, "data": {}}
