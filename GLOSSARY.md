@@ -93,11 +93,11 @@ The deep execution and streaming runtime module (`app/rag/workflows/runner.py`) 
 _Avoid_: Event generator, stream helper, route executor
 
 ### Workflow Execution Event
-A strongly-typed domain model (`WorkflowExecutionEvent`) emitted during workflow streaming, encapsulating discrete execution milestones (`StepTransitionEvent`, `TokenDeltaEvent`, `ExecutionCompletedEvent`) independent of transport wire serialization or client communication protocols.
+A strongly-typed, self-contained domain model (`WorkflowExecutionEvent`) emitted during workflow streaming, encapsulating discrete execution milestones (`StepTransitionEvent`, `TokenDeltaEvent`, `ExecutionCompletedEvent`, `ExecutionFailedEvent`) independent of transport wire serialization or client communication protocols. `StepTransitionEvent` carries its own canonical node identifier (`step`), human-readable progression label (`label`), and chronological milestone (`timestamp`), eliminating presentation-layer event hydration.
 _Avoid_: SSE chunk, stream string, raw delta dictionary
 
 ### Stream Transport Adapter
-A presentation adapter (`SseStreamAdapter`) translating domain execution event streams into transport-specific wire protocols (such as Server-Sent Events or WebSockets) for network delivery.
+A presentation adapter (`SseStreamAdapter`) translating self-contained domain execution event streams into transport-specific wire protocols (such as Server-Sent Events or WebSockets) for network delivery without requiring external lookup dictionaries or workflow introspection.
 _Avoid_: Stream serializer, SSE helper, socket bridge
 
 ### Execution Lifecycle Listener
