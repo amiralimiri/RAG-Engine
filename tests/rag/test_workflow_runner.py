@@ -620,8 +620,8 @@ def test_online_evaluation_no_event_loop_sync_safe():
     assert response.answer == "Mock Answer"
 
 
-def parse_sse_events(raw_chunks: list[Any]) -> list[dict[str, Any]]:
-    """Parse raw SSE chunks or domain events into list of dicts with event and data."""
+def normalize_execution_events(raw_chunks: list[Any]) -> list[dict[str, Any]]:
+    """Normalize domain execution events into a list of dicts with event and data for assertion."""
     events = []
     for chunk in raw_chunks:
         if isinstance(chunk, StepTransitionEvent):
@@ -854,7 +854,7 @@ async def test_stream_emits_whitelisted_steps_filtered_tokens_and_metadata():
     )
 
     frames = [frame async for frame in runner.stream(request)]
-    events = parse_sse_events(frames)
+    events = normalize_execution_events(frames)
 
     # 1. Step event verification
     step_events = [e for e in events if e["event"] == "step"]
@@ -973,7 +973,7 @@ async def test_stream_honors_stream_steps_false():
     )
 
     frames = [frame async for frame in runner.stream(request)]
-    events = parse_sse_events(frames)
+    events = normalize_execution_events(frames)
 
     # Verify zero step events
     step_events = [e for e in events if e["event"] == "step"]
@@ -1012,7 +1012,7 @@ async def test_stream_fallback_static_answer_synthesis():
     request = WorkflowInput(question="Zero tokens?", workflow="fallback_wf")
 
     frames = [frame async for frame in runner.stream(request)]
-    events = parse_sse_events(frames)
+    events = normalize_execution_events(frames)
 
     token_events = [e for e in events if e["event"] == "token"]
     assert len(token_events) == 1
@@ -1042,7 +1042,7 @@ async def test_stream_unhandled_exception_calls_handle_error_and_yields_stream_e
     request = WorkflowInput(question="Will streaming fail?", workflow="err_stream_wf")
 
     frames = [frame async for frame in runner.stream(request)]
-    events = parse_sse_events(frames)
+    events = normalize_execution_events(frames)
 
     # Verify handle_error was invoked
     assert handle_error_spy.called
@@ -1165,7 +1165,7 @@ async def test_stream_background_evaluation_task_safeguarded():
     )
 
     frames = [frame async for frame in runner.stream(request)]
-    events = parse_sse_events(frames)
+    events = normalize_execution_events(frames)
     assert len(events) >= 1
 
     # Verify task is currently safeguarded in runner._background_tasks and module _background_tasks
@@ -1425,7 +1425,7 @@ async def test_online_evaluation_task_exception_shielded_in_stream():
 
     with patch("app.rag.workflows.listeners.logger.warning") as mock_log_warn:
         frames = [frame async for frame in runner.stream(request)]
-        events = parse_sse_events(frames)
+        events = normalize_execution_events(frames)
         assert len(events) >= 1
 
         # Verify no error SSE frame was emitted due to eval failure

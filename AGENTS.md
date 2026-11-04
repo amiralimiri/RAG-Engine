@@ -40,3 +40,12 @@ ConversationMemoryAdapter protocol seam, SQLite persistent storage, atomic rewin
 
 PromptStore protocol seam, RenderedPrompt observation binding, defensive config cloning, and offline test doubles. See `docs/agents/prompt-store.md`.
 
+---
+
+## Process & engineering guardrails
+
+### Phase gating invariant (design vs. implementation)
+
+Modifying application code (`app/**`) or test suites (`tests/**`) is strictly forbidden during design, brainstorming, ADR drafting, or grilling sessions (e.g. `/grill-with-docs` or `/grilling`). During design phases, agent actions must be confined strictly to documentation and architectural artifacts (`docs/adr/`, `docs/specs/`, `GLOSSARY.md`). Production implementation begins only after specifications, ADR decisions, and work package ticket graphs are finalized and explicitly approved for execution.
+
+
