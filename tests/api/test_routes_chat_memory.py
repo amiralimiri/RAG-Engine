@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from datetime import UTC, datetime
+from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -255,6 +256,85 @@ class TestChatMemoryRoutes:
         assert detail.forked_from_turn == -1
         assert detail.turn_count == 0
         assert detail.turns == []
+
+    @pytest.mark.asyncio
+    async def test_get_session_single_call_execution(
+        self,
+        client: TestClient,
+        memory_store: InMemoryConversationStore,
+    ):
+        """GET /api/chat/{session_id} invokes memory.aget_session once and never invokes aget_turns."""
+        session_id = "sess-single-call-get"
+        await memory_store.asave_turn(
+            ConversationTurn(
+                session_id=session_id,
+                turn_index=0,
+                user_query="Query single call",
+                assistant_answer="Answer single call",
+                created_at=datetime.now(UTC),
+            )
+        )
+        with patch.object(memory_store, "aget_session", wraps=memory_store.aget_session) as spy_get_session, \
+             patch.object(memory_store, "aget_turns", wraps=memory_store.aget_turns) as spy_get_turns:
+            resp = client.get(f"/api/chat/{session_id}")
+            assert resp.status_code == 200
+            assert spy_get_session.call_count == 1
+            assert spy_get_turns.call_count == 0
+
+            data = resp.json()
+            validated = SessionDetailResponse(**data)
+            assert validated.session_id == session_id
+            assert len(validated.turns) == 1
+            assert validated.turns[0].user_query == "Query single call"
+
+    @pytest.mark.asyncio
+    async def test_fork_session_single_call_execution(
+        self,
+        client: TestClient,
+        memory_store: InMemoryConversationStore,
+    ):
+        """POST /api/chat/{session_id}/fork invokes memory.afork_session once and does not follow up with aget_session or aget_turns."""
+        source_id = "sess-single-call-fork-parent"
+        await memory_store.asave_turn(
+            ConversationTurn(
+                session_id=source_id,
+                turn_index=0,
+                user_query="Parent single call",
+                assistant_answer="Child single call",
+                created_at=datetime.now(UTC),
+            )
+        )
+        with patch.object(memory_store, "afork_session", wraps=memory_store.afork_session) as spy_fork, \
+             patch.object(memory_store, "aget_session", wraps=memory_store.aget_session) as spy_get_session, \
+             patch.object(memory_store, "aget_turns", wraps=memory_store.aget_turns) as spy_get_turns:
+            resp = client.post(
+                f"/api/chat/{source_id}/fork",
+                json={"upto_turn_index": 0, "new_session_id": "sess-single-call-fork-child"},
+            )
+            assert resp.status_code == 200
+            assert spy_fork.call_count == 1
+            assert spy_get_session.call_count == 0
+            assert spy_get_turns.call_count == 0
+
+            data = resp.json()
+            validated = SessionDetailResponse(**data)
+            assert validated.session_id == "sess-single-call-fork-child"
+            assert validated.parent_session_id == source_id
+            assert len(validated.turns) == 1
+
+    def test_fork_session_value_error_raises_400(
+        self,
+        client: TestClient,
+        memory_store: InMemoryConversationStore,
+    ):
+        """POST /api/chat/{session_id}/fork returns 400 when memory.afork_session raises ValueError."""
+        with patch.object(memory_store, "afork_session", side_effect=ValueError("Invalid fork boundary turn index")):
+            resp = client.post(
+                "/api/chat/some-session/fork",
+                json={"upto_turn_index": 0},
+            )
+            assert resp.status_code == 400
+            assert "Invalid fork boundary turn index" in resp.json()["detail"]
 
     @pytest.mark.asyncio
     async def test_atomic_rewind_via_chat_post(

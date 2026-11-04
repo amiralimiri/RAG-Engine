@@ -154,7 +154,7 @@ def test_session_summary_and_detail_response():
     from datetime import UTC, datetime
 
     from app.api.schemas import SessionDetailResponse, SessionSummaryResponse
-    from app.rag.memory.base import ConversationTurn, SessionInfo
+    from app.rag.memory.base import ConversationSession, ConversationTurn, SessionInfo
 
     now = datetime.now(UTC)
     info = SessionInfo(
@@ -178,10 +178,44 @@ def test_session_summary_and_detail_response():
         assistant_answer="a",
         created_at=now,
     )
+    # Backward compatibility with (SessionInfo, turns)
     detail = SessionDetailResponse.from_domain(info, [turn])
     assert detail.session_id == "s1"
     assert len(detail.turns) == 1
     assert detail.turns[0].user_query == "q"
+
+    # Direct ConversationSession aggregate
+    conv_session = ConversationSession(
+        session_id="s2",
+        title="Session 2",
+        parent_session_id=None,
+        forked_from_turn=None,
+        created_at=now,
+        updated_at=now,
+        turn_count=1,
+        turns=[turn],
+    )
+    detail2 = SessionDetailResponse.from_domain(conv_session)
+    assert detail2.session_id == "s2"
+    assert len(detail2.turns) == 1
+    assert detail2.turns[0].user_query == "q"
+
+    # SessionInfo with default turns (None -> [])
+    detail3 = SessionDetailResponse.from_domain(info)
+    assert detail3.session_id == "s1"
+    assert detail3.turns == []
+
+    # ConversationSession with override turns
+    override_turn = ConversationTurn(
+        session_id="s2",
+        turn_index=1,
+        user_query="override query",
+        assistant_answer="override answer",
+        created_at=now,
+    )
+    detail4 = SessionDetailResponse.from_domain(conv_session, [override_turn])
+    assert len(detail4.turns) == 1
+    assert detail4.turns[0].user_query == "override query"
 
 
 def test_session_list_response():

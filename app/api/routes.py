@@ -95,8 +95,7 @@ async def get_chat_session(session_id: str) -> SessionDetailResponse:
     session = await memory.aget_session(session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
-    turns = await memory.aget_turns(session_id)
-    return SessionDetailResponse.from_domain(session, turns)
+    return SessionDetailResponse.from_domain(session)
 
 
 @router.delete("/chat/{session_id}")
@@ -119,23 +118,17 @@ async def rewind_chat_session(session_id: str, payload: RewindRequest) -> dict[s
 @router.post("/chat/{session_id}/fork", response_model=SessionDetailResponse)
 async def fork_chat_session(session_id: str, payload: ForkRequest) -> SessionDetailResponse:
     memory = get_conversation_memory()
-    session = await memory.aget_session(session_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
     try:
-        new_session_id = await memory.afork_session(
+        new_session = await memory.afork_session(
             session_id,
             payload.upto_turn_index,
             payload.new_session_id,
         )
+        return SessionDetailResponse.from_domain(new_session)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    new_session = await memory.aget_session(new_session_id)
-    if not new_session:
-        raise HTTPException(status_code=500, detail="Failed to retrieve forked session")
-    new_turns = await memory.aget_turns(new_session_id)
-    return SessionDetailResponse.from_domain(new_session, new_turns)
 
 
 @router.post("/feedback")

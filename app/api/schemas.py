@@ -5,7 +5,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
 
-from app.rag.memory.base import ConversationTurn, SessionInfo
+from app.rag.memory.base import ConversationSession, ConversationTurn, SessionInfo
 from app.rag.workflows.base import WorkflowInfo, WorkflowInput, WorkflowOutput
 
 
@@ -239,17 +239,22 @@ class SessionDetailResponse(BaseModel):
     turns: list[ChatTurnResponse] = Field(default_factory=list, description="Sequential conversational turns")
 
     @classmethod
-    def from_domain(cls, info: SessionInfo, turns: list[ConversationTurn]) -> SessionDetailResponse:
-        """Construct SessionDetailResponse from domain SessionInfo and ConversationTurns."""
+    def from_domain(
+        cls,
+        session: ConversationSession | SessionInfo,
+        turns: list[ConversationTurn] | None = None,
+    ) -> SessionDetailResponse:
+        """Construct SessionDetailResponse from domain SessionInfo/ConversationSession and ConversationTurns."""
+        resolved_turns = turns if turns is not None else (session.turns if isinstance(session, ConversationSession) else [])
         return cls(
-            session_id=info.session_id,
-            title=info.title,
-            parent_session_id=info.parent_session_id,
-            forked_from_turn=info.forked_from_turn,
-            created_at=info.created_at,
-            updated_at=info.updated_at,
-            turn_count=info.turn_count,
-            turns=[ChatTurnResponse.from_domain(t) for t in turns],
+            session_id=session.session_id,
+            title=session.title,
+            parent_session_id=session.parent_session_id,
+            forked_from_turn=session.forked_from_turn,
+            created_at=session.created_at,
+            updated_at=session.updated_at,
+            turn_count=session.turn_count,
+            turns=[ChatTurnResponse.from_domain(t) for t in resolved_turns],
         )
 
 

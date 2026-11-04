@@ -8,7 +8,7 @@
   - `tests/api/test_routes_chat_memory.py`
   - Full test suite regression
 - **Blocked by:** Ticket 03
-- **Status:** ready-for-agent
+- **Status:** completed
 
 ---
 
@@ -18,8 +18,8 @@ Update `SessionDetailResponse.from_domain` in `app/api/schemas.py` to support `C
 
 ## Acceptance criteria
 
-- [ ] `SessionDetailResponse.from_domain` accepts `session: ConversationSession | SessionInfo, turns: list[ConversationTurn] | None = None` and properly serializes turns whether passed in `session.turns` or as a separate argument.
-- [ ] `GET /api/chat/{session_id}` in `app/api/routes.py` calls `await memory.aget_session(session_id)` once and converts directly to `SessionDetailResponse.from_domain(session)`.
-- [ ] `POST /api/chat/{session_id}/fork` in `app/api/routes.py` invokes `await memory.afork_session(...)` once without follow-up queries, catching `KeyError` to raise HTTP 404 and `ValueError` to raise HTTP 400.
-- [ ] Unit and route tests in `tests/api/test_routes_chat_memory.py` assert single-call execution and proper JSON response structure.
-- [ ] Full regression suite passes cleanly via `uv run pytest`.
+- [x] `SessionDetailResponse.from_domain` accepts `session: ConversationSession | SessionInfo, turns: list[ConversationTurn] | None = None` and properly serializes turns whether passed in `session.turns` or as a separate argument.
+- [x] `GET /api/chat/{session_id}` in `app/api/routes.py` calls `await memory.aget_session(session_id)` once and converts directly to `SessionDetailResponse.from_domain(session)`.
+- [x] `POST /api/chat/{session_id}/fork` in `app/api/routes.py` invokes `await memory.afork_session(...)` once without follow-up queries, catching `KeyError` to raise HTTP 404 and `ValueError` to raise HTTP 400.
+- [x] Unit and route tests in `tests/api/test_routes_chat_memory.py` assert single-call execution and proper JSON response structure.
+- [x] Full regression suite passes cleanly via `uv run pytest`.
