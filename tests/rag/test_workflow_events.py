@@ -1,6 +1,7 @@
 """Unit tests for strongly-typed workflow domain event subsystem and schemas."""
 
 import json
+from datetime import UTC, datetime
 
 import pytest
 from pydantic import BaseModel, TypeAdapter, ValidationError
@@ -19,22 +20,48 @@ class TestStepTransitionEvent:
     """Tests for StepTransitionEvent schema and serialization."""
 
     def test_instantiation_defaults(self) -> None:
+        before = datetime.now(UTC).timestamp()
         event = StepTransitionEvent(step="retrieve")
+        after = datetime.now(UTC).timestamp()
+
         assert event.type == "step"
         assert event.step == "retrieve"
+        assert event.label == "retrieve"
+        assert isinstance(event.timestamp, float)
+        assert before <= event.timestamp <= after
+
+    def test_explicit_label(self) -> None:
+        event = StepTransitionEvent(step="retrieve", label="Searching internal KB...")
+        assert event.type == "step"
+        assert event.step == "retrieve"
+        assert event.label == "Searching internal KB..."
+
+    def test_empty_or_whitespace_label_falls_back_to_step(self) -> None:
+        event_empty = StepTransitionEvent(step="retrieve", label="")
+        assert event_empty.label == "retrieve"
+
+        event_whitespace = StepTransitionEvent(step="retrieve", label="   ")
+        assert event_whitespace.label == "retrieve"
 
     def test_explicit_type(self) -> None:
         event = StepTransitionEvent(type="step", step="grade_evidence")
         assert event.type == "step"
         assert event.step == "grade_evidence"
+        assert event.label == "grade_evidence"
 
     def test_serialization(self) -> None:
         event = StepTransitionEvent(step="generate_answer")
         dumped = event.model_dump()
-        assert dumped == {"type": "step", "step": "generate_answer"}
+        assert dumped["type"] == "step"
+        assert dumped["step"] == "generate_answer"
+        assert dumped["label"] == "generate_answer"
+        assert isinstance(dumped["timestamp"], float)
 
         json_dumped = json.loads(event.model_dump_json())
-        assert json_dumped == {"type": "step", "step": "generate_answer"}
+        assert json_dumped["type"] == "step"
+        assert json_dumped["step"] == "generate_answer"
+        assert json_dumped["label"] == "generate_answer"
+        assert isinstance(json_dumped["timestamp"], float)
 
     def test_missing_step_raises_validation_error(self) -> None:
         with pytest.raises(ValidationError) as exc_info:
@@ -188,10 +215,15 @@ class TestWorkflowExecutionEventDiscriminatedUnion:
         return TypeAdapter(WorkflowExecutionEvent)
 
     def test_discriminated_matching_step(self, adapter: TypeAdapter[WorkflowExecutionEvent]) -> None:
+        before = datetime.now(UTC).timestamp()
         raw = {"type": "step", "step": "grade_evidence"}
         event = adapter.validate_python(raw)
+        after = datetime.now(UTC).timestamp()
         assert isinstance(event, StepTransitionEvent)
         assert event.step == "grade_evidence"
+        assert event.label == "grade_evidence"
+        assert isinstance(event.timestamp, float)
+        assert before <= event.timestamp <= after
         assert event.type == "step"
 
     def test_discriminated_matching_token(self, adapter: TypeAdapter[WorkflowExecutionEvent]) -> None:
@@ -272,6 +304,11 @@ class TestWorkflowExecutionEventDiscriminatedUnion:
         envelope = EventEnvelope.model_validate({"event": {"type": "step", "step": "route"}})
         assert isinstance(envelope.event, StepTransitionEvent)
         assert envelope.event.step == "route"
+        assert envelope.event.label == "route"
+        assert isinstance(envelope.event.timestamp, float)
 
         envelope_dump = envelope.model_dump()
-        assert envelope_dump == {"event": {"type": "step", "step": "route"}}
+        assert envelope_dump["event"]["type"] == "step"
+        assert envelope_dump["event"]["step"] == "route"
+        assert envelope_dump["event"]["label"] == "route"
+        assert isinstance(envelope_dump["event"]["timestamp"], float)

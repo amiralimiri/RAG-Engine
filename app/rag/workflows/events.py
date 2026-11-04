@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from typing import Annotated, Literal
+from datetime import UTC, datetime
+from typing import Annotated, Literal, Self
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from app.rag.workflows.base import WorkflowOutput
 
@@ -14,6 +15,17 @@ class StepTransitionEvent(BaseModel):
 
     type: Literal["step"] = "step"
     step: str = Field(description="Name of the node entered (e.g. 'retrieve', 'grade_evidence')")
+    label: str = Field(default="", description="Human-readable progression label")
+    timestamp: float = Field(
+        default_factory=lambda: datetime.now(UTC).timestamp(),
+        description="Chronological UTC milestone timestamp in seconds",
+    )
+
+    @model_validator(mode="after")
+    def _ensure_label(self) -> Self:
+        if not self.label or not self.label.strip():
+            self.label = self.step
+        return self
 
 
 class TokenDeltaEvent(BaseModel):
