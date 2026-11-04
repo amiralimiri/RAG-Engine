@@ -6,7 +6,7 @@
   - `app/rag/memory/sqlite.py`
   - `tests/rag/test_conversation_memory_sqlite.py`
 - **Blocked by:** Ticket 02
-- **Status:** ready-for-agent
+- **Status:** closed
 
 ---
 
@@ -16,11 +16,11 @@ Implement single-transaction session retrieval and atomic branching in `SQLiteCo
 
 ## Acceptance criteria
 
-- [ ] `SQLiteConversationStore.aget_session(session_id, limit=None)` retrieves metadata and turns in a single threadpool execution and returns `ConversationSession | None`.
-- [ ] If `limit` is specified in `aget_session`, SQL queries `ORDER BY turn_index DESC LIMIT ?` and reverses the rows in Python to guarantee ascending chronological order (`turn_index ASC`).
-- [ ] If `limit is None` in `aget_session`, SQL queries `ORDER BY turn_index ASC`.
-- [ ] Non-existent session IDs passed to `aget_session` safely return `None`.
-- [ ] `SQLiteConversationStore.afork_session` validates that `source_session_id` exists in `conversation_sessions`, raising `KeyError` if missing.
-- [ ] `SQLiteConversationStore.afork_session` validates `upto_turn_index >= -1`, raising `ValueError` if less than `-1`.
-- [ ] `SQLiteConversationStore.afork_session` returns `ConversationSession` directly from the fork write transaction without subsequent read calls.
-- [ ] `tests/rag/test_conversation_memory_sqlite.py` validates single-transaction session queries, tail-windowing, atomic fork aggregate return, and invariant enforcement.
+- [x] `SQLiteConversationStore.aget_session(session_id, limit=None)` retrieves metadata and turns in a single threadpool execution and returns `ConversationSession | None`.
+- [x] If `limit` is specified in `aget_session`, SQL queries `ORDER BY turn_index DESC LIMIT ?` and reverses the rows in Python to guarantee ascending chronological order (`turn_index ASC`).
+- [x] If `limit is None` in `aget_session`, SQL queries `ORDER BY turn_index ASC`.
+- [x] Non-existent session IDs passed to `aget_session` safely return `None`.
+- [x] `SQLiteConversationStore.afork_session` validates that `source_session_id` exists in `conversation_sessions`, raising `KeyError` if missing.
+- [x] `SQLiteConversationStore.afork_session` validates `upto_turn_index >= -1`, raising `ValueError` if less than `-1`.
+- [x] `SQLiteConversationStore.afork_session` returns `ConversationSession` directly from the fork write transaction without subsequent read calls.
+- [x] `tests/rag/test_conversation_memory_sqlite.py` validates single-transaction session queries, tail-windowing, atomic fork aggregate return, and invariant enforcement.
