@@ -122,9 +122,9 @@ def test_fix_single_llm_search_web_signature_and_config_forwarding():
     content, artifact = web_tool.invoke({"query": "pulse secure setup"}, config=custom_config)
 
     mock_search.invoke.assert_called_once_with({"query": "pulse secure setup"}, config=custom_config)
-    assert len(artifact["citations"]) == 1
+    assert len(artifact.citations) == 1
     assert "Search answer: GlobalProtect setup guide" in content
-    assert len(artifact["retrieved_contexts"]) == 1
+    assert len(artifact.retrieved_contexts) == 1
 
 
 def test_fix_single_llm_search_web_default_config_none():
@@ -136,7 +136,7 @@ def test_fix_single_llm_search_web_default_config_none():
     content, artifact = web_tool.invoke({"query": "zoom client install"})
 
     mock_search.invoke.assert_called_once_with({"query": "zoom client install"}, config=None)
-    assert artifact["citations"] == []
+    assert artifact.citations == []
 
 
 def test_fix_single_llm_search_web_triggers_tool_callbacks():

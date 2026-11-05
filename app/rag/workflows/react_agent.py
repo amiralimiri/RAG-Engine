@@ -60,7 +60,7 @@ def _extract_contexts(
     messages: Sequence[Any],
 ) -> list[str]:
     """Collects and deduplicates retrieved contexts from aggregated evidence, state, and tool messages."""
-    retrieved: list[str] = list(final_state.get("retrieved_contexts", []))
+    retrieved: list[str] = list(final_state.get("retrieved_contexts") or [])
     for ctx in evidence.retrieved_contexts:
         if ctx not in retrieved:
             retrieved.append(ctx)

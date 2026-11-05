@@ -55,7 +55,6 @@ def test_create_retriever_tool_sync():
     assert "Use OpenVPN config file." in content
     assert "[Source: docs/help.md]" in content
     assert artifact.raw_payload == docs
-    assert artifact["raw_payload"] == docs
     assert artifact.source_used == "vectorstore"
     assert artifact.citations == [
         Citation(title="vpn.md", url="", type="private_kb"),
@@ -340,7 +339,7 @@ def test_citation_domain_model():
         c2.title = "Mutated"
 
 
-def test_tool_evidence_artifact_and_subscripting_fallback():
+def test_tool_evidence_artifact_model_attributes():
     # Defaults
     art_default = ToolEvidenceArtifact()
     assert art_default.citations == []
@@ -348,7 +347,7 @@ def test_tool_evidence_artifact_and_subscripting_fallback():
     assert art_default.source_used == "direct"
     assert art_default.raw_payload is None
 
-    # Subscripting fallback and get()
+    # Typed attributes
     citation = Citation(title="vpn.md", url="", type="private_kb")
     art = ToolEvidenceArtifact(
         citations=[citation],
@@ -357,20 +356,14 @@ def test_tool_evidence_artifact_and_subscripting_fallback():
         raw_payload={"custom": "doc_payload"},
     )
 
-    assert art["citations"] == [citation]
-    assert art["retrieved_contexts"] == ["VPN connection steps"]
-    assert art["source_used"] == "vectorstore"
-    assert art["raw_payload"] == {"custom": "doc_payload"}
-    assert art.get("source_used") == "vectorstore"
-    assert art.get("nonexistent", "default_val") == "default_val"
+    assert art.citations == [citation]
+    assert art.retrieved_contexts == ["VPN connection steps"]
+    assert art.source_used == "vectorstore"
+    assert art.raw_payload == {"custom": "doc_payload"}
 
-    with pytest.raises(KeyError):
-        _ = art["unknown_field"]
-
-    # Field-only subscripting: internal Pydantic attributes are not exposed
-    with pytest.raises(KeyError):
-        _ = art["model_fields"]
-    assert art.get("model_fields", "default_val") == "default_val"
+    # Subscripting is not supported on pure domain model (Zero-Shim standard)
+    with pytest.raises(TypeError):
+        _ = art["citations"]  # type: ignore[index]
 
 
 def test_tool_result_container_and_tuple_unpacking():

@@ -31,16 +31,6 @@ class ToolEvidenceArtifact(BaseModel):
     source_used: str = "direct"
     raw_payload: Any = None
 
-    def __getitem__(self, key: str) -> Any:
-        if key not in type(self).model_fields:
-            raise KeyError(key)
-        return getattr(self, key)
-
-    def get(self, key: str, default: Any = None) -> Any:
-        if key not in type(self).model_fields:
-            return default
-        return getattr(self, key)
-
 
 class ToolResult(BaseModel):
     """Execution result container for direct workflow callers."""
