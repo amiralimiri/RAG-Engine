@@ -4,11 +4,18 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from langchain_core.documents import Document
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.tools import BaseTool
+from pydantic import ValidationError
 
 from app.rag.tools import (
+    AggregatedEvidence,
+    Citation,
     KnowledgeSearchInput,
+    ToolEvidenceArtifact,
+    ToolResult,
     WebSearchInput,
+    aggregate_tool_evidence,
     create_retriever_tool,
     create_web_search_tool,
 )
@@ -293,3 +300,185 @@ def test_create_web_search_tool_without_engine_module_reflection(monkeypatch: py
     content, artifact = tool.invoke({"query": "test query"})
     assert "Clean search answer" in content
     assert artifact["citations"] == [{"title": "Web Title", "url": "https://example.com", "type": "web"}]
+
+
+# ============================================================================
+# Ticket 01: Canonical Domain Models & Polymorphic Evidence Aggregator Tests
+# ============================================================================
+
+
+def test_citation_domain_model():
+    # Default fields
+    c1 = Citation(title="Guide.md")
+    assert c1.title == "Guide.md"
+    assert c1.url == ""
+    assert c1.type == "general"
+
+    # Explicit fields
+    c2 = Citation(title="API Docs", url="https://docs.example.com", type="web")
+    assert c2.title == "API Docs"
+    assert c2.url == "https://docs.example.com"
+    assert c2.type == "web"
+
+    # Domain validation failure when required field 'title' is missing
+    with pytest.raises(ValidationError):
+        Citation.model_validate({})
+
+
+def test_tool_evidence_artifact_and_subscripting_fallback():
+    # Defaults
+    art_default = ToolEvidenceArtifact()
+    assert art_default.citations == []
+    assert art_default.retrieved_contexts == []
+    assert art_default.source_used == "direct"
+    assert art_default.raw_payload is None
+
+    # Subscripting fallback and get()
+    citation = Citation(title="vpn.md", url="", type="private_kb")
+    art = ToolEvidenceArtifact(
+        citations=[citation],
+        retrieved_contexts=["VPN connection steps"],
+        source_used="vectorstore",
+        raw_payload={"custom": "doc_payload"},
+    )
+
+    assert art["citations"] == [citation]
+    assert art["retrieved_contexts"] == ["VPN connection steps"]
+    assert art["source_used"] == "vectorstore"
+    assert art["raw_payload"] == {"custom": "doc_payload"}
+    assert art.get("source_used") == "vectorstore"
+    assert art.get("nonexistent", "default_val") == "default_val"
+
+    with pytest.raises(KeyError):
+        _ = art["unknown_field"]
+
+
+def test_tool_result_container_and_tuple_unpacking():
+    artifact = ToolEvidenceArtifact(
+        retrieved_contexts=["Some context"],
+        source_used="vectorstore",
+    )
+    result = ToolResult(content="Retrieved content text", artifact=artifact)
+
+    # Direct attributes
+    assert result.content == "Retrieved content text"
+    assert result.artifact is artifact
+
+    # 2-tuple unpacking
+    content, art = result
+    assert content == "Retrieved content text"
+    assert art is artifact
+
+    # Validation failure when required fields are missing
+    with pytest.raises(ValidationError):
+        ToolResult.model_validate({"content": "only content"})
+
+
+def test_aggregated_evidence_domain_model():
+    evidence = AggregatedEvidence(
+        citations=[Citation(title="Doc A")],
+        retrieved_contexts=["Context 1"],
+        source_used="vectorstore",
+    )
+    assert len(evidence.citations) == 1
+    assert evidence.citations[0].title == "Doc A"
+    assert evidence.retrieved_contexts == ["Context 1"]
+    assert evidence.source_used == "vectorstore"
+
+    # Default values
+    empty_evidence = AggregatedEvidence()
+    assert empty_evidence.citations == []
+    assert empty_evidence.retrieved_contexts == []
+    assert empty_evidence.source_used == "direct"
+
+
+def test_aggregate_tool_evidence_empty_and_non_tool_messages():
+    # Empty sequence
+    ev1 = aggregate_tool_evidence([])
+    assert ev1.citations == []
+    assert ev1.retrieved_contexts == []
+    assert ev1.source_used == "direct"
+
+    # Sequence with no tool messages or artifacts
+    ev2 = aggregate_tool_evidence([HumanMessage(content="hello"), AIMessage(content="hi")])
+    assert ev2.citations == []
+    assert ev2.retrieved_contexts == []
+    assert ev2.source_used == "direct"
+
+
+def test_aggregate_tool_evidence_single_source_uniform():
+    art1 = ToolEvidenceArtifact(
+        citations=[Citation(title="kb1.md", type="private_kb")],
+        retrieved_contexts=["Context KB 1"],
+        source_used="vectorstore",
+    )
+    art2 = ToolEvidenceArtifact(
+        citations=[Citation(title="kb2.md", type="private_kb")],
+        retrieved_contexts=["Context KB 2"],
+        source_used="vectorstore",
+    )
+
+    ev = aggregate_tool_evidence([art1, art2])
+    assert len(ev.citations) == 2
+    assert ev.citations[0].title == "kb1.md"
+    assert ev.citations[1].title == "kb2.md"
+    assert ev.retrieved_contexts == ["Context KB 1", "Context KB 2"]
+    assert ev.source_used == "vectorstore"
+
+
+def test_aggregate_tool_evidence_extracts_from_tool_messages():
+    art = ToolEvidenceArtifact(
+        citations=[Citation(title="Search Result", url="https://example.com", type="web")],
+        retrieved_contexts=["Web context snippet"],
+        source_used="web_search",
+    )
+    msg = ToolMessage(content="Display string", artifact=art, tool_call_id="call_web_1")
+
+    ev = aggregate_tool_evidence([msg])
+    assert len(ev.citations) == 1
+    assert ev.citations[0].title == "Search Result"
+    assert ev.citations[0].url == "https://example.com"
+    assert ev.retrieved_contexts == ["Web context snippet"]
+    assert ev.source_used == "web_search"
+
+
+def test_aggregate_tool_evidence_citation_deduplication():
+    art1 = ToolEvidenceArtifact(
+        citations=[
+            Citation(title="Duplicate Doc", url="https://dup.com", type="web"),
+            Citation(title="Unique Doc 1", url="https://u1.com", type="web"),
+        ],
+        retrieved_contexts=["Snippet 1", ""],
+        source_used="web_search",
+    )
+    art2 = ToolEvidenceArtifact(
+        citations=[
+            Citation(title="Duplicate Doc", url="https://dup.com", type="web"),
+            Citation(title="Unique Doc 2", url="https://u2.com", type="web"),
+        ],
+        retrieved_contexts=["Snippet 2"],
+        source_used="web_search",
+    )
+
+    ev = aggregate_tool_evidence([art1, art2])
+    assert len(ev.citations) == 3
+    assert [c.title for c in ev.citations] == ["Duplicate Doc", "Unique Doc 1", "Unique Doc 2"]
+    assert ev.retrieved_contexts == ["Snippet 1", "", "Snippet 2"]
+
+
+def test_aggregate_tool_evidence_multiple_distinct_sources_resolves_react_agent():
+    art_kb = ToolEvidenceArtifact(
+        citations=[Citation(title="kb.md", type="private_kb")],
+        retrieved_contexts=["KB context snippet"],
+        source_used="vectorstore",
+    )
+    art_web = ToolEvidenceArtifact(
+        citations=[Citation(title="Web Result", url="https://web.com", type="web")],
+        retrieved_contexts=["Web context snippet"],
+        source_used="web_search",
+    )
+
+    ev = aggregate_tool_evidence([art_kb, art_web])
+    assert len(ev.citations) == 2
+    assert ev.retrieved_contexts == ["KB context snippet", "Web context snippet"]
+    assert ev.source_used == "react_agent"

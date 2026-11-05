@@ -35,7 +35,7 @@
 
 | Ticket | Title | Target Files / Scope | Blockers | Status |
 |---|---|---|---|---|
-| **Ticket 01** | Canonical Domain Models & Polymorphic Evidence Aggregator | `app/rag/tools/base.py`, `tests/rag/test_tools.py` | None | `ready-for-agent` |
+| **Ticket 01** | Canonical Domain Models & Polymorphic Evidence Aggregator | `app/rag/tools/base.py`, `tests/rag/test_tools.py` | None | `closed` |
 | **Ticket 02** | RAGTool Execution Seam, Concrete Adapters & Zero-Shim Pruning | `app/rag/tools/base.py`, `app/rag/tools/retriever.py`, `app/rag/tools/search.py`, `app/rag/tools/__init__.py`, `tests/rag/test_tools.py` | Ticket 01 | `ready-for-agent` |
 | **Ticket 03** | Workflow Engine & ReAct Agent Integration with Regression Verification | `app/rag/engine.py`, `app/rag/workflows/react_agent.py`, `tests/rag/test_react_agent.py`, `tests/rag/test_base_workflow.py`, full regression suite | Ticket 02 | `ready-for-agent` |
 
