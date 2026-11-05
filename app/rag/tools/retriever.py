@@ -6,10 +6,9 @@ from typing import Any
 import structlog
 from langchain_core.documents import Document
 from langchain_core.runnables import RunnableConfig
-from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field
 
-from app.rag.tools.base import _UNSET, DualOutputStructuredTool, get_invoke_config
+from app.rag.tools.base import Citation, RAGTool, ToolEvidenceArtifact, rag_tool
 
 logger = structlog.get_logger(__name__)
 
@@ -31,14 +30,18 @@ def _format_docs(docs: list[Document]) -> str:
     return "\n\n".join(formatted)
 
 
-def _extract_citations(docs: list[Document]) -> list[dict[str, Any]]:
-    citations = []
+def _extract_citations(docs: list[Document]) -> list[Citation]:
+    citations: list[Citation] = []
     for doc in docs:
         source = doc.metadata.get("source", "unknown") if hasattr(doc, "metadata") and doc.metadata else "unknown"
         title = source.split("/")[-1].split("\\")[-1]
-        if not any(c.get("title") == title for c in citations):
-            citations.append({"title": title, "url": "", "type": "private_kb"})
+        if not any(c.title == title for c in citations):
+            citations.append(Citation(title=title, url="", type="private_kb"))
     return citations
+
+
+def _extract_contexts(docs: list[Document]) -> list[str]:
+    return [doc.page_content if hasattr(doc, "page_content") else str(doc) for doc in docs]
 
 
 def create_retriever_tool(
@@ -48,10 +51,10 @@ def create_retriever_tool(
         "Search the internal company knowledge base and IT documentation for technical policies, "
         "VPN, hardware, software installation, and account setup guidelines."
     ),
-) -> BaseTool:
-    """Create a structured BaseTool wrapping vectorstore retrieval."""
+) -> RAGTool:
+    """Create a structured RAGTool wrapping vectorstore retrieval."""
 
-    def _get_active_retriever():
+    def _get_active_retriever() -> Any:
         if retriever is not None:
             if callable(retriever) and not hasattr(retriever, "invoke") and not hasattr(retriever, "ainvoke"):
                 return retriever()
@@ -60,52 +63,49 @@ def create_retriever_tool(
 
         return get_knowledge_store().as_retriever()
 
-    def _run(query: str, config: RunnableConfig | None = None) -> tuple[str, dict[str, Any]]:
+    def _run(query: str, config: RunnableConfig | None = None) -> tuple[str, ToolEvidenceArtifact]:
         structlog.contextvars.bind_contextvars(step="retrieve_kb")
-        active = _get_active_retriever()
-        effective_config = config
-        orig_config = get_invoke_config()
-        if orig_config is not _UNSET:
-            effective_config = orig_config
-        docs = active.invoke(query, config=effective_config)
+        active: Any = _get_active_retriever()
+        docs = active.invoke(query, config=config)
         docs = docs or []
         citations = _extract_citations(docs)
-        artifact = {
-            "documents": docs,
-            "citations": citations,
-        }
+        contexts = _extract_contexts(docs)
+        artifact = ToolEvidenceArtifact(
+            citations=citations,
+            retrieved_contexts=contexts,
+            source_used="vectorstore",
+            raw_payload=docs,
+        )
         return _format_docs(docs), artifact
 
-    async def _arun(query: str, config: RunnableConfig | None = None) -> tuple[str, dict[str, Any]]:
+    async def _arun(query: str, config: RunnableConfig | None = None) -> tuple[str, ToolEvidenceArtifact]:
         structlog.contextvars.bind_contextvars(step="retrieve_kb")
-        active = _get_active_retriever()
-        effective_config = config
-        orig_config = get_invoke_config()
-        if orig_config is not _UNSET:
-            effective_config = orig_config
+        active: Any = _get_active_retriever()
         if hasattr(active, "ainvoke"):
-            maybe_coro = active.ainvoke(query, config=effective_config)
+            maybe_coro = active.ainvoke(query, config=config)
             if inspect.isawaitable(maybe_coro):
                 docs = await maybe_coro
             else:
-                docs = active.invoke(query, config=effective_config)
+                docs = active.invoke(query, config=config)
         else:
-            docs = active.invoke(query, config=effective_config)
+            docs = active.invoke(query, config=config)
         docs = docs or []
         citations = _extract_citations(docs)
-        artifact = {
-            "documents": docs,
-            "citations": citations,
-        }
+        contexts = _extract_contexts(docs)
+        artifact = ToolEvidenceArtifact(
+            citations=citations,
+            retrieved_contexts=contexts,
+            source_used="vectorstore",
+            raw_payload=docs,
+        )
         return _format_docs(docs), artifact
 
-    return DualOutputStructuredTool.from_function(
+    return rag_tool(
         func=_run,
         coroutine=_arun,
         name=name,
         description=description,
         args_schema=KnowledgeSearchInput,
-        response_format="content_and_artifact",
     )
 
 

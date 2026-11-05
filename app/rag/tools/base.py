@@ -1,21 +1,14 @@
 """Custom BaseTool abstractions for RAG workflows and autonomous agents."""
 
-from collections.abc import Sequence
-from contextvars import ContextVar
-from typing import Any
+import types
+import typing
+from collections.abc import Callable, Sequence
+from typing import Any, Literal
 
 from langchain_core.messages import ToolMessage
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, ConfigDict, Field
-
-_UNSET = object()
-_TOOL_INVOKE_CONFIG: ContextVar[Any] = ContextVar("_TOOL_INVOKE_CONFIG", default=_UNSET)
-
-
-def get_invoke_config() -> Any:
-    """Retrieve the original config passed to tool.invoke() or tool.ainvoke()."""
-    return _TOOL_INVOKE_CONFIG.get()
 
 
 class Citation(BaseModel):
@@ -133,59 +126,262 @@ def aggregate_tool_evidence(messages_or_artifacts: Sequence[Any]) -> AggregatedE
     )
 
 
-class DualOutputStructuredTool(StructuredTool):
-    """StructuredTool preserving (content, artifact) tuple when invoked directly without tool_call_id."""
+def _normalize_config_annotations(fn: Any) -> None:
+    """Ensure LangChain parameter injection detects config: RunnableConfig | None.
 
-    def invoke(self, input: Any, config: RunnableConfig | None = None, **kwargs: Any) -> Any:
-        token = _TOOL_INVOKE_CONFIG.set(config)
-        try:
+    LangChain's internal `_get_runnable_config_param` checks `type_ is RunnableConfig`.
+    If the function uses `RunnableConfig | None` or `Optional[RunnableConfig]`,
+    LangChain fails to inject config. Normalizing the annotation to `RunnableConfig`
+    restores seamless parameter injection while allowing default `None` values.
+    """
+    if fn is None or not hasattr(fn, "__annotations__"):
+        return
+    try:
+        hints = typing.get_type_hints(fn)
+    except Exception:
+        hints = getattr(fn, "__annotations__", {})
+
+    for name, hint in hints.items():
+        origin = typing.get_origin(hint)
+        if origin is typing.Union or (hasattr(types, "UnionType") and origin is types.UnionType):
+            args = typing.get_args(hint)
+            if RunnableConfig in args:
+                fn.__annotations__[name] = RunnableConfig
+
+
+def _is_tool_call(input_val: Any) -> bool:
+    return (
+        isinstance(input_val, dict)
+        and "name" in input_val
+        and "args" in input_val
+        and ("id" in input_val or "tool_call_id" in input_val)
+    )
+
+
+def _to_tool_result(raw: Any) -> ToolResult:
+    if isinstance(raw, ToolResult):
+        return raw
+    if isinstance(raw, ToolMessage):
+        content = str(raw.content)
+        artifact = raw.artifact
+    elif isinstance(raw, tuple) and len(raw) == 2:
+        content, artifact = raw
+        content = str(content)
+    else:
+        content = str(raw)
+        artifact = None
+
+    if isinstance(artifact, ToolEvidenceArtifact):
+        typed_art = artifact
+    elif isinstance(artifact, dict):
+        typed_art = ToolEvidenceArtifact.model_validate(artifact)
+    elif artifact is None:
+        typed_art = ToolEvidenceArtifact()
+    else:
+        typed_art = ToolEvidenceArtifact(raw_payload=artifact)
+
+    return ToolResult(content=content, artifact=typed_art)
+
+
+class RAGTool(StructuredTool):
+    """Deep tool abstraction for RAG workflows and autonomous agents.
+
+    Provides explicit `.execute()` and async `.aexecute()` entrypoints returning
+    strongly-typed `ToolResult` containers for direct workflow callers, while
+    preserving native LangChain/LangGraph `ToolMessage` protocol execution.
+    """
+
+    @classmethod
+    def from_function(
+        cls,
+        func: Callable[..., Any] | None = None,
+        coroutine: Callable[..., Any] | None = None,
+        name: str | None = None,
+        description: str | None = None,
+        return_direct: bool = False,
+        args_schema: Any = None,
+        infer_schema: bool = True,
+        response_format: Literal["content", "content_and_artifact"] = "content_and_artifact",
+        parse_docstring: bool = False,
+        error_on_invalid_docstring: bool = False,
+        **kwargs: Any,
+    ) -> RAGTool:
+        if func is not None:
+            _normalize_config_annotations(func)
+        if coroutine is not None:
+            _normalize_config_annotations(coroutine)
+        return super().from_function(
+            func=func,
+            coroutine=coroutine,
+            name=name,
+            description=description,
+            return_direct=return_direct,
+            args_schema=args_schema,
+            infer_schema=infer_schema,
+            response_format=response_format,
+            parse_docstring=parse_docstring,
+            error_on_invalid_docstring=error_on_invalid_docstring,
+            **kwargs,
+        )  # type: ignore
+
+    def _normalize_input(self, input_args: Any, kwargs: dict[str, Any]) -> dict[str, Any] | str:
+        if isinstance(input_args, BaseModel):
+            data = input_args.model_dump()
+            return {**data, **kwargs}
+        if isinstance(input_args, str):
+            schema = self.args_schema
+            if isinstance(schema, type) and issubclass(schema, BaseModel):
+                fields = list(schema.model_fields.keys())
+                if len(fields) == 1:
+                    return {fields[0]: input_args, **kwargs}
+            return input_args
+        if isinstance(input_args, dict):
+            return {**input_args, **kwargs}
+        if kwargs:
+            return kwargs
+        return {}
+
+    def execute(
+        self,
+        input_args: Any = None,
+        config: RunnableConfig | None = None,
+        **kwargs: Any,
+    ) -> ToolResult:
+        """Synchronously execute tool and wrap display content and evidence into ToolResult."""
+        normalized = self._normalize_input(input_args, kwargs)
+        raw = self.run(
+            normalized,
+            callbacks=config.get("callbacks") if config else None,
+            tags=config.get("tags") if config else None,
+            metadata=config.get("metadata") if config else None,
+            run_name=config.get("run_name") if config else None,
+            config=config,
+            tool_call_id=f"exec_{self.name}",
+            **kwargs,
+        )
+        return _to_tool_result(raw)
+
+    async def aexecute(
+        self,
+        input_args: Any = None,
+        config: RunnableConfig | None = None,
+        **kwargs: Any,
+    ) -> ToolResult:
+        """Asynchronously execute tool and wrap display content and evidence into ToolResult."""
+        normalized = self._normalize_input(input_args, kwargs)
+        raw = await self.arun(
+            normalized,
+            callbacks=config.get("callbacks") if config else None,
+            tags=config.get("tags") if config else None,
+            metadata=config.get("metadata") if config else None,
+            run_name=config.get("run_name") if config else None,
+            config=config,
+            tool_call_id=f"exec_{self.name}",
+            **kwargs,
+        )
+        return _to_tool_result(raw)
+
+    def invoke(
+        self,
+        input: Any,
+        config: RunnableConfig | None = None,
+        **kwargs: Any,
+    ) -> Any:
+        """Invoke the tool.
+
+        When invoked with a ToolCall dictionary (e.g. from LangGraph ToolNode),
+        executes standard LangChain protocol producing a ToolMessage.
+        When invoked directly with input args, executes cleanly returning ToolResult.
+        """
+        if _is_tool_call(input) or "tool_call_id" in kwargs:
             return super().invoke(input, config=config, **kwargs)
-        finally:
-            _TOOL_INVOKE_CONFIG.reset(token)
+        return self.execute(input, config=config, **kwargs)
 
-    async def ainvoke(self, input: Any, config: RunnableConfig | None = None, **kwargs: Any) -> Any:
-        token = _TOOL_INVOKE_CONFIG.set(config)
-        try:
+    async def ainvoke(
+        self,
+        input: Any,
+        config: RunnableConfig | None = None,
+        **kwargs: Any,
+    ) -> Any:
+        """Asynchronously invoke the tool.
+
+        When invoked with a ToolCall dictionary (e.g. from LangGraph ToolNode),
+        executes standard LangChain protocol producing a ToolMessage.
+        When invoked directly with input args, executes cleanly returning ToolResult.
+        """
+        if _is_tool_call(input) or "tool_call_id" in kwargs:
             return await super().ainvoke(input, config=config, **kwargs)
-        finally:
-            _TOOL_INVOKE_CONFIG.reset(token)
+        return await self.aexecute(input, config=config, **kwargs)
 
-    def run(
-        self,
-        tool_input: str | dict[str, Any],
-        *args: Any,
-        tool_call_id: str | None = None,
-        **kwargs: Any,
-    ) -> Any:
-        is_direct = tool_call_id is None
-        call_id = tool_call_id if not is_direct else "__direct__"
-        res = super().run(tool_input, *args, tool_call_id=call_id, **kwargs)
-        if is_direct and self.response_format == "content_and_artifact" and isinstance(res, ToolMessage):
-            return (res.content, res.artifact)
-        return res
 
-    async def arun(
+def rag_tool(
+    func: Callable[..., Any] | None = None,
+    coroutine: Callable[..., Any] | None = None,
+    name: str = "",
+    description: str = "",
+    args_schema: type[BaseModel] | None = None,
+    **kwargs: Any,
+) -> RAGTool:
+    """Factory creating a RAGTool configured with response_format='content_and_artifact'."""
+    return RAGTool.from_function(
+        func=func,
+        coroutine=coroutine,
+        name=name,
+        description=description,
+        args_schema=args_schema,
+        response_format="content_and_artifact",
+        **kwargs,
+    )
+
+
+class _FakeDefaultSchema(BaseModel):
+    query: str = ""
+
+
+class FakeRAGTool(RAGTool):
+    """In-memory test double for RAGTool supporting deterministic testing."""
+
+    name: str = "fake_rag_tool"
+    description: str = "In-memory test double for RAGTool."
+    args_schema: Any = _FakeDefaultSchema
+    content: str = ""
+    artifact: ToolEvidenceArtifact = Field(default_factory=ToolEvidenceArtifact)
+    execute_calls: list[dict[str, Any]] = Field(default_factory=list)
+    aexecute_calls: list[dict[str, Any]] = Field(default_factory=list)
+    response_format: Literal["content", "content_and_artifact"] = "content_and_artifact"
+
+    def _run(self, *args: Any, **kwargs: Any) -> tuple[str, ToolEvidenceArtifact]:
+        return self.content, self.artifact
+
+    async def _arun(self, *args: Any, **kwargs: Any) -> tuple[str, ToolEvidenceArtifact]:
+        return self.content, self.artifact
+
+    def execute(
         self,
-        tool_input: str | dict[str, Any],
-        *args: Any,
-        tool_call_id: str | None = None,
+        input_args: Any = None,
+        config: RunnableConfig | None = None,
         **kwargs: Any,
-    ) -> Any:
-        is_direct = tool_call_id is None
-        call_id = tool_call_id if not is_direct else "__direct__"
-        res = await super().arun(tool_input, *args, tool_call_id=call_id, **kwargs)
-        if is_direct and self.response_format == "content_and_artifact" and isinstance(res, ToolMessage):
-            return (res.content, res.artifact)
-        return res
+    ) -> ToolResult:
+        self.execute_calls.append({"input": input_args, "config": config, **kwargs})
+        return ToolResult(content=self.content, artifact=self.artifact)
+
+    async def aexecute(
+        self,
+        input_args: Any = None,
+        config: RunnableConfig | None = None,
+        **kwargs: Any,
+    ) -> ToolResult:
+        self.aexecute_calls.append({"input": input_args, "config": config, **kwargs})
+        return ToolResult(content=self.content, artifact=self.artifact)
 
 
 __all__ = [
-    "_UNSET",
-    "get_invoke_config",
-    "DualOutputStructuredTool",
     "Citation",
     "ToolEvidenceArtifact",
     "ToolResult",
     "AggregatedEvidence",
     "aggregate_tool_evidence",
+    "RAGTool",
+    "rag_tool",
+    "FakeRAGTool",
 ]

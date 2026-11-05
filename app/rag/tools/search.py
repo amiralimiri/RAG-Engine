@@ -5,11 +5,10 @@ from typing import Any
 
 import structlog
 from langchain_core.runnables import RunnableConfig
-from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field
 
 from app.core.config import get_settings
-from app.rag.tools.base import _UNSET, DualOutputStructuredTool, get_invoke_config
+from app.rag.tools.base import Citation, RAGTool, ToolEvidenceArtifact, rag_tool
 
 logger = structlog.get_logger(__name__)
 
@@ -38,14 +37,14 @@ def _format_search_results(result: Any) -> str:
     return "\n\n".join(lines) if lines else "No relevant web search results found."
 
 
-def _extract_web_citations(result: Any) -> list[dict[str, Any]]:
-    citations = []
+def _extract_web_citations(result: Any) -> list[Citation]:
+    citations: list[Citation] = []
     if isinstance(result, dict):
         for item in result.get("results", []):
             title = item.get("title", "")
             url = item.get("url", "")
-            if not any(c.get("url") == url for c in citations):
-                citations.append({"title": title or url, "url": url, "type": "web"})
+            if not any(c.url == url for c in citations):
+                citations.append(Citation(title=title or url, url=url, type="web"))
     return citations
 
 
@@ -72,10 +71,10 @@ def create_web_search_tool(
         "Search the public web for external technical documentation, official software manuals, "
         "and internet troubleshooting resources when internal documentation is absent or insufficient."
     ),
-) -> BaseTool:
-    """Create a structured BaseTool wrapping Tavily internet search."""
+) -> RAGTool:
+    """Create a structured RAGTool wrapping Tavily internet search."""
 
-    def _get_active_client():
+    def _get_active_client() -> Any:
         if search_client is not None:
             if (
                 callable(search_client)
@@ -96,50 +95,44 @@ def create_web_search_tool(
             include_raw_content=False,
         )
 
-    def _run(query: str, config: RunnableConfig | None = None) -> tuple[str, dict[str, Any]]:
+    def _run(query: str, config: RunnableConfig | None = None) -> tuple[str, ToolEvidenceArtifact]:
         structlog.contextvars.bind_contextvars(step="search_web")
-        client = _get_active_client()
-        effective_config = config
-        orig_config = get_invoke_config()
-        if orig_config is not _UNSET:
-            effective_config = orig_config
-
-        result = client.invoke({"query": query}, config=effective_config)
-        artifact = {
-            "citations": _extract_web_citations(result),
-            "retrieved_contexts": _extract_web_contexts(result),
-        }
+        client: Any = _get_active_client()
+        result = client.invoke({"query": query}, config=config)
+        artifact = ToolEvidenceArtifact(
+            citations=_extract_web_citations(result),
+            retrieved_contexts=_extract_web_contexts(result),
+            source_used="web_search",
+            raw_payload=result,
+        )
         return _format_search_results(result), artifact
 
-    async def _arun(query: str, config: RunnableConfig | None = None) -> tuple[str, dict[str, Any]]:
+    async def _arun(query: str, config: RunnableConfig | None = None) -> tuple[str, ToolEvidenceArtifact]:
         structlog.contextvars.bind_contextvars(step="search_web")
-        client = _get_active_client()
-        effective_config = config
-        orig_config = get_invoke_config()
-        if orig_config is not _UNSET:
-            effective_config = orig_config
-
+        client: Any = _get_active_client()
         if hasattr(client, "ainvoke"):
-            maybe_coro = client.ainvoke({"query": query}, config=effective_config)
+            maybe_coro = client.ainvoke({"query": query}, config=config)
             if inspect.isawaitable(maybe_coro):
                 result = await maybe_coro
             else:
-                result = client.invoke({"query": query}, config=effective_config)
+                result = client.invoke({"query": query}, config=config)
         else:
-            result = client.invoke({"query": query}, config=effective_config)
-        artifact = {
-            "citations": _extract_web_citations(result),
-            "retrieved_contexts": _extract_web_contexts(result),
-        }
+            result = client.invoke({"query": query}, config=config)
+
+        artifact = ToolEvidenceArtifact(
+            citations=_extract_web_citations(result),
+            retrieved_contexts=_extract_web_contexts(result),
+            source_used="web_search",
+            raw_payload=result,
+        )
         return _format_search_results(result), artifact
 
-    return DualOutputStructuredTool.from_function(
+    return rag_tool(
         func=_run,
         coroutine=_arun,
         name=name,
         description=description,
         args_schema=WebSearchInput,
-        response_format="content_and_artifact",
     )
 
 
