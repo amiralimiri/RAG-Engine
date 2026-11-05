@@ -179,7 +179,7 @@ class ReActAgentWorkflow:
         evidence = aggregate_tool_evidence(messages)
         source_used = _resolve_evidence_source(evidence, final_state.get("source_used"))
 
-        citations = [c.model_dump() if hasattr(c, "model_dump") else c for c in evidence.citations]
+        citations = [c.model_dump() for c in evidence.citations]
         if not citations and final_state.get("citations"):
             citations = final_state.get("citations")
 

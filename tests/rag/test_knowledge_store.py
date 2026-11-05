@@ -160,12 +160,12 @@ async def test_in_memory_retriever_tool_integration() -> None:
     # Sync invocation
     content, artifact = tool.invoke({"query": "VPN access instructions"})
     assert "Global VPN instructions" in content
-    assert len(artifact["raw_payload"]) == 1
+    assert len(artifact.raw_payload) == 1
 
     # Async invocation
     content_async, artifact_async = await tool.ainvoke({"query": "VPN access instructions"})
     assert "Global VPN instructions" in content_async
-    assert len(artifact_async["raw_payload"]) == 1
+    assert len(artifact_async.raw_payload) == 1
 
 
 def test_in_memory_adapter_edge_cases() -> None:

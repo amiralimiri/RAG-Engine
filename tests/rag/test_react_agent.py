@@ -146,7 +146,7 @@ def test_react_agent_multi_turn_memory_persistence():
             return self
 
         def _call(self, messages: list[Any], stop: Any = None, run_manager: Any = None, **kwargs: Any) -> str:
-            user_inputs = [m.content for m in messages if isinstance(m, HumanMessage)]
+            user_inputs = [str(m.content) for m in messages if isinstance(m, HumanMessage)]
             return f"Heard user inputs: {', '.join(user_inputs)}"
 
     checkpointer = MemorySaver()
@@ -245,7 +245,7 @@ def test_react_agent_harmonized_source_resolution(tools_in_messages, expected_so
 
     wf = ReActAgentWorkflow(llm=MockChatModel(), tools=[mock_dummy_tool])
 
-    messages = [HumanMessage(content="Test inquiry")]
+    messages: list[Any] = [HumanMessage(content="Test inquiry")]
     for i, tool_name in enumerate(tools_in_messages):
         source = "vectorstore" if tool_name == "knowledge_base_search" else "web_search"
         messages.append(

@@ -83,6 +83,7 @@ Deepen `app/rag/tools/` into a self-contained, deep module with first-class doma
    ```python
    class Citation(BaseModel):
        """Strongly-typed reference citation attributed to retrieved evidence."""
+
        title: str
        url: str = ""
        type: str = "general"
@@ -91,6 +92,7 @@ Deepen `app/rag/tools/` into a self-contained, deep module with first-class doma
    ```python
    class ToolEvidenceArtifact(BaseModel):
        """Canonical structured evidence payload returned alongside tool display text."""
+
        citations: list[Citation] = Field(default_factory=list)
        retrieved_contexts: list[str] = Field(default_factory=list)
        source_used: str = "direct"
@@ -106,6 +108,7 @@ Deepen `app/rag/tools/` into a self-contained, deep module with first-class doma
    ```python
    class ToolResult(BaseModel):
        """Execution result container for direct workflow callers."""
+
        model_config = ConfigDict(arbitrary_types_allowed=True)
 
        content: str
@@ -132,8 +135,8 @@ Deepen `app/rag/tools/` into a self-contained, deep module with first-class doma
        retrieved_contexts: list[str] = Field(default_factory=list)
        source_used: str = "direct"
 
-   def aggregate_tool_evidence(messages_or_artifacts: Sequence[Any]) -> AggregatedEvidence:
-       ...
+
+   def aggregate_tool_evidence(messages_or_artifacts: Sequence[Any]) -> AggregatedEvidence: ...
    ```
    - Scans sequence for `ToolEvidenceArtifact` (or `ToolMessage.artifact`).
    - Deduplicates citations by unique `(title, url)`.

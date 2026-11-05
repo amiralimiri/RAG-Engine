@@ -6,7 +6,6 @@ import structlog
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig
-from langchain_core.tools import BaseTool
 from langchain_openai import ChatOpenAI
 from langgraph.graph import END, START, StateGraph
 
@@ -15,7 +14,7 @@ from app.core.config import get_settings
 from app.rag.classifiers import WorkflowClassifier
 from app.rag.prompts import PromptStore, RenderedPrompt, get_prompt_store
 from app.rag.state import AgentState
-from app.rag.tools import create_retriever_tool, create_web_search_tool
+from app.rag.tools import RAGTool, create_retriever_tool, create_web_search_tool
 
 logger = logging.getLogger(__name__)
 
@@ -154,8 +153,8 @@ def create_agentic_rag_graph(
     classifier: WorkflowClassifier,
     *,
     model: BaseChatModel | None = None,
-    kb_tool: BaseTool | None = None,
-    web_tool: BaseTool | None = None,
+    kb_tool: RAGTool | None = None,
+    web_tool: RAGTool | None = None,
     prompt_store: PromptStore | None = None,
 ) -> Any:
     """Build and compile the canonical 11-node StateGraph topology.
@@ -164,9 +163,9 @@ def create_agentic_rag_graph(
         classifier: The WorkflowClassifier adapter driving routing and evidence grading.
         model: Optional BaseChatModel instance for query rewrite and answer generation.
             Defaults to get_chat_model().
-        kb_tool: Optional BaseTool instance for knowledge base retrieval.
+        kb_tool: Optional RAGTool instance for knowledge base retrieval.
             Defaults to create_retriever_tool().
-        web_tool: Optional BaseTool instance for web search fallback.
+        web_tool: Optional RAGTool instance for web search fallback.
             Defaults to create_web_search_tool().
         prompt_store: Optional PromptStore instance for prompt compilation and observation metadata.
             Defaults to get_prompt_store().
@@ -220,7 +219,7 @@ def create_agentic_rag_graph(
         result = await active_kb_tool.aexecute({"query": search_query}, config=config)
 
         docs = result.artifact.raw_payload if isinstance(result.artifact.raw_payload, list) else []
-        citations = [c.model_dump() if hasattr(c, "model_dump") else c for c in result.artifact.citations]
+        citations = [c.model_dump() for c in result.artifact.citations]
         retrieved_contexts = (
             result.artifact.retrieved_contexts
             if result.artifact.retrieved_contexts
@@ -253,7 +252,7 @@ def create_agentic_rag_graph(
         search_query = state.get("current_query") or state["question"]
         result = await active_web_tool.aexecute({"query": search_query}, config=config)
 
-        citations = [c.model_dump() if hasattr(c, "model_dump") else c for c in result.artifact.citations]
+        citations = [c.model_dump() for c in result.artifact.citations]
         contexts = (
             result.artifact.retrieved_contexts
             if result.artifact.retrieved_contexts
@@ -263,7 +262,7 @@ def create_agentic_rag_graph(
         return {
             "web_results": result.content,
             "citations": citations,
-            "source_used": "web",
+            "source_used": result.artifact.source_used,
             "retrieved_contexts": contexts,
             "trace": ["Web fallback → Tavily search"],
         }

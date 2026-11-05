@@ -70,8 +70,8 @@ def test_fix_single_llm_retrieve_kb_signature_and_config_forwarding():
     content, artifact = kb_tool.invoke({"query": "how do I connect to VPN?"}, config=custom_config)
 
     mock_retriever.invoke.assert_called_once_with("how do I connect to VPN?", config=custom_config)
-    assert artifact["raw_payload"] == mock_docs
-    assert len(artifact["citations"]) == 1
+    assert artifact.raw_payload == mock_docs
+    assert len(artifact.citations) == 1
     assert "VPN info" in content
 
 
@@ -84,7 +84,7 @@ def test_fix_single_llm_retrieve_kb_default_config_none():
     content, artifact = kb_tool.invoke({"query": "mfa setup"})
 
     mock_retriever.invoke.assert_called_once_with("mfa setup", config=None)
-    assert artifact["raw_payload"] == []
+    assert artifact.raw_payload == []
 
 
 def test_fix_single_llm_retrieve_kb_triggers_retriever_callbacks():

@@ -6,11 +6,11 @@ import threading
 from typing import Any
 
 from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_core.tools import BaseTool
 
 from app.rag.classifiers import WorkflowClassifier
 from app.rag.engine import create_agentic_rag_graph
 from app.rag.prompts import PromptStore, get_prompt_store
+from app.rag.tools import RAGTool
 from app.rag.workflows.base import (
     EvalContext,
     WorkflowInfo,
@@ -51,8 +51,8 @@ class SelfCorrectiveRagWorkflow:
         classifier: WorkflowClassifier,
         *,
         model: BaseChatModel | None = None,
-        kb_tool: BaseTool | None = None,
-        web_tool: BaseTool | None = None,
+        kb_tool: RAGTool | None = None,
+        web_tool: RAGTool | None = None,
         prompt_store: PromptStore | None = None,
         description: str | None = None,
         step_labels: dict[str, str] | None = None,

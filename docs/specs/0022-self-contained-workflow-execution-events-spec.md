@@ -33,10 +33,7 @@ In ADR 0019, `WorkflowExecutionEvent` was introduced to decouple core workflow e
            pass
    if step_labels is None:
        step_labels = DEFAULT_STEP_LABELS
-   return StreamingResponse(
-       SseStreamAdapter.format(runner.stream(wf_input), step_labels=step_labels),
-       ...
-   )
+   return StreamingResponse(SseStreamAdapter.format(runner.stream(wf_input), step_labels=step_labels), ...)
    ```
    The HTTP route redundantly resolves the workflow definition from `WorkflowRegistry`, extracts `info.step_labels`, manages exception fallbacks, and injects the dictionary into `SseStreamAdapter`.
 3. **Leaky Presentation Adapter Interface**: `SseStreamAdapter.format` requires an external `step_labels: dict[str, str] | None` dictionary and computes timestamps (`datetime.now(UTC).timestamp()`) inside the serializer on behalf of execution milestones. It is not a pure stream translator.
@@ -109,9 +106,7 @@ Update `_stream_generator` to resolve `label` at event creation:
 ```python
 # app/rag/workflows/runner.py (_stream_generator)
 step_labels = (wf_def.info.step_labels if wf_def and wf_def.info else None) or DEFAULT_STEP_LABELS
-generation_nodes = (
-    wf_def.info.generation_nodes if wf_def and wf_def.info else None
-) or DEFAULT_GENERATION_NODES
+generation_nodes = (wf_def.info.generation_nodes if wf_def and wf_def.info else None) or DEFAULT_GENERATION_NODES
 stream_steps = getattr(request, "stream_steps", True)
 
 async for event in graph.astream_events(initial_state, version="v2", config=config if config else None):
