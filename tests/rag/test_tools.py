@@ -324,6 +324,10 @@ def test_citation_domain_model():
     with pytest.raises(ValidationError):
         Citation.model_validate({})
 
+    # Frozen/immutable domain model
+    with pytest.raises(ValidationError):
+        c2.title = "Mutated"
+
 
 def test_tool_evidence_artifact_and_subscripting_fallback():
     # Defaults
@@ -351,6 +355,11 @@ def test_tool_evidence_artifact_and_subscripting_fallback():
 
     with pytest.raises(KeyError):
         _ = art["unknown_field"]
+
+    # Field-only subscripting: internal Pydantic attributes are not exposed
+    with pytest.raises(KeyError):
+        _ = art["model_fields"]
+    assert art.get("model_fields", "default_val") == "default_val"
 
 
 def test_tool_result_container_and_tuple_unpacking():
@@ -390,6 +399,10 @@ def test_aggregated_evidence_domain_model():
     assert empty_evidence.citations == []
     assert empty_evidence.retrieved_contexts == []
     assert empty_evidence.source_used == "direct"
+
+    # Frozen/immutable domain model
+    with pytest.raises(ValidationError):
+        evidence.source_used = "other"
 
 
 def test_aggregate_tool_evidence_empty_and_non_tool_messages():

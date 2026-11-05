@@ -21,6 +21,8 @@ def get_invoke_config() -> Any:
 class Citation(BaseModel):
     """Strongly-typed reference citation attributed to retrieved evidence."""
 
+    model_config = ConfigDict(frozen=True)
+
     title: str
     url: str = ""
     type: str = "general"
@@ -37,13 +39,14 @@ class ToolEvidenceArtifact(BaseModel):
     raw_payload: Any = None
 
     def __getitem__(self, key: str) -> Any:
-        try:
-            return getattr(self, key)
-        except AttributeError:
+        if key not in type(self).model_fields:
             raise KeyError(key)
+        return getattr(self, key)
 
     def get(self, key: str, default: Any = None) -> Any:
-        return getattr(self, key, default)
+        if key not in type(self).model_fields:
+            return default
+        return getattr(self, key)
 
 
 class ToolResult(BaseModel):
@@ -61,6 +64,8 @@ class ToolResult(BaseModel):
 
 class AggregatedEvidence(BaseModel):
     """Immutable domain container holding deduplicated citations and chronological contexts."""
+
+    model_config = ConfigDict(frozen=True)
 
     citations: list[Citation] = Field(default_factory=list)
     retrieved_contexts: list[str] = Field(default_factory=list)
