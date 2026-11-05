@@ -350,10 +350,33 @@ class FakeRAGTool(RAGTool):
     aexecute_calls: list[dict[str, Any]] = Field(default_factory=list)
     response_format: Literal["content", "content_and_artifact"] = "content_and_artifact"
 
-    def _run(self, *args: Any, **kwargs: Any) -> tuple[str, ToolEvidenceArtifact]:
+    def model_post_init(self, __context: Any) -> None:
+        super().model_post_init(__context)
+        _normalize_config_annotations(self._run)
+        _normalize_config_annotations(self._arun)
+        if self.func is None:
+            self.func = self._run
+        if self.coroutine is None:
+            self.coroutine = self._arun
+
+    def _run(
+        self,
+        *args: Any,
+        config: RunnableConfig | None = None,
+        **kwargs: Any,
+    ) -> tuple[str, ToolEvidenceArtifact]:
+        call_input = kwargs if kwargs and not args else (args[0] if len(args) == 1 else args)
+        self.execute_calls.append({"input": call_input, "config": config})
         return self.content, self.artifact
 
-    async def _arun(self, *args: Any, **kwargs: Any) -> tuple[str, ToolEvidenceArtifact]:
+    async def _arun(
+        self,
+        *args: Any,
+        config: RunnableConfig | None = None,
+        **kwargs: Any,
+    ) -> tuple[str, ToolEvidenceArtifact]:
+        call_input = kwargs if kwargs and not args else (args[0] if len(args) == 1 else args)
+        self.aexecute_calls.append({"input": call_input, "config": config})
         return self.content, self.artifact
 
     def execute(

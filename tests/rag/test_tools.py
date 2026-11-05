@@ -687,6 +687,50 @@ async def test_fake_rag_tool_async_recording_and_invoke():
     assert isinstance(msg, ToolMessage)
     assert msg.content == "Async static content"
     assert msg.artifact == art
+    assert len(fake.aexecute_calls) == 2
+    assert fake.aexecute_calls[1]["input"] == {"query": "agent call"}
+
+
+@pytest.mark.asyncio
+async def test_fake_rag_tool_tool_call_invocation_records_calls():
+    art = ToolEvidenceArtifact(
+        citations=[Citation(title="Doc 1", url="https://doc1.com")],
+        retrieved_contexts=["Snippet 1"],
+        source_used="fake_source",
+    )
+    fake = FakeRAGTool(
+        name="fake_agent_tool",
+        content="Static agent response",
+        artifact=art,
+    )
+
+    # 1. Sync invoke with tool call dictionary
+    sync_tool_call = {
+        "name": "fake_agent_tool",
+        "args": {"query": "sync search"},
+        "id": "call_sync_1",
+        "type": "tool_call",
+    }
+    sync_msg = fake.invoke(sync_tool_call, config={"tags": ["tag-sync"]})
+    assert isinstance(sync_msg, ToolMessage)
+    assert sync_msg.content == "Static agent response"
+    assert sync_msg.artifact == art
+    assert len(fake.execute_calls) == 1
+    assert fake.execute_calls[0]["input"] == {"query": "sync search"}
+
+    # 2. Async invoke with tool call dictionary
+    async_tool_call = {
+        "name": "fake_agent_tool",
+        "args": {"query": "async search"},
+        "id": "call_async_2",
+        "type": "tool_call",
+    }
+    async_msg = await fake.ainvoke(async_tool_call, config={"tags": ["tag-async"]})
+    assert isinstance(async_msg, ToolMessage)
+    assert async_msg.content == "Static agent response"
+    assert async_msg.artifact == art
+    assert len(fake.aexecute_calls) == 1
+    assert fake.aexecute_calls[0]["input"] == {"query": "async search"}
 
 
 def test_concrete_tools_pure_config_injection():
