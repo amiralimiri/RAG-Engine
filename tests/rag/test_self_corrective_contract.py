@@ -9,6 +9,7 @@ from langchain_core.messages import AIMessage
 from langchain_core.tools import BaseTool
 
 from app.rag.classifiers import FakeClassifierAdapter
+from app.rag.tools import Citation, ToolEvidenceArtifact, ToolResult
 from app.rag.workflows import get_workflow_registry
 from app.rag.workflows.self_corrective import SelfCorrectiveRagWorkflow
 from tests.rag.test_workflow_contracts import BaseWorkflowContractTest
@@ -187,20 +188,20 @@ def test_self_corrective_model_injection_parameters():
 @pytest.mark.asyncio
 async def test_self_corrective_workflow_execution_with_injected_tools():
     """Verify that graph compiled from workflow executes using injected tools."""
-    mock_kb_tool = MagicMock(spec=BaseTool)
+    mock_kb_tool = MagicMock()
     custom_doc = Document(page_content="Injected workflow KB doc", metadata={"source": "workflow/kb.md"})
-    mock_kb_tool.ainvoke = AsyncMock(
-        return_value=(
-            "[Source: workflow/kb.md]\nInjected workflow KB doc",
-            {
-                "documents": [custom_doc],
-                "citations": [{"title": "kb.md", "url": "", "type": "private_kb"}],
-            },
+    mock_kb_tool.aexecute = AsyncMock(
+        return_value=ToolResult(
+            content="[Source: workflow/kb.md]\nInjected workflow KB doc",
+            artifact=ToolEvidenceArtifact(
+                raw_payload=[custom_doc],
+                citations=[Citation(title="kb.md", url="", type="private_kb")],
+            ),
         )
     )
 
-    mock_web_tool = MagicMock(spec=BaseTool)
-    mock_web_tool.ainvoke = AsyncMock(return_value=("web snippet", {}))
+    mock_web_tool = MagicMock()
+    mock_web_tool.aexecute = AsyncMock(return_value=ToolResult(content="web snippet", artifact=ToolEvidenceArtifact()))
 
     classifier = FakeClassifierAdapter(route_decision="kb", kb_grade="good")
     mock_model = MagicMock(spec=BaseChatModel)
@@ -216,7 +217,7 @@ async def test_self_corrective_workflow_execution_with_injected_tools():
 
     graph = wf.get_compiled_graph()
     result = await graph.ainvoke({"question": "How to configure VPN?", "retry_count": 0})
-    mock_kb_tool.ainvoke.assert_awaited_once()
+    mock_kb_tool.aexecute.assert_awaited_once()
     assert result["kb_docs"] == [custom_doc]
     assert result["citations"] == [{"title": "kb.md", "url": "", "type": "private_kb"}]
 

@@ -11,7 +11,7 @@ from app.rag import engine
 from app.rag.classifiers import OpenAIClassifierAdapter
 from app.rag.engine import create_agentic_rag_graph
 from app.rag.prompts import LocalPromptStore, RenderedPrompt, get_prompt_store
-from app.rag.tools import create_retriever_tool, create_web_search_tool
+from app.rag.tools import ToolEvidenceArtifact, ToolResult, create_retriever_tool, create_web_search_tool
 
 
 class RecordingCallbackHandler(BaseCallbackHandler):
@@ -70,7 +70,7 @@ def test_fix_single_llm_retrieve_kb_signature_and_config_forwarding():
     content, artifact = kb_tool.invoke({"query": "how do I connect to VPN?"}, config=custom_config)
 
     mock_retriever.invoke.assert_called_once_with("how do I connect to VPN?", config=custom_config)
-    assert artifact["documents"] == mock_docs
+    assert artifact["raw_payload"] == mock_docs
     assert len(artifact["citations"]) == 1
     assert "VPN info" in content
 
@@ -84,7 +84,7 @@ def test_fix_single_llm_retrieve_kb_default_config_none():
     content, artifact = kb_tool.invoke({"query": "mfa setup"})
 
     mock_retriever.invoke.assert_called_once_with("mfa setup", config=None)
-    assert artifact["documents"] == []
+    assert artifact["raw_payload"] == []
 
 
 def test_fix_single_llm_retrieve_kb_triggers_retriever_callbacks():
@@ -291,9 +291,9 @@ async def test_fix_single_llm_nodes_link_active_langfuse_prompt():
     mock_classifier.grade_web.return_value = MagicMock(grade="weak")
 
     kb_tool = MagicMock()
-    kb_tool.ainvoke = AsyncMock(return_value=("kb content", {"documents": [], "citations": []}))
+    kb_tool.aexecute = AsyncMock(return_value=ToolResult(content="kb content", artifact=ToolEvidenceArtifact()))
     web_tool = MagicMock()
-    web_tool.ainvoke = AsyncMock(return_value=("web content", {"retrieved_contexts": [], "citations": []}))
+    web_tool.aexecute = AsyncMock(return_value=ToolResult(content="web content", artifact=ToolEvidenceArtifact()))
 
     graph = create_agentic_rag_graph(
         mock_classifier,
@@ -333,7 +333,7 @@ async def test_fix_single_llm_nodes_link_active_langfuse_prompt():
     mock_classifier.grade_kb.return_value = MagicMock(grade="good")
 
     kb_tool = MagicMock()
-    kb_tool.ainvoke = AsyncMock(return_value=("kb content", {"documents": [], "citations": []}))
+    kb_tool.aexecute = AsyncMock(return_value=ToolResult(content="kb content", artifact=ToolEvidenceArtifact()))
 
     graph = create_agentic_rag_graph(
         mock_classifier,
@@ -371,9 +371,9 @@ async def test_fix_single_llm_nodes_link_active_langfuse_prompt():
     mock_classifier.grade_web.return_value = MagicMock(grade="good")
 
     kb_tool = MagicMock()
-    kb_tool.ainvoke = AsyncMock(return_value=("kb content", {"documents": [], "citations": []}))
+    kb_tool.aexecute = AsyncMock(return_value=ToolResult(content="kb content", artifact=ToolEvidenceArtifact()))
     web_tool = MagicMock()
-    web_tool.ainvoke = AsyncMock(return_value=("web content", {"retrieved_contexts": [], "citations": []}))
+    web_tool.aexecute = AsyncMock(return_value=ToolResult(content="web content", artifact=ToolEvidenceArtifact()))
 
     graph = create_agentic_rag_graph(
         mock_classifier,

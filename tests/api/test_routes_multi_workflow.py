@@ -17,6 +17,7 @@ from app.api.schemas import (
     WorkflowListResponse,
 )
 from app.main import app
+from app.rag.tools import Citation, ToolEvidenceArtifact
 from app.rag.workflows import (
     get_workflow_registry,
 )
@@ -181,9 +182,14 @@ class TestPostChatMultiWorkflow:
                     tool_calls=[{"name": "knowledge_base_search", "args": {"query": "VPN"}, "id": "tc1"}],
                 ),
                 ToolMessage(
-                    content="[Source: vpn_guide.pdf] Use Okta MFA to log into VPN.",
+                    content="Use Okta MFA to log into VPN.",
                     name="knowledge_base_search",
                     tool_call_id="tc1",
+                    artifact=ToolEvidenceArtifact(
+                        citations=[Citation(title="vpn_guide.pdf", url="", type="private_kb")],
+                        source_used="vectorstore",
+                        retrieved_contexts=["Use Okta MFA to log into VPN."],
+                    ),
                 ),
                 AIMessage(content="You should use Okta MFA to log into the corporate VPN."),
             ],
@@ -319,9 +325,14 @@ class TestPostChatStreamMultiWorkflow:
                     "output": {
                         "messages": [
                             ToolMessage(
-                                content="[Source: network_faq.pdf] The network speed is 1Gbps.",
+                                content="The network speed is 1Gbps.",
                                 name="knowledge_base_search",
                                 tool_call_id="call_1",
+                                artifact=ToolEvidenceArtifact(
+                                    citations=[Citation(title="network_faq.pdf", url="", type="private_kb")],
+                                    source_used="vectorstore",
+                                    retrieved_contexts=["The network speed is 1Gbps."],
+                                ),
                             )
                         ]
                     }

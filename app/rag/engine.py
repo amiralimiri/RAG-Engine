@@ -55,21 +55,6 @@ def _format_chat_history(messages: Any) -> str:
     return "\n".join(lines)
 
 
-def _unpack_tool_output(raw_output: Any) -> tuple[str, dict[str, Any]]:
-    if isinstance(raw_output, tuple) and len(raw_output) == 2:
-        content, artifact = raw_output
-    elif hasattr(raw_output, "artifact") and getattr(raw_output, "artifact") is not None:
-        content, artifact = getattr(raw_output, "content", ""), getattr(raw_output, "artifact")
-    else:
-        content, artifact = str(raw_output), {}
-
-    if not isinstance(content, str):
-        content = str(content)
-    if not isinstance(artifact, dict):
-        artifact = {}
-    return content, artifact
-
-
 def get_chat_model() -> BaseChatModel:
     """Instantiate a stateless ChatOpenAI model configured with application settings."""
     settings = get_settings()
@@ -232,12 +217,15 @@ def create_agentic_rag_graph(
     async def node_retrieve_kb(state: AgentState, config: RunnableConfig | None = None) -> dict[str, Any]:
         structlog.contextvars.bind_contextvars(step="retrieve_kb")
         search_query = state.get("current_query") or state["question"]
-        raw_output = await active_kb_tool.ainvoke({"query": search_query}, config=config)
-        content, artifact = _unpack_tool_output(raw_output)
+        result = await active_kb_tool.aexecute({"query": search_query}, config=config)
 
-        docs = artifact.get("documents", [])
-        citations = artifact.get("citations", [])
-        retrieved_contexts = [d.page_content for d in docs] if docs else ([content] if content else [])
+        docs = result.artifact.raw_payload if isinstance(result.artifact.raw_payload, list) else []
+        citations = [c.model_dump() if hasattr(c, "model_dump") else c for c in result.artifact.citations]
+        retrieved_contexts = (
+            result.artifact.retrieved_contexts
+            if result.artifact.retrieved_contexts
+            else ([result.content] if result.content else [])
+        )
 
         return {
             "kb_docs": docs,
@@ -263,16 +251,17 @@ def create_agentic_rag_graph(
     async def node_search_web(state: AgentState, config: RunnableConfig | None = None) -> dict[str, Any]:
         structlog.contextvars.bind_contextvars(step="search_web")
         search_query = state.get("current_query") or state["question"]
-        raw_output = await active_web_tool.ainvoke({"query": search_query}, config=config)
-        content, artifact = _unpack_tool_output(raw_output)
+        result = await active_web_tool.aexecute({"query": search_query}, config=config)
 
-        citations = artifact.get("citations", [])
-        contexts = artifact.get("retrieved_contexts", [])
-        if not contexts and content:
-            contexts = [content]
+        citations = [c.model_dump() if hasattr(c, "model_dump") else c for c in result.artifact.citations]
+        contexts = (
+            result.artifact.retrieved_contexts
+            if result.artifact.retrieved_contexts
+            else ([result.content] if result.content else [])
+        )
 
         return {
-            "web_results": content,
+            "web_results": result.content,
             "citations": citations,
             "source_used": "web",
             "retrieved_contexts": contexts,
@@ -325,23 +314,11 @@ def create_agentic_rag_graph(
         )
         response = await active_model.ainvoke(rendered.text, config=cast(RunnableConfig, rendered.config))
         answer = response.content if hasattr(response, "content") else str(response)
-        citations = state.get("citations")
-        if not citations:
-            citations = []
-            seen = set()
-            for d in state["kb_docs"]:
-                src = d.metadata.get("source", "Private KB")
-                if src not in seen:
-                    seen.add(src)
-                    citations.append({"title": src.split("/")[-1], "url": "", "type": "private_kb"})
-        retrieved_contexts = state.get("retrieved_contexts")
-        if retrieved_contexts is None:
-            retrieved_contexts = [d.page_content for d in state.get("kb_docs", [])]
         return {
             "answer": answer,
             "source_used": "vectorstore",
-            "citations": citations,
-            "retrieved_contexts": retrieved_contexts,
+            "citations": state.get("citations", []),
+            "retrieved_contexts": state.get("retrieved_contexts", []),
             "trace": ["Answer generation → PRIVATE KB"],
         }
 

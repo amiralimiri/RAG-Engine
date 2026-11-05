@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 import threading
 from collections.abc import Sequence
 from typing import Any
@@ -15,6 +14,7 @@ from langchain_core.messages import (
 )
 from langchain_core.tools import BaseTool
 
+from app.rag.tools.base import AggregatedEvidence, aggregate_tool_evidence
 from app.rag.workflows.base import (
     EvalContext,
     WorkflowInfo,
@@ -45,38 +45,32 @@ def _is_tool_message(m: Any) -> bool:
     return isinstance(m, ToolMessage) or getattr(m, "type", "") == "tool"
 
 
-def _extract_tools_called(messages: list[Any]) -> list[str]:
-    """Extracts unique tool names invoked across tool calls and tool output messages."""
-    tools_called: list[str] = []
-    for m in messages:
-        tool_name = getattr(m, "name", None)
-        if hasattr(m, "tool_calls") and m.tool_calls:
-            for tc in m.tool_calls:
-                tc_name = tc.get("name") if isinstance(tc, dict) else getattr(tc, "name", "")
-                if tc_name and tc_name not in tools_called:
-                    tools_called.append(tc_name)
-        if _is_tool_message(m):
-            if tool_name and tool_name not in tools_called:
-                tools_called.append(tool_name)
-    return tools_called
-
-
-def _resolve_source_used(
-    tools_called: Sequence[str],
-    explicit_source: str | None = None,
-) -> str:
-    """Consistently resolves evidence source used from executed tools and explicit source."""
+def _resolve_evidence_source(evidence: AggregatedEvidence, explicit_source: str | None = None) -> str:
+    """Consistently resolves evidence source used from aggregated tool evidence and explicit source."""
     if explicit_source in ("error", "error_fallback"):
         return "error"
-    if "knowledge_base_search" in tools_called and "web_search" in tools_called:
-        return "react_agent"
-    if "knowledge_base_search" in tools_called:
-        return "vectorstore"
-    if "web_search" in tools_called:
-        return "web_search"
-    if tools_called:
-        return "react_agent"
+    if evidence.source_used != "direct":
+        return evidence.source_used
     return explicit_source or "direct"
+
+
+def _extract_contexts(
+    evidence: AggregatedEvidence,
+    final_state: dict[str, Any],
+    messages: Sequence[Any],
+) -> list[str]:
+    """Collects and deduplicates retrieved contexts from aggregated evidence, state, and tool messages."""
+    retrieved: list[str] = list(final_state.get("retrieved_contexts", []))
+    for ctx in evidence.retrieved_contexts:
+        if ctx not in retrieved:
+            retrieved.append(ctx)
+    if not retrieved:
+        for m in messages:
+            if _is_tool_message(m):
+                c_str = str(m.content)
+                if c_str not in retrieved:
+                    retrieved.append(c_str)
+    return retrieved
 
 
 class ReActAgentWorkflow:
@@ -182,43 +176,14 @@ class ReActAgentWorkflow:
         else:
             answer = final_state.get("answer") or ""
 
-        citations: list[dict[str, Any]] = []
-        retrieved_contexts: list[str] = list(final_state.get("retrieved_contexts", []))
-        tools_called = _extract_tools_called(messages)
+        evidence = aggregate_tool_evidence(messages)
+        source_used = _resolve_evidence_source(evidence, final_state.get("source_used"))
 
-        for m in messages:
-            if _is_tool_message(m):
-                tool_name = getattr(m, "name", None)
-                content_str = str(m.content)
-                if content_str not in retrieved_contexts:
-                    retrieved_contexts.append(content_str)
+        citations = [c.model_dump() if hasattr(c, "model_dump") else c for c in evidence.citations]
+        if not citations and final_state.get("citations"):
+            citations = final_state.get("citations")
 
-                # 1. Prefer structured artifact if attached to tool output
-                artifact = getattr(m, "artifact", None)
-                if isinstance(artifact, list) and artifact:
-                    for item in artifact:
-                        if isinstance(item, dict):
-                            if not any(
-                                (c.get("title") and c.get("title") == item.get("title"))
-                                or (c.get("url") and c.get("url") == item.get("url"))
-                                for c in citations
-                            ):
-                                citations.append(item)
-                # 2. Fallback to regex scraping only if tool did not attach structured artifact
-                elif tool_name == "knowledge_base_search":
-                    for src in re.findall(r"\[Source:\s*([^\]]+)\]", content_str):
-                        title = src.split("/")[-1].split("\\")[-1]
-                        if not any(c.get("title") == title for c in citations):
-                            citations.append({"title": title, "url": "", "type": "private_kb"})
-                elif tool_name == "web_search":
-                    for title, url in re.findall(r"Title:\s*([^\n]+)\nURL:\s*([^\n]+)", content_str):
-                        if not any(c.get("url") == url for c in citations):
-                            citations.append({"title": title or url, "url": url, "type": "web"})
-
-        source_used = _resolve_source_used(
-            tools_called=tools_called,
-            explicit_source=final_state.get("source_used"),
-        )
+        retrieved_contexts = _extract_contexts(evidence, final_state, messages)
 
         question = final_state.get("question")
         if not question:
@@ -230,8 +195,16 @@ class ReActAgentWorkflow:
         trace: list[str] = []
         if question:
             trace.append(f"Inquiry received: '{question}'")
-        for t in tools_called:
-            trace.append(f"ReAct Tool Executed: {t}")
+        for m in messages:
+            if _is_tool_message(m):
+                tool_name = getattr(m, "name", None)
+                if tool_name and f"ReAct Tool Executed: {tool_name}" not in trace:
+                    trace.append(f"ReAct Tool Executed: {tool_name}")
+            elif hasattr(m, "tool_calls") and m.tool_calls:
+                for tc in m.tool_calls:
+                    tc_name = tc.get("name") if isinstance(tc, dict) else getattr(tc, "name", "")
+                    if tc_name and f"ReAct Tool Executed: {tc_name}" not in trace:
+                        trace.append(f"ReAct Tool Executed: {tc_name}")
         trace.append("Synthesized conversational response")
 
         resolved_tid = trace_id or final_state.get("trace_id")
@@ -243,19 +216,18 @@ class ReActAgentWorkflow:
             trace=trace or final_state.get("trace", []),
             rewritten_query=question,
             trace_id=resolved_tid,
+            retrieved_contexts=retrieved_contexts,
         )
 
     def extract_eval_context(self, final_state: dict[str, Any]) -> EvalContext:
         messages = final_state.get("messages", [])
-        retrieved: list[str] = list(final_state.get("retrieved_contexts", []))
-        if not retrieved:
-            for m in messages:
-                if _is_tool_message(m):
-                    retrieved.append(str(m.content))
-        tools_called = _extract_tools_called(messages)
-        source = _resolve_source_used(tools_called=tools_called, explicit_source=final_state.get("source_used"))
+        evidence = aggregate_tool_evidence(messages)
+        retrieved = _extract_contexts(evidence, final_state, messages)
+
+        source = _resolve_evidence_source(evidence, final_state.get("source_used"))
         if source == "error":
             source = "direct"
+
         return EvalContext(source_used=source, retrieved_contexts=retrieved)
 
     def handle_error(self, exc: Exception, current_state: dict[str, Any]) -> dict[str, Any]:

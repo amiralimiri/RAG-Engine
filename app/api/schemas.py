@@ -245,7 +245,9 @@ class SessionDetailResponse(BaseModel):
         turns: list[ConversationTurn] | None = None,
     ) -> SessionDetailResponse:
         """Construct SessionDetailResponse from domain SessionInfo/ConversationSession and ConversationTurns."""
-        resolved_turns = turns if turns is not None else (session.turns if isinstance(session, ConversationSession) else [])
+        resolved_turns = (
+            turns if turns is not None else (session.turns if isinstance(session, ConversationSession) else [])
+        )
         return cls(
             session_id=session.session_id,
             title=session.title,

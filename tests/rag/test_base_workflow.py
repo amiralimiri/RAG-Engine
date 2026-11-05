@@ -309,3 +309,32 @@ def test_bound_execution_context_canonical_exports():
     assert "BoundExecutionContext" in base_pkg.__all__
     assert getattr(workflows_pkg, "BoundExecutionContext") is BoundExecutionContext
     assert getattr(base_pkg, "BoundExecutionContext") is BoundExecutionContext
+
+
+def test_workflow_output_structured_evidence_alignment():
+    """Verify WorkflowOutput correctly accepts structured citations and contexts from ToolEvidenceArtifact."""
+    from langchain_core.messages import ToolMessage
+
+    from app.rag.tools.base import Citation, ToolEvidenceArtifact, aggregate_tool_evidence
+
+    artifact = ToolEvidenceArtifact(
+        citations=[Citation(title="Network Guide", url="https://corp.local/net", type="private_kb")],
+        retrieved_contexts=["Network configuration steps."],
+        source_used="vectorstore",
+    )
+    msg = ToolMessage(content="Network config details", artifact=artifact, tool_call_id="call_999")
+    evidence = aggregate_tool_evidence([msg])
+
+    wf_out = WorkflowOutput(
+        workflow="test_wf",
+        answer="Follow the internal network guide.",
+        source_used=evidence.source_used,
+        citations=[c.model_dump() for c in evidence.citations],
+        retrieved_contexts=evidence.retrieved_contexts,
+    )
+
+    assert wf_out.source_used == "vectorstore"
+    assert len(wf_out.citations) == 1
+    assert wf_out.citations[0]["title"] == "Network Guide"
+    assert wf_out.citations[0]["type"] == "private_kb"
+    assert wf_out.retrieved_contexts == ["Network configuration steps."]

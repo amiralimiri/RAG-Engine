@@ -9,6 +9,7 @@ from app.rag import engine
 from app.rag.engine import create_agentic_rag_graph
 from app.rag.prompts import LocalPromptStore
 from app.rag.state import AgentState
+from app.rag.tools import Citation, ToolEvidenceArtifact, ToolResult
 from app.rag.workflows.registry import get_workflow_registry
 from app.rag.workflows.runner import WorkflowRunner
 
@@ -61,10 +62,15 @@ def test_graph_kb_retrieval_and_generation_populates_retrieved_contexts():
     mock_classifier.grade_kb.return_value = MagicMock(grade="good")
 
     mock_kb_tool = MagicMock()
-    mock_kb_tool.ainvoke = AsyncMock(
-        return_value=(
-            "Formatted KB docs",
-            {"documents": docs, "citations": [{"title": "vpn.md", "url": "", "type": "private_kb"}]},
+    mock_kb_tool.aexecute = AsyncMock(
+        return_value=ToolResult(
+            content="Formatted KB docs",
+            artifact=ToolEvidenceArtifact(
+                raw_payload=docs,
+                citations=[Citation(title="vpn.md", url="", type="private_kb")],
+                retrieved_contexts=["Chunk 1: VPN guide.", "Chunk 2: Troubleshooting."],
+                source_used="vectorstore",
+            ),
         )
     )
 
@@ -110,22 +116,25 @@ def test_graph_web_search_and_generation_populates_retrieved_contexts():
     mock_classifier.grade_web.return_value = MagicMock(grade="good")
 
     mock_kb_tool = MagicMock()
-    mock_kb_tool.ainvoke = AsyncMock(
-        return_value=(
-            "Stale KB chunk",
-            {"documents": [Document(page_content="Prior rejected KB chunk", metadata={})], "citations": []},
+    mock_kb_tool.aexecute = AsyncMock(
+        return_value=ToolResult(
+            content="Stale KB chunk",
+            artifact=ToolEvidenceArtifact(
+                raw_payload=[Document(page_content="Prior rejected KB chunk", metadata={})],
+            ),
         )
     )
 
     web_snippet = "Title: Vendor Support\nURL: https://example.com/vpn\nContent: Official Cisco AnyConnect docs"
     mock_web_tool = MagicMock()
-    mock_web_tool.ainvoke = AsyncMock(
-        return_value=(
-            "External answer",
-            {
-                "retrieved_contexts": [web_snippet],
-                "citations": [{"title": "Vendor Support", "url": "https://example.com/vpn", "type": "web"}],
-            },
+    mock_web_tool.aexecute = AsyncMock(
+        return_value=ToolResult(
+            content="External answer",
+            artifact=ToolEvidenceArtifact(
+                retrieved_contexts=[web_snippet],
+                citations=[Citation(title="Vendor Support", url="https://example.com/vpn", type="web")],
+                source_used="web_search",
+            ),
         )
     )
 
@@ -256,10 +265,10 @@ def test_graph_insufficient_path_returns_empty_retrieved_contexts(monkeypatch):
     mock_classifier.grade_web.return_value = MagicMock(grade="weak")
 
     mock_kb_tool = MagicMock()
-    mock_kb_tool.ainvoke = AsyncMock(return_value=("No docs", {"documents": [], "citations": []}))
+    mock_kb_tool.aexecute = AsyncMock(return_value=ToolResult(content="No docs", artifact=ToolEvidenceArtifact()))
 
     mock_web_tool = MagicMock()
-    mock_web_tool.ainvoke = AsyncMock(return_value=("No results", {"retrieved_contexts": [], "citations": []}))
+    mock_web_tool.aexecute = AsyncMock(return_value=ToolResult(content="No results", artifact=ToolEvidenceArtifact()))
 
     graph = create_agentic_rag_graph(
         classifier=mock_classifier,

@@ -8,7 +8,6 @@ import structlog
 from langchain_core.documents import Document
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage, HumanMessage
-from langchain_core.tools import BaseTool
 
 from app.rag.classifiers import FakeClassifierAdapter
 from app.rag.engine import (
@@ -18,7 +17,7 @@ from app.rag.engine import (
     get_chat_model,
 )
 from app.rag.prompts import LocalPromptStore
-from app.rag.tools import create_retriever_tool, create_web_search_tool
+from app.rag.tools import Citation, ToolEvidenceArtifact, ToolResult, create_retriever_tool, create_web_search_tool
 
 
 @pytest.fixture
@@ -251,26 +250,29 @@ def test_nodes_bind_contextvars_steps(mock_llm, mock_kb_tool, mock_web_tool):
 
 @pytest.mark.asyncio
 async def test_create_agentic_rag_graph_accepts_injected_kb_and_web_tools(mock_llm):
-    custom_kb_tool = MagicMock(spec=BaseTool)
+    custom_kb_tool = MagicMock()
     custom_kb_doc = Document(page_content="Injected KB content", metadata={"source": "injected/kb.md"})
-    custom_kb_tool.ainvoke = AsyncMock(
-        return_value=(
-            "[Source: injected/kb.md]\nInjected KB content",
-            {
-                "documents": [custom_kb_doc],
-                "citations": [{"title": "kb.md", "url": "", "type": "private_kb"}],
-            },
+    custom_kb_tool.aexecute = AsyncMock(
+        return_value=ToolResult(
+            content="[Source: injected/kb.md]\nInjected KB content",
+            artifact=ToolEvidenceArtifact(
+                raw_payload=[custom_kb_doc],
+                citations=[Citation(title="kb.md", url="", type="private_kb")],
+                retrieved_contexts=["Injected KB content"],
+                source_used="vectorstore",
+            ),
         )
     )
 
-    custom_web_tool = MagicMock(spec=BaseTool)
-    custom_web_tool.ainvoke = AsyncMock(
-        return_value=(
-            "Web search snippet",
-            {
-                "citations": [{"title": "Web Title", "url": "https://example.com", "type": "web"}],
-                "retrieved_contexts": ["Title: Web Title\nURL: https://example.com\nContent: Web snippet"],
-            },
+    custom_web_tool = MagicMock()
+    custom_web_tool.aexecute = AsyncMock(
+        return_value=ToolResult(
+            content="Web search snippet",
+            artifact=ToolEvidenceArtifact(
+                citations=[Citation(title="Web Title", url="https://example.com", type="web")],
+                retrieved_contexts=["Title: Web Title\nURL: https://example.com\nContent: Web snippet"],
+                source_used="web_search",
+            ),
         )
     )
 
@@ -283,7 +285,7 @@ async def test_create_agentic_rag_graph_accepts_injected_kb_and_web_tools(mock_l
     )
 
     result = await graph.ainvoke({"question": "How to do something?", "retry_count": 0})
-    custom_kb_tool.ainvoke.assert_awaited_once()
+    custom_kb_tool.aexecute.assert_awaited_once()
     assert result["kb_docs"] == [custom_kb_doc]
     assert result["retrieved_contexts"] == ["Injected KB content"]
     assert result["citations"] == [{"title": "kb.md", "url": "", "type": "private_kb"}]
@@ -291,17 +293,23 @@ async def test_create_agentic_rag_graph_accepts_injected_kb_and_web_tools(mock_l
 
 @pytest.mark.asyncio
 async def test_create_agentic_rag_graph_injected_web_tool_fallback(mock_llm):
-    custom_kb_tool = MagicMock(spec=BaseTool)
-    custom_kb_tool.ainvoke = AsyncMock(return_value=("No docs", {"documents": [], "citations": []}))
+    custom_kb_tool = MagicMock()
+    custom_kb_tool.aexecute = AsyncMock(
+        return_value=ToolResult(
+            content="No docs",
+            artifact=ToolEvidenceArtifact(),
+        )
+    )
 
-    custom_web_tool = MagicMock(spec=BaseTool)
-    custom_web_tool.ainvoke = AsyncMock(
-        return_value=(
-            "Injected web snippet",
-            {
-                "citations": [{"title": "Custom Web", "url": "https://custom.com", "type": "web"}],
-                "retrieved_contexts": ["Title: Custom Web\nURL: https://custom.com\nContent: Injected web snippet"],
-            },
+    custom_web_tool = MagicMock()
+    custom_web_tool.aexecute = AsyncMock(
+        return_value=ToolResult(
+            content="Injected web snippet",
+            artifact=ToolEvidenceArtifact(
+                citations=[Citation(title="Custom Web", url="https://custom.com", type="web")],
+                retrieved_contexts=["Title: Custom Web\nURL: https://custom.com\nContent: Injected web snippet"],
+                source_used="web_search",
+            ),
         )
     )
 
@@ -314,7 +322,7 @@ async def test_create_agentic_rag_graph_injected_web_tool_fallback(mock_llm):
     )
 
     result = await graph.ainvoke({"question": "Need external info", "retry_count": 0})
-    custom_web_tool.ainvoke.assert_awaited_once()
+    custom_web_tool.aexecute.assert_awaited_once()
     assert result["source_used"] == "web_search"
     assert result["web_results"] == "Injected web snippet"
     assert result["citations"] == [{"title": "Custom Web", "url": "https://custom.com", "type": "web"}]
@@ -342,12 +350,15 @@ def test_graph_nodes_are_native_async_coroutines():
 
 @pytest.mark.asyncio
 async def test_graph_async_streaming_events_retrieve_and_search(mock_llm):
-    custom_kb_tool = MagicMock(spec=BaseTool)
+    custom_kb_tool = MagicMock()
     custom_kb_doc = Document(page_content="Async streaming KB doc", metadata={"source": "streaming.md"})
-    custom_kb_tool.ainvoke = AsyncMock(
-        return_value=(
-            "[Source: streaming.md]\nAsync streaming KB doc",
-            {"documents": [custom_kb_doc], "citations": [{"title": "streaming.md", "url": "", "type": "private_kb"}]},
+    custom_kb_tool.aexecute = AsyncMock(
+        return_value=ToolResult(
+            content="[Source: streaming.md]\nAsync streaming KB doc",
+            artifact=ToolEvidenceArtifact(
+                raw_payload=[custom_kb_doc],
+                citations=[Citation(title="streaming.md", url="", type="private_kb")],
+            ),
         )
     )
 
@@ -366,16 +377,15 @@ async def test_graph_async_streaming_events_retrieve_and_search(mock_llm):
     assert "retrieve_kb" in node_names
 
 
-def test_unpack_tool_output_handles_empty_dict_artifact():
+def test_to_tool_result_handles_empty_dict_artifact():
     from langchain_core.messages import ToolMessage
 
-    from app.rag.engine import _unpack_tool_output
+    from app.rag.tools.base import ToolEvidenceArtifact, _to_tool_result
 
     msg = ToolMessage(content="Found nothing", artifact={}, tool_call_id="call_123")
-    content, artifact = _unpack_tool_output(msg)
-    assert content == "Found nothing"
-    assert artifact == {}
-    assert isinstance(artifact, dict)
+    result = _to_tool_result(msg)
+    assert result.content == "Found nothing"
+    assert isinstance(result.artifact, ToolEvidenceArtifact)
 
 
 @pytest.mark.asyncio

@@ -90,6 +90,8 @@ def test_react_agent_to_initial_state_multi_turn():
 
 
 def test_react_agent_to_workflow_output_citations_and_source():
+    from app.rag.tools.base import Citation, ToolEvidenceArtifact
+
     wf = ReActAgentWorkflow(llm=MockChatModel(), tools=[mock_dummy_tool])
 
     final_state = {
@@ -97,14 +99,24 @@ def test_react_agent_to_workflow_output_citations_and_source():
         "messages": [
             HumanMessage(content="How to set up VPN?"),
             ToolMessage(
-                content="[Source: /docs/network/vpn_setup.md]\nDownload OpenVPN client.",
+                content="Download OpenVPN client.",
                 name="knowledge_base_search",
                 tool_call_id="call_1",
+                artifact=ToolEvidenceArtifact(
+                    citations=[Citation(title="vpn_setup.md", url="", type="private_kb")],
+                    retrieved_contexts=["Download OpenVPN client."],
+                    source_used="vectorstore",
+                ),
             ),
             ToolMessage(
-                content="Title: Official OpenVPN Community\nURL: https://openvpn.net\nContent: Client downloads.",
+                content="Client downloads.",
                 name="web_search",
                 tool_call_id="call_2",
+                artifact=ToolEvidenceArtifact(
+                    citations=[Citation(title="Official OpenVPN Community", url="https://openvpn.net", type="web")],
+                    retrieved_contexts=["Client downloads."],
+                    source_used="web_search",
+                ),
             ),
             AIMessage(content="You can download OpenVPN following our internal guide."),
         ],
@@ -229,15 +241,22 @@ def test_react_agent_error_source_normalization(explicit_source, expected_resp_s
 )
 def test_react_agent_harmonized_source_resolution(tools_in_messages, expected_source, expected_eval_source):
     """Verify source resolution is harmonized between to_workflow_output and extract_eval_context."""
+    from app.rag.tools.base import ToolEvidenceArtifact
+
     wf = ReActAgentWorkflow(llm=MockChatModel(), tools=[mock_dummy_tool])
 
     messages = [HumanMessage(content="Test inquiry")]
     for i, tool_name in enumerate(tools_in_messages):
+        source = "vectorstore" if tool_name == "knowledge_base_search" else "web_search"
         messages.append(
             ToolMessage(
                 content=f"Result from {tool_name}",
                 name=tool_name,
                 tool_call_id=f"call_{i}",
+                artifact=ToolEvidenceArtifact(
+                    source_used=source,
+                    retrieved_contexts=[f"Result from {tool_name}"],
+                ),
             )
         )
     messages.append(AIMessage(content="Final synthesized answer"))

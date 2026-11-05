@@ -68,10 +68,15 @@ class AggregatedEvidence(BaseModel):
 def _extract_artifact(item: Any) -> ToolEvidenceArtifact | None:
     if isinstance(item, ToolEvidenceArtifact):
         return item
-    if hasattr(item, "artifact"):
+    if hasattr(item, "artifact") and getattr(item, "artifact") is not None:
         raw_art = getattr(item, "artifact")
         if isinstance(raw_art, ToolEvidenceArtifact):
             return raw_art
+        if isinstance(raw_art, dict):
+            try:
+                return ToolEvidenceArtifact.model_validate(raw_art)
+            except Exception:
+                pass
     return None
 
 
@@ -174,7 +179,16 @@ def _to_tool_result(raw: Any) -> ToolResult:
     if isinstance(artifact, ToolEvidenceArtifact):
         typed_art = artifact
     elif isinstance(artifact, dict):
-        typed_art = ToolEvidenceArtifact.model_validate(artifact)
+        raw_payload = artifact.get("raw_payload", artifact.get("documents"))
+        citations = artifact.get("citations", [])
+        retrieved_contexts = artifact.get("retrieved_contexts", [])
+        source_used = artifact.get("source_used", "direct")
+        typed_art = ToolEvidenceArtifact(
+            citations=citations,
+            retrieved_contexts=retrieved_contexts,
+            source_used=source_used,
+            raw_payload=raw_payload,
+        )
     elif artifact is None:
         typed_art = ToolEvidenceArtifact()
     else:

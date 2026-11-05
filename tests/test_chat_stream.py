@@ -25,11 +25,11 @@ from langchain_core.documents import Document
 from langchain_core.language_models.fake_chat_models import FakeListChatModel
 from langchain_core.messages import AIMessage, AIMessageChunk, ToolMessage
 from langchain_core.messages.tool import ToolCallChunk
-from langchain_core.tools import BaseTool
 
 from app.api.streaming import SseStreamAdapter
 from app.main import app
 from app.rag.classifiers import FakeClassifierAdapter
+from app.rag.tools import Citation, ToolEvidenceArtifact, ToolResult
 from app.rag.workflows import get_workflow_registry
 from app.rag.workflows.base import WorkflowInput
 from app.rag.workflows.runner import get_workflow_runner
@@ -933,9 +933,14 @@ class TestMultiWorkflowStreamingE2E:
                     "output": {
                         "messages": [
                             ToolMessage(
-                                content="[Source: password_policy.pdf] Passwords expire every 90 days.",
+                                content="Passwords expire every 90 days.",
                                 name="knowledge_base_search",
                                 tool_call_id="call_abc",
+                                artifact=ToolEvidenceArtifact(
+                                    citations=[Citation(title="password_policy.pdf", url="", type="private_kb")],
+                                    retrieved_contexts=["Passwords expire every 90 days."],
+                                    source_used="vectorstore",
+                                ),
                             )
                         ]
                     }
@@ -1101,14 +1106,16 @@ class TestUnifiedBaseToolStreamingRegression:
         kb_doc = Document(
             page_content="Official company VPN setup guide.", metadata={"source": "docs/network/vpn_setup.md"}
         )
-        kb_tool = MagicMock(spec=BaseTool)
-        kb_tool.ainvoke = AsyncMock(
-            return_value=(
-                "[Source: docs/network/vpn_setup.md]\nOfficial company VPN setup guide.",
-                {
-                    "documents": [kb_doc],
-                    "citations": [{"title": "vpn_setup.md", "url": "", "type": "private_kb"}],
-                },
+        kb_tool = MagicMock()
+        kb_tool.aexecute = AsyncMock(
+            return_value=ToolResult(
+                content="[Source: docs/network/vpn_setup.md]\nOfficial company VPN setup guide.",
+                artifact=ToolEvidenceArtifact(
+                    raw_payload=[kb_doc],
+                    citations=[Citation(title="vpn_setup.md", url="", type="private_kb")],
+                    retrieved_contexts=["Official company VPN setup guide."],
+                    source_used="vectorstore",
+                ),
             )
         )
 
@@ -1177,21 +1184,27 @@ class TestUnifiedBaseToolStreamingRegression:
 
         get_workflow_runner(eval_task_fn=fake_eval)
 
-        kb_tool = MagicMock(spec=BaseTool)
-        kb_tool.ainvoke = AsyncMock(return_value=("No internal KB docs found", {"documents": [], "citations": []}))
+        kb_tool = MagicMock()
+        kb_tool.aexecute = AsyncMock(
+            return_value=ToolResult(
+                content="No internal KB docs found",
+                artifact=ToolEvidenceArtifact(),
+            )
+        )
 
-        web_tool = MagicMock(spec=BaseTool)
-        web_tool.ainvoke = AsyncMock(
-            return_value=(
-                "Tavily search answer: Run apt-get install docker-ce.",
-                {
-                    "citations": [
-                        {"title": "Docker Install Docs", "url": "https://docs.docker.com/engine/install", "type": "web"}
+        web_tool = MagicMock()
+        web_tool.aexecute = AsyncMock(
+            return_value=ToolResult(
+                content="Tavily search answer: Run apt-get install docker-ce.",
+                artifact=ToolEvidenceArtifact(
+                    citations=[
+                        Citation(title="Docker Install Docs", url="https://docs.docker.com/engine/install", type="web")
                     ],
-                    "retrieved_contexts": [
+                    retrieved_contexts=[
                         "Title: Docker Install Docs\nURL: https://docs.docker.com/engine/install\nContent: Run apt-get install docker-ce."
                     ],
-                },
+                    source_used="web_search",
+                ),
             )
         )
 
@@ -1249,8 +1262,8 @@ class TestUnifiedBaseToolStreamingRegression:
 
     async def test_streaming_transparent_tool_error_propagation(self, monkeypatch):
         """Verify that provider exception raised inside an async tool node propagates and yields SSE error frame."""
-        kb_tool = MagicMock(spec=BaseTool)
-        kb_tool.ainvoke = AsyncMock(side_effect=ConnectionError("Vectorstore Pinecone connection timed out"))
+        kb_tool = MagicMock()
+        kb_tool.aexecute = AsyncMock(side_effect=ConnectionError("Vectorstore Pinecone connection timed out"))
 
         classifier = FakeClassifierAdapter(route_decision="kb")
         workflow = SelfCorrectiveRagWorkflow(
@@ -1373,9 +1386,7 @@ class TestRunnerStreamWithSseStreamAdapter:
         runner = get_workflow_runner()
         request = WorkflowInput(question="Direct test question", workflow="fix_single_llm")
 
-        raw_sse_frames = [
-            frame async for frame in SseStreamAdapter.format(runner.stream(request))
-        ]
+        raw_sse_frames = [frame async for frame in SseStreamAdapter.format(runner.stream(request))]
 
         assert len(raw_sse_frames) == 3
         # 1. Step frame

@@ -274,8 +274,10 @@ class TestChatMemoryRoutes:
                 created_at=datetime.now(UTC),
             )
         )
-        with patch.object(memory_store, "aget_session", wraps=memory_store.aget_session) as spy_get_session, \
-             patch.object(memory_store, "aget_turns", wraps=memory_store.aget_turns) as spy_get_turns:
+        with (
+            patch.object(memory_store, "aget_session", wraps=memory_store.aget_session) as spy_get_session,
+            patch.object(memory_store, "aget_turns", wraps=memory_store.aget_turns) as spy_get_turns,
+        ):
             resp = client.get(f"/api/chat/{session_id}")
             assert resp.status_code == 200
             assert spy_get_session.call_count == 1
@@ -304,9 +306,11 @@ class TestChatMemoryRoutes:
                 created_at=datetime.now(UTC),
             )
         )
-        with patch.object(memory_store, "afork_session", wraps=memory_store.afork_session) as spy_fork, \
-             patch.object(memory_store, "aget_session", wraps=memory_store.aget_session) as spy_get_session, \
-             patch.object(memory_store, "aget_turns", wraps=memory_store.aget_turns) as spy_get_turns:
+        with (
+            patch.object(memory_store, "afork_session", wraps=memory_store.afork_session) as spy_fork,
+            patch.object(memory_store, "aget_session", wraps=memory_store.aget_session) as spy_get_session,
+            patch.object(memory_store, "aget_turns", wraps=memory_store.aget_turns) as spy_get_turns,
+        ):
             resp = client.post(
                 f"/api/chat/{source_id}/fork",
                 json={"upto_turn_index": 0, "new_session_id": "sess-single-call-fork-child"},

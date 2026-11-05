@@ -7,6 +7,7 @@ from app.core.config import get_settings
 from app.rag import classifiers, engine
 from app.rag.classifiers import JevClassifierAdapter, _record_jev_generation
 from app.rag.prompts import RenderedPrompt
+from app.rag.tools import ToolEvidenceArtifact, ToolResult
 
 
 class TestJEVCostAccounting:
@@ -263,9 +264,9 @@ class TestPromptCMSWiringAcrossJEVNodes:
         mock_classifier.grade_web.return_value = MagicMock(grade="weak")
 
         kb_tool = MagicMock()
-        kb_tool.ainvoke = AsyncMock(return_value=("kb content", {"documents": [], "citations": []}))
+        kb_tool.aexecute = AsyncMock(return_value=ToolResult(content="kb content", artifact=ToolEvidenceArtifact()))
         web_tool = MagicMock()
-        web_tool.ainvoke = AsyncMock(return_value=("web content", {"retrieved_contexts": [], "citations": []}))
+        web_tool.aexecute = AsyncMock(return_value=ToolResult(content="web content", artifact=ToolEvidenceArtifact()))
 
         graph = engine.create_agentic_rag_graph(
             mock_classifier,
@@ -323,7 +324,9 @@ class TestPromptCMSWiringAcrossJEVNodes:
         doc.page_content = "VPN Guide details"
 
         kb_tool = MagicMock()
-        kb_tool.ainvoke = AsyncMock(return_value=("kb content", {"documents": [doc], "citations": []}))
+        kb_tool.aexecute = AsyncMock(
+            return_value=ToolResult(content="kb content", artifact=ToolEvidenceArtifact(raw_payload=[doc]))
+        )
 
         graph = engine.create_agentic_rag_graph(
             mock_classifier,
@@ -375,9 +378,11 @@ class TestPromptCMSWiringAcrossJEVNodes:
         mock_classifier.grade_web.return_value = MagicMock(grade="good")
 
         kb_tool = MagicMock()
-        kb_tool.ainvoke = AsyncMock(return_value=("kb content", {"documents": [], "citations": []}))
+        kb_tool.aexecute = AsyncMock(return_value=ToolResult(content="kb content", artifact=ToolEvidenceArtifact()))
         web_tool = MagicMock()
-        web_tool.ainvoke = AsyncMock(return_value=("External web info", {"retrieved_contexts": [], "citations": []}))
+        web_tool.aexecute = AsyncMock(
+            return_value=ToolResult(content="External web info", artifact=ToolEvidenceArtifact())
+        )
 
         graph = engine.create_agentic_rag_graph(
             mock_classifier,

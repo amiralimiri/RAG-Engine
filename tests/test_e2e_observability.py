@@ -8,6 +8,7 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from app.core.config import get_settings
 from app.main import app
+from app.rag.tools import Citation, ToolEvidenceArtifact
 from app.rag.workflows import get_workflow_registry
 from app.rag.workflows.runner import get_workflow_runner
 from tests.test_chat_stream import parse_sse_lines
@@ -630,9 +631,14 @@ async def test_e2e_online_evaluation_scores_recorded_for_all_workflows_without_s
                             tool_calls=[{"name": "knowledge_base_search", "args": {"query": "q"}, "id": "t1"}],
                         ),
                         ToolMessage(
-                            content="[Source: doc1.pdf] Extracted context for evaluation.",
+                            content="Extracted context for evaluation.",
                             name="knowledge_base_search",
                             tool_call_id="t1",
+                            artifact=ToolEvidenceArtifact(
+                                citations=[Citation(title="doc1.pdf", url="", type="private_kb")],
+                                source_used="vectorstore",
+                                retrieved_contexts=["Extracted context for evaluation."],
+                            ),
                         ),
                         AIMessage(content=f"Answer for {wf_id}"),
                     ],
