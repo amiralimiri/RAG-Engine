@@ -1,8 +1,8 @@
-# Technical Specification: Deepen Tool Abstraction and Evidence Seam
+# Technical Specification: Unified End-to-End Citation Value Objects Across Memory and Transport Seams
 
-- **ADR Reference:** `docs/adr/0024-deepen-tool-abstraction-and-evidence-seam.md` (supersedes ADR-0008)
-- **Target Subsystems:** `app/rag/tools/`, `app/rag/engine.py`, `app/rag/workflows/react_agent.py`, `app/rag/workflows/self_corrective.py`, `app/rag/workflows/listeners.py`, `tests/rag/`
-- **Specification Document:** `docs/spec.md` & `docs/specs/0024-deepen-tool-abstraction-and-evidence-seam-spec.md`
+- **ADR Reference:** `docs/adr/0025-unified-end-to-end-citation-value-objects-across-memory-and-transport-seams.md` (extends ADR-0024)
+- **Target Subsystems:** `app/rag/state.py`, `app/rag/tools/`, `app/rag/engine.py`, `app/rag/workflows/`, `app/rag/memory/`, `app/api/`, `tests/`
+- **Specification Document:** `docs/spec.md` & `docs/specs/0025-unified-end-to-end-citation-value-objects-across-memory-and-transport-seams-spec.md`
 - **Status:** Proposed / Ready for Review
 - **Triage Label:** `ready-for-agent`
 
@@ -10,202 +10,181 @@
 
 ## Problem Statement
 
-In ADR 0008, the unified `BaseTool` abstraction was introduced with `response_format="content_and_artifact"` to bridge fixed DAG workflows and autonomous ReAct agents. While this established common tool classes, three major architectural friction points compromise testability, type safety, and extensibility:
+Following the introduction of the strongly-typed `Citation` value object in ADR-0024, our tool execution layer reliably emits typed citation metadata. However, downstream subsystems across the codebase immediately degrade these typed models back into ad-hoc dictionaries:
 
-1. **Heterogeneous, Untyped Dictionary Artifacts & Regex Fallbacks**:
-   Tools currently return ad-hoc, heterogeneous dictionaries (`{"documents": ..., "citations": ...}` in retriever vs `{"citations": ..., "retrieved_contexts": ...}` in web search). In `ReActAgentWorkflow.to_workflow_output()`, checking `isinstance(artifact, list)` fails on every run because the artifact is a dictionary. Consequently, the workflow silently falls back to scraping tool message strings with fragile regular expressions (`re.findall(r"\[Source:\s*([^\]]+)\]", ...)` and `re.findall(r"Title:\s*([^\n]+)\nURL:\s*([^\n]+)", ...)`).
-2. **Global State & Monkey-Patching for Config Injection**:
-   `DualOutputStructuredTool` intercepts invocations to store `RunnableConfig` in a global `ContextVar` (`_TOOL_INVOKE_CONFIG`), passes synthetic `tool_call_id="__direct__"` into `super().run()`, and inspects resulting `ToolMessage` instances to return `(content, artifact)`. Individual tools then call `get_invoke_config()` to recover the config. Modern LangChain supports native `RunnableConfig` injection directly into tool functions without global state or synthetic call IDs.
-3. **Tight Workflow Coupling to Tool Names**:
-   `ReActAgentWorkflow` hardcodes specific tool names (`"knowledge_base_search"`, `"web_search"`) to resolve `source_used`. Adding a new tool (e.g. Jira, Confluence, GitHub) requires modifying workflow internals. Similarly, `app/rag/engine.py` maintains manual citation deduplication loops in generation nodes.
-4. **Tuple Duck-Typing at Invocation Seams**:
-   Fixed DAG nodes in `app/rag/engine.py` require a defensive `_unpack_tool_output` helper to inspect whether raw output is a tuple, an object with an `.artifact` attribute, or a raw string, obscuring the tool seam interface.
+1. **Pervasive Serialization Shims Across Internal Seams**:
+   Fixed DAG nodes (`app/rag/engine.py`) and autonomous agent workflows (`app/rag/workflows/react_agent.py`) immediately degrade `Citation` objects into dictionaries via `.model_dump()` before storing them in `AgentState["citations"]` or assigning them to `WorkflowOutput.citations`. Callers and downstream listeners are forced to parse heterogeneous dictionary payloads.
+2. **Layer Inversion & Subsystem Coupling Risk**:
+   Because `Citation` was defined in `app/rag/tools/base.py`, adopting it across the conversation memory subsystem (`app/rag/memory/base.py`) or transport API models (`app/api/schemas.py`) would force memory and presentation layers to import from the tool execution subsystem. Subsystems managing conversation persistence and network transport should not couple to tool execution packages.
+3. **Ad-Hoc Presentation Shims**:
+   The SSE streaming adapter (`app/api/streaming.py`) maintains an ad-hoc helper (`_serialize_citation`) to dynamically inspect whether citations are Pydantic models or dictionaries during event framing.
+4. **Heuristic Context Scraping in Evaluation**:
+   `OnlineEvaluationListener._extract_contexts` in `app/rag/workflows/listeners.py` contains a legacy heuristic searching for `"content"` or `"snippet"` keys in citation dictionaries, conflating reference attribution (`title`, `url`, `type`) with retrieved context text.
+5. **Runtime Dict Duck-Typing vs. Zero-Shim Standards**:
+   Callers, assertions, and tests oscillate between attribute access (`c.title`) and dictionary indexing (`c["title"]`), violating the repository's Zero-Shim architecture standard.
 
 ---
 
 ## Solution
 
-Deepen `app/rag/tools/` into a self-contained, deep module with first-class domain models, an explicit `RAGTool` execution seam, pure LangChain config injection, and a polymorphic evidence aggregator:
+Unify the `Citation` value object end-to-end across workflow state, memory persistence, and transport presentation without intermediate dictionary degradation:
 
-1. **Canonical Domain Models (`app/rag/tools/base.py`)**:
-   - `Citation(BaseModel)`: Strongly-typed source attribution (`title: str`, `url: str = ""`, `type: str = "general"`).
-   - `ToolEvidenceArtifact(BaseModel)`: Unified domain artifact returned by all tools:
-     - `citations: list[Citation]`
-     - `retrieved_contexts: list[str]`
-     - `source_used: str` (self-describing evidence identifier)
-     - `raw_payload: Any = None` (optional underlying provider documents/payload)
-     - Implements dict-like subscripting fallback (`__getitem__`, `get`) for backward compatibility with legacy tests.
-   - `ToolResult(BaseModel)`: High-leverage execution result for direct DAG callers:
-     - `content: str`
-     - `artifact: ToolEvidenceArtifact`
-     - Implements `__iter__` to yield `(self.content, self.artifact)` for ergonomic 2-tuple unpacking.
-2. **Deep `RAGTool` Seam & Zero-Shim Execution**:
-   - Introduce `RAGTool(StructuredTool)` with explicit direct execution entrypoints:
-     - `async def aexecute(self, input_args: dict[str, Any] | BaseModel | str, config: RunnableConfig | None = None) -> ToolResult`
-     - `def execute(self, input_args: dict[str, Any] | BaseModel | str, config: RunnableConfig | None = None) -> ToolResult`
-   - For autonomous ReAct agents (`create_agent` / LangGraph `ToolNode`), standard `.ainvoke()` produces a `ToolMessage` with `ToolEvidenceArtifact` on `.artifact`.
-   - Tool functions declare `config: RunnableConfig | None = None` and receive runtime configs via native LangChain injection.
-   - Prune obsolete symbols: remove `DualOutputStructuredTool`, `_TOOL_INVOKE_CONFIG`, `_UNSET`, and `get_invoke_config()`.
-3. **Polymorphic Evidence Aggregator (`aggregate_tool_evidence`)**:
-   - Provide `aggregate_tool_evidence(messages_or_artifacts: Sequence[Any]) -> AggregatedEvidence` in `app/rag/tools/`.
-   - Automatically extracts `ToolEvidenceArtifact` instances from message history, deduplicates citations by `(title, url)`, aggregates contexts, and dynamically resolves `source_used`:
-     - 0 tools executed &rarr; `"direct"`
-     - 1 tool executed &rarr; tool artifact's `source_used`
-     - 2+ distinct tool sources &rarr; `"react_agent"`
-   - Eliminate all regex scraping fallbacks and tool name checks from `ReActAgentWorkflow.to_workflow_output()`.
-4. **Fixed DAG Node Simplification (`app/rag/engine.py`)**:
-   - Update `node_retrieve_kb` and `node_search_web` to invoke `await tool.aexecute(..., config=config)`.
-   - Directly extract `result.content`, `result.artifact.citations`, and `result.artifact.retrieved_contexts`.
-   - Delete `_unpack_tool_output`.
-5. **Deterministic Test Double (`FakeRAGTool`)**:
-   - Provide an in-memory `FakeRAGTool(RAGTool)` test double with configurable returns and call inspection for deterministic unit tests.
+1. **Foundational State Domain Placement**:
+   Relocate the canonical `Citation` model definition to `app/rag/state.py` alongside foundational domain models (`RouteDecision`, `EvidenceGrade`). Re-export `Citation` from `app/rag/tools/` and `app/rag/tools/base.py` for complete backward compatibility.
+2. **Workflow Graph State Invariant**:
+   Declare `AgentState["citations"]` as `Sequence[Citation]` in `app/rag/state.py`. Maintain `list[Citation]` throughout LangGraph nodes, deleting all `.model_dump()` degradation shims in `engine.py`, `self_corrective.py`, and `react_agent.py`.
+3. **Strongly-Typed Memory Contract**:
+   Type `ConversationTurn.citations` strictly as `list[Citation] = Field(default_factory=list)`. Update `aappend_turn(..., citations=...)` across all memory adapters (`SQLiteConversationStore`, `InMemoryConversationStore`, `NoOpMemoryStore`). Deserialization in `_row_to_turn` hydrates validated `Citation` instances from JSON storage.
+4. **Transport & Presentation Schema Alignment**:
+   Standardize `WorkflowOutput`, `ChatResponse`, `StreamMetadataEvent`, and `ChatTurnResponse` on `citations: list[Citation] = Field(default_factory=list)`. Pydantic and FastAPI handle JSON serialization natively at the HTTP/SSE boundary, preserving exact wire compatibility.
+5. **Strict Zero-Shim Contract**:
+   `Citation` remains an immutable value object (`frozen=True`) with explicit typed attributes (`title`, `url`, `type`). No `__getitem__` or `.get()` dict shims will be added; callers and tests use standard attribute access.
+6. **Boundary Coercion Validator**:
+   Implement a shared Pydantic `field_validator("citations", mode="before")` (`_coerce_citations`) on `WorkflowOutput`, `ConversationTurn`, and `ChatResponse` to coerce legacy dictionary payloads (`{"title": ...}`) and shorthand strings (`"doc.pdf"`) into validated `Citation` instances at the model boundary.
+7. **Pruning Shims and Heuristics**:
+   Remove `_serialize_citation` from `app/api/streaming.py`. Prune the citation dictionary inspection heuristic from `OnlineEvaluationListener._extract_contexts`, establishing `output.retrieved_contexts` as the single source of truth for evaluation evidence.
 
 ---
 
 ## User Stories
 
-1. As a developer adding a new retrieval tool (e.g., Jira or Confluence), I want to return a typed `ToolEvidenceArtifact` with a self-describing `source_used`, so that all existing workflows and evaluation listeners automatically support my tool without modifying workflow routing code.
-2. As a workflow developer, I want `tool.aexecute(input, config=config)` to return a typed `ToolResult`, so that I do not have to write duck-typing unpack helpers or handle synthetic tool call IDs.
-3. As a maintainer of `ReActAgentWorkflow`, I want evidence citations and retrieved contexts to be extracted directly from `ToolEvidenceArtifact`, so that the agent never relies on brittle regex parsing of tool string prose.
-4. As an engineer writing tests for tool invocations, I want `ToolResult` to support 2-tuple unpacking `(content, artifact) = result`, so that existing test assertions remain clean and expressive.
-5. As an engineer configuring Langfuse tracing, I want runtime `RunnableConfig` to be injected into tool implementations natively by LangChain, so that global `ContextVar` monkey-patches and thread-safety hazards are eliminated.
-6. As a developer debugging evaluation pipelines, I want all citations across all tools to have a standard `Citation` schema (`title`, `url`, `type`), so that UI citation badges and evaluation metrics do not encounter inconsistent dictionary keys.
-7. As an engineer writing unit tests for workflows, I want a `FakeRAGTool` test double, so that I can mock tool executions deterministically without setting up complex LangChain mock structures or external network calls.
-8. As a frontend client consuming chat responses, I want citations generated by autonomous ReAct agents to match citations generated by fixed DAG workflows, so that citation display is consistent regardless of execution workflow.
-9. As an engineer monitoring system performance, I want `node_retrieve_kb` and `node_search_web` to natively await `aexecute`, so that threadpools are not blocked during streaming token generation.
-10. As a code reviewer, I want zero obsolete shims (`DualOutputStructuredTool`, `_TOOL_INVOKE_CONFIG`) remaining in `app/rag/tools/`, so that the codebase adheres strictly to the repo's Zero-Shim architecture standard.
+1. As a workflow developer, I want `AgentState["citations"]` and `WorkflowOutput.citations` to contain strongly-typed `Citation` objects, so that I can access citation fields with auto-completion and static type safety without dictionary key lookups.
+2. As a presentation layer developer, I want `ChatResponse`, `StreamMetadataEvent`, and `ChatTurnResponse` to declare `list[Citation]`, so that Pydantic and FastAPI handle serialization to the wire protocol natively without ad-hoc helper shims.
+3. As a database maintainer, I want `ConversationTurn.citations` to hydrate as validated `Citation` instances when loaded from SQLite, so that conversation history maintains the exact same domain contract as live workflow outputs.
+4. As an engineer writing tests for workflows, I want `WorkflowOutput` to accept string shorthand citations (e.g. `["vpn_guide.md"]`) via boundary coercion, so that unit test fixtures remain clean without verbose model instantiation.
+5. As an engineer reviewing codebase dependencies, I want `app/rag/memory/` and `app/api/` to import `Citation` from `app/rag/state.py`, so that neither memory nor presentation layers depend on tool execution modules.
+6. As a maintainer of the streaming pipeline, I want `SseStreamAdapter` to serialize `StreamMetadataEvent` using standard `model_dump(mode="json")`, so that defensive object-type checking functions (`_serialize_citation`) can be permanently deleted.
+7. As an online evaluation maintainer, I want `OnlineEvaluationListener` to extract contexts strictly from `output.retrieved_contexts`, so that citation attribution models are not conflated with document retrieval text.
+8. As a code reviewer, I want `Citation` to adhere to the Zero-Shim principle without dict-like `__getitem__` shims, so that all consumers consistently use attribute access (`c.title`, `c.url`, `c.type`).
+9. As a developer adding new retrieval tools, I want my tool's `Citation` outputs to flow unaltered through the workflow engine, checkpointer, and memory store directly to API consumers, so that no intermediate subsystem drops or alters citation attributes.
+10. As an IT support API consumer, I want JSON responses from `/api/chat`, `/api/chat/stream`, and `/api/chat/{session_id}` to preserve identical `{ "title": "...", "url": "...", "type": "..." }` schemas, so that client frontend rendering continues without modification.
+11. As an engineer testing conversation rewind, I want `aappend_turn(citations=[Citation(...)])` to atomically persist and truncate history with typed citations, so that turn rewinding maintains citation integrity.
+12. As a developer running benchmark experiments, I want evaluation runs to grade responses using typed outputs, so that test double assertions do not fail on dictionary discrepancies.
 
 ---
 
 ## Implementation Decisions
 
-1. **`Citation` Value Object (`app/rag/tools/base.py`)**:
-   ```python
-   class Citation(BaseModel):
-       """Strongly-typed reference citation attributed to retrieved evidence."""
+### 1. Domain Placement and Re-Exports
+- Relocate `Citation` model definition to `app/rag/state.py`.
+- Re-export `Citation` from `app/rag/tools/base.py` and `app/rag/tools/__init__.py`.
+- `Citation` remains an immutable model:
+  ```python
+  class Citation(BaseModel):
+      """Strongly-typed reference citation attributed to retrieved evidence."""
 
-       title: str
-       url: str = ""
-       type: str = "general"
-   ```
-2. **`ToolEvidenceArtifact` Domain Model (`app/rag/tools/base.py`)**:
-   ```python
-   class ToolEvidenceArtifact(BaseModel):
-       """Canonical structured evidence payload returned alongside tool display text."""
+      model_config = ConfigDict(frozen=True)
 
-       citations: list[Citation] = Field(default_factory=list)
-       retrieved_contexts: list[str] = Field(default_factory=list)
-       source_used: str = "direct"
-       raw_payload: Any = None
+      title: str
+      url: str = ""
+      type: str = "general"
+  ```
+- Subscripting (`__getitem__`) and `.get()` are deliberately omitted to uphold Zero-Shim standards.
 
-       def __getitem__(self, key: str) -> Any:
-           return getattr(self, key)
+### 2. Boundary Coercion Validator (`_coerce_citations`)
+- Implement a reusable before-validator function for Pydantic models:
+  ```python
+  def _coerce_citations(val: Any) -> list[Citation]:
+      if not val:
+          return []
+      if isinstance(val, (list, tuple, set)):
+          coerced: list[Citation] = []
+          for item in val:
+              if isinstance(item, Citation):
+                  coerced.append(item)
+              elif isinstance(item, dict):
+                  coerced.append(Citation(**item))
+              elif isinstance(item, str) and item.strip():
+                  coerced.append(Citation(title=item.strip()))
+              elif hasattr(item, "model_dump"):
+                  coerced.append(Citation(**item.model_dump()))
+          return coerced
+      if isinstance(val, Citation):
+          return [val]
+      if isinstance(val, dict):
+          return [Citation(**val)]
+      if isinstance(val, str) and val.strip():
+          return [Citation(title=val.strip())]
+      return []
+  ```
+- Apply `@field_validator("citations", mode="before")` using this function across `WorkflowOutput`, `ConversationTurn`, and `ChatResponse`.
 
-       def get(self, key: str, default: Any = None) -> Any:
-           return getattr(self, key, default)
-   ```
-3. **`ToolResult` Container (`app/rag/tools/base.py`)**:
-   ```python
-   class ToolResult(BaseModel):
-       """Execution result container for direct workflow callers."""
+### 3. Workflow Engine and State Integration
+- In `app/rag/state.py`, update `AgentState`:
+  ```python
+  class AgentState(TypedDict):
+      ...
+      citations: Sequence[Citation]
+  ```
+- In `app/rag/engine.py`:
+  - `node_retrieve_kb`: update `citations = list(result.artifact.citations)` (removing `[c.model_dump() ...]`).
+  - `insufficient`: return `"citations": []`.
+  - `direct_answer`: return `"citations": []`.
+- In `app/rag/workflows/self_corrective.py`:
+  - In `to_workflow_output`: pass `citations=list(final_state.get("citations") or [])` directly to `WorkflowOutput`.
+- In `app/rag/workflows/react_agent.py`:
+  - In `to_workflow_output`: set `citations = list(evidence.citations)` directly without `.model_dump()`.
 
-       model_config = ConfigDict(arbitrary_types_allowed=True)
+### 4. Conversation Memory Integration
+- In `app/rag/memory/base.py`:
+  - `ConversationTurn.citations: list[Citation] = Field(default_factory=list)`.
+  - `ConversationMemoryAdapter.aappend_turn`: update parameter to `citations: list[Citation] | None = None`.
+- In `app/rag/memory/sqlite.py`:
+  - In `_row_to_turn`: deserialize JSON text into `Citation` instances:
+    ```python
+    raw_citations = json.loads(row["citations_json"]) if row["citations_json"] else []
+    citations = [Citation.model_validate(c) if isinstance(c, dict) else Citation(title=str(c)) for c in raw_citations]
+    ```
+  - In `aappend_turn`: serialize `citations_json = json.dumps([c.model_dump() for c in citations_clean]) if citations_clean else None`.
+- In `app/rag/memory/in_memory.py`:
+  - `aappend_turn` and `asave_turn` store `ConversationTurn` instances with `list[Citation]`.
 
-       content: str
-       artifact: ToolEvidenceArtifact
+### 5. API Schemas and Streaming Adapter Alignment
+- In `app/api/schemas.py`:
+  - `ChatResponse.citations: list[Citation] = Field(default_factory=list)`
+  - `StreamMetadataEvent.citations: list[Citation] = Field(default_factory=list)`
+  - `ChatTurnResponse.citations: list[Citation] = Field(default_factory=list)`
+- In `app/api/streaming.py`:
+  - Delete `_serialize_citation`.
+  - In `SseStreamAdapter.format`: pass `metadata_payload["citations"] = list(output.citations or [])`.
 
-       def __iter__(self):
-           return iter((self.content, self.artifact))
-   ```
-4. **`RAGTool` Class & Factory (`app/rag/tools/base.py`)**:
-   - Subclasses `StructuredTool` from `langchain_core.tools`.
-   - `aexecute`: converts input to dictionary (if `BaseModel` or `str`), runs `arun` with native `config`, and wraps the resulting `(content, artifact)` or `ToolMessage` into `ToolResult`.
-   - `execute`: synchronous version of `aexecute`.
-   - `rag_tool(func, coroutine, name, description, args_schema) -> RAGTool`: clean instantiation factory setting `response_format="content_and_artifact"`.
-5. **Pruning Obsolete Symbols (Zero-Shim Standard)**:
-   - Completely remove `DualOutputStructuredTool`, `_TOOL_INVOKE_CONFIG`, `_UNSET`, and `get_invoke_config()` from `app/rag/tools/base.py`.
-   - In `app/rag/tools/retriever.py` and `app/rag/tools/search.py`:
-     - Delete `get_invoke_config()` and ContextVar reads.
-     - Accept `config: RunnableConfig | None = None` directly in `_run` and `_arun`.
-     - Return `(content, ToolEvidenceArtifact(...))`.
-6. **Centralized Polymorphic Evidence Aggregation (`app/rag/tools/base.py`)**:
-   ```python
-   class AggregatedEvidence(BaseModel):
-       citations: list[Citation] = Field(default_factory=list)
-       retrieved_contexts: list[str] = Field(default_factory=list)
-       source_used: str = "direct"
-
-
-   def aggregate_tool_evidence(messages_or_artifacts: Sequence[Any]) -> AggregatedEvidence: ...
-   ```
-   - Scans sequence for `ToolEvidenceArtifact` (or `ToolMessage.artifact`).
-   - Deduplicates citations by unique `(title, url)`.
-   - Collects all `retrieved_contexts` preserving first-seen order.
-   - Resolves `source_used`: `"direct"` if empty, single source if uniform, `"react_agent"` if multiple distinct sources.
-7. **Refactor `ReActAgentWorkflow` (`app/rag/workflows/react_agent.py`)**:
-   - In `to_workflow_output`:
-     - Replace regex scraping and hardcoded tool checks with `evidence = aggregate_tool_evidence(messages)`.
-     - Assign `citations = [c.model_dump() for c in evidence.citations]`.
-     - Assign `retrieved_contexts = evidence.retrieved_contexts`.
-     - Assign `source_used = evidence.source_used`.
-   - Delete obsolete `_extract_tools_called` and `_resolve_source_used`.
-8. **Refactor `create_agentic_rag_graph` (`app/rag/engine.py`)**:
-   - In `node_retrieve_kb`:
-     ```python
-     result = await active_kb_tool.aexecute({"query": search_query}, config=config)
-     return {
-         "kb_docs": result.artifact.raw_payload or [],
-         "retrieved_contexts": result.artifact.retrieved_contexts,
-         "citations": [c.model_dump() for c in result.artifact.citations],
-         "trace": [f"Private KB retrieval → {len(result.artifact.retrieved_contexts)} chunks"],
-     }
-     ```
-   - In `node_search_web`:
-     ```python
-     result = await active_web_tool.aexecute({"query": search_query}, config=config)
-     return {
-         "web_results": result.content,
-         "citations": [c.model_dump() for c in result.artifact.citations],
-         "source_used": "web",
-         "retrieved_contexts": result.artifact.retrieved_contexts,
-         "trace": ["Web fallback → Tavily search"],
-     }
-     ```
-   - Delete `_unpack_tool_output`.
-9. **`FakeRAGTool` Test Double (`app/rag/tools/base.py`)**:
-   - Extends `RAGTool`. Allows injecting fixed or sequential `content` and `artifact`.
-   - Records all `execute` and `aexecute` calls with inputs and configs.
+### 6. Evaluation Listener Purification
+- In `app/rag/workflows/listeners.py`:
+  - In `OnlineEvaluationListener._extract_contexts`: prune the fallback that iterates over `output.citations` looking for dict keys `"content"` or `"snippet"`. Return `list(output.retrieved_contexts)` or call `_context_extractor(output)`.
 
 ---
 
 ## Testing Decisions
 
-1. **Unit Testing External Seam Behavior**:
-   - Test `RAGTool.execute` and `RAGTool.aexecute` across string, dict, and BaseModel inputs.
-   - Verify `ToolResult` unpacks cleanly as `content, artifact = res`.
-   - Verify `ToolEvidenceArtifact` maintains typed fields while supporting dictionary key lookups.
-   - Verify `config: RunnableConfig` is received inside `_run` and `_arun` via native LangChain injection without `_TOOL_INVOKE_CONFIG`.
-2. **Dynamic Aggregator Testing**:
-   - Verify `aggregate_tool_evidence` with empty messages produces `source_used="direct"`.
-   - Verify single tool produces tool-specific `source_used` (e.g. `"vectorstore"` or `"web_search"`).
-   - Verify multiple distinct tools produce `source_used="react_agent"`.
-   - Verify duplicate citations across multiple tool messages are deduplicated by `(title, url)`.
-3. **Workflow Integration & Regression**:
-   - Verify `ReActAgentWorkflow` extracts structured citations without regex scraping.
-   - Verify `SelfCorrectiveRagWorkflow` runs end-to-end through `retrieve_kb` and `search_web`.
-   - Run the complete project test suite (`pytest`) to ensure zero regressions across memory, streaming, telemetry, and evaluation.
+### Good Test Principles
+- **Test External Behavior & Contracts**: Tests verify that API routes, streaming SSE events, memory stores, and workflow runners emit and accept valid citations without inspecting internal private flags.
+- **Strict Attribute Access**: Update all test assertions across the test suite from `citation["title"]` to `citation.title`.
+- **Coercion Boundary Tests**: Test that `WorkflowOutput`, `ConversationTurn`, and `ChatResponse` properly coerce strings, dicts, and `Citation` objects into identical `list[Citation]` structures.
+
+### Target Modules Tested
+- `tests/rag/test_tools.py`: Verify `Citation` re-exports and immutability.
+- `tests/rag/test_workflow_engine.py` & `tests/rag/test_self_corrective_contract.py`: Verify engine nodes preserve `list[Citation]`.
+- `tests/rag/test_react_agent.py`: Verify ReAct agent workflow outputs `list[Citation]`.
+- `tests/rag/test_conversation_memory_sqlite.py` & `in_memory`: Verify serialization and hydration of `Citation` models across turns and forks.
+- `tests/api/test_sse_stream_adapter.py`: Verify SSE metadata frames serialize citations cleanly without `_serialize_citation`.
+- `tests/api/test_routes_multi_workflow.py` & `test_routes_chat_memory.py`: Verify HTTP JSON output compatibility.
+- `tests/test_schemas.py`: Verify schema validation and coercion behavior.
+
+### Prior Art
+- ADR-0024 Tool abstraction tests (`tests/rag/test_tools.py`)
+- ADR-0023 Conversation memory aggregate tests (`tests/rag/test_conversation_memory_sqlite.py`)
+- ADR-0022 Self-contained execution event streaming tests (`tests/api/test_sse_stream_adapter.py`)
 
 ---
 
 ## Out of Scope
-
-1. Introducing new external search providers (e.g. Bing Search, Google Search) or new vector databases.
-2. Modifying the 10-node DAG topology or LangGraph state machine structure in `app/rag/engine.py`.
-3. Changing HTTP presentation route contracts (`/api/chat`, `/api/chat/stream`).
+- Adding new fields to `Citation` (e.g., page numbers, chunk IDs, confidence scores).
+- Modifying vector store schemas or Pinecone metadata indexing.
+- Changing frontend UI layout or client-side citation rendering components.
+- Modifying tool execution or evidence aggregation logic (`aggregate_tool_evidence`).
 
 ---
 
 ## Further Notes
-
-- This specification adheres strictly to the Phase Gating Invariant: production implementation work begins only after this specification is reviewed and approved.
-- All changes maintain 100% backward compatibility for API consumers, while internally transitioning from untyped dictionaries and regex scraping to strongly-typed domain models.
+- This refactoring is purely an internal typing and boundary cleanup that deepens existing modules and eliminates runtime conversion shims.
+- Wire-level API schemas remain 100% JSON-compatible with the frontend client.

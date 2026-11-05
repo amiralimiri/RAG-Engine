@@ -73,8 +73,8 @@ An immutable domain value object (`AggregatedEvidence`) produced by `aggregate_t
 _Avoid_: Extracted evidence tuple, workflow evidence helper, citation map
 
 ### Citation
-A strongly-typed domain value object (`Citation`) representing a verifiable source attributed to retrieved evidence, encapsulating `title: str`, `url: str`, and `type: str` (e.g. `private_kb`, `web`).
-_Avoid_: Citation dict, raw link tuple
+The canonical, immutable domain value object (`Citation` in `app/rag/state.py`) representing a verifiable source attributed to retrieved evidence, encapsulating `title: str`, `url: str`, and `type: str` (e.g. `private_kb`, `web`). Preserved strictly as typed model instances across tool artifacts, workflow state, conversation memory turns, and presentation transport schemas without intermediate dictionary degradation.
+_Avoid_: Citation dict, raw link tuple, citation dict shim
 
 ### Evaluation Context
 A normalized data structure (`EvalContext`) extracted from arbitrary workflow states containing `source_used` and `retrieved_contexts`, enabling online evaluation tasks to grade answers across diverse topologies without assuming fixed vectorstore structures.
