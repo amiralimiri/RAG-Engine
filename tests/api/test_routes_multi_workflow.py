@@ -161,7 +161,7 @@ class TestPostChatMultiWorkflow:
         assert chat_resp.answer == "Connect via VPN gateway 10.0.0.1."
         assert chat_resp.source_used == "vectorstore"
         assert len(chat_resp.citations) == 1
-        assert chat_resp.citations[0]["title"] == "vpn.pdf"
+        assert chat_resp.citations[0].title == "vpn.pdf"
 
         # Verify thread_id was passed in configurable
         assert mock_graph.invoke.called
@@ -216,7 +216,7 @@ class TestPostChatMultiWorkflow:
         assert "Okta MFA" in chat_resp.answer
         assert chat_resp.source_used == "vectorstore"
         assert len(chat_resp.citations) == 1
-        assert chat_resp.citations[0]["title"] == "vpn_guide.pdf"
+        assert chat_resp.citations[0].title == "vpn_guide.pdf"
 
     def test_post_chat_error_fallback_handling(self, client: TestClient, monkeypatch):
         """When workflow execution throws, workflow.handle_error is invoked for graceful fallback."""

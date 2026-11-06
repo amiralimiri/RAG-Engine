@@ -262,7 +262,7 @@ class TestStreamingContractParity:
         test_answer = "To connect to the corporate VPN, authenticate via Okta MFA and launch GlobalProtect."
         test_source = "vectorstore"
         test_trace = ["route_question", "retrieve_kb", "grade_documents", "generate_from_kb"]
-        test_citations = [{"title": "VPN Handbook", "url": "https://intranet.example.com/vpn-guide.pdf"}]
+        test_citations = [{"title": "VPN Handbook", "url": "https://intranet.example.com/vpn-guide.pdf", "type": "general"}]
         test_rewritten = "How do I connect to the corporate VPN?"
 
         # Setup streaming graph mock emitting steps, tokens, and final completion

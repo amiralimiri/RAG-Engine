@@ -416,7 +416,7 @@ def test_end_to_end_pluggable_execution():
     assert output.answer == "Processed question: How does billing work?"
     assert output.source_used == "knowledge_base"
     assert len(output.citations) == 1
-    assert output.citations[0]["title"] == "KB Doc 4"
+    assert output.citations[0].title == "KB Doc 4"
     assert output.trace == ["Node executed successfully"]
     assert output.trace_id == "t1"
 

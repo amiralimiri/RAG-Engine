@@ -105,8 +105,8 @@ def test_sample_studio_agent_execution_with_profile(mounted_registry: WorkflowRe
     # Verify source_used, citations, and trace resolution
     assert output.source_used == "knowledge_base"
     assert len(output.citations) == 2
-    assert output.citations[0]["title"] == "Studio KB Document 1"
-    assert output.citations[1]["title"] == "Studio KB Document 2"
+    assert output.citations[0].title == "Studio KB Document 1"
+    assert output.citations[1].title == "Studio KB Document 2"
 
     assert len(output.trace) == 3
     assert f"Intent classified for query: '{query}'" in output.trace

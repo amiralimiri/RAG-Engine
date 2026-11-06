@@ -126,6 +126,7 @@ def test_chat_turn_response():
 
     from app.api.schemas import ChatTurnResponse
     from app.rag.memory.base import ConversationTurn
+    from app.rag.state import Citation
 
     now = datetime.now(UTC)
     turn = ConversationTurn(
@@ -144,7 +145,7 @@ def test_chat_turn_response():
     assert resp.user_query == "hello"
     assert resp.assistant_answer == "hi"
     assert resp.attachments == [{"filename": "doc.pdf", "content_type": "application/pdf"}]
-    assert resp.citations == [{"title": "doc.pdf"}]
+    assert resp.citations == [Citation(title="doc.pdf")]
     assert resp.source_used == "vectorstore"
     assert resp.trace_id == "t-1"
     assert resp.created_at == now

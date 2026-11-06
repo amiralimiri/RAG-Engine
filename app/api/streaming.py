@@ -8,6 +8,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from app.api.schemas import StreamMetadataEvent
 from app.rag.workflows.events import (
     ExecutionCompletedEvent,
     ExecutionFailedEvent,
@@ -24,15 +25,6 @@ def format_sse(event: str, data: dict[str, Any] | BaseModel) -> str:
     else:
         payload = data
     return f"event: {event}\ndata: {json.dumps(payload, ensure_ascii=False, default=str)}\n\n"
-
-
-def _serialize_citation(citation: Any) -> Any:
-    """Safely serialize citation elements whether dicts or Pydantic models."""
-    if isinstance(citation, BaseModel):
-        return citation.model_dump(mode="json")
-    if hasattr(citation, "model_dump") and callable(getattr(citation, "model_dump")):
-        return getattr(citation, "model_dump")(mode="json")
-    return citation
 
 
 class SseStreamAdapter:
@@ -58,17 +50,17 @@ class SseStreamAdapter:
                 yield format_sse("token", {"delta": event.delta})
             elif isinstance(event, ExecutionCompletedEvent):
                 output = event.output
-                metadata_payload = {
-                    "trace_id": output.trace_id,
-                    "session_id": output.session_id,
-                    "workflow": output.workflow,
-                    "source_used": output.source_used,
-                    "citations": [_serialize_citation(c) for c in (output.citations or [])],
-                    "trace": output.trace,
-                    "rewritten_query": output.rewritten_query,
-                    "variant_id": output.variant_id,
-                }
-                yield format_sse("metadata", metadata_payload)
+                metadata_event = StreamMetadataEvent(
+                    trace_id=output.trace_id,
+                    session_id=output.session_id,
+                    workflow=output.workflow,
+                    source_used=output.source_used,
+                    citations=output.citations or [],
+                    trace=output.trace,
+                    rewritten_query=output.rewritten_query,
+                    variant_id=output.variant_id,
+                )
+                yield format_sse("metadata", metadata_event)
             elif isinstance(event, ExecutionFailedEvent):
                 wire_code = 500 if event.code == "EXECUTION_ERROR" else event.code
                 yield format_sse(

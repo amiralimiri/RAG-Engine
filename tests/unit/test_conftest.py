@@ -5,6 +5,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from app.api.schemas import ChatRequest
+from app.rag.state import Citation
 from app.rag.workflows.base import EvalContext, WorkflowDefinition
 from app.rag.workflows.registry import WorkflowRegistry, get_workflow_registry
 from tests.conftest import MockWorkflowDefinition
@@ -61,7 +62,7 @@ def test_mock_workflow_definition_custom_configuration():
     assert resp.answer == "Overridden answer"
     assert resp.source_used == "web"
     assert resp.trace == custom_trace
-    assert resp.citations == custom_citations
+    assert resp.citations == [Citation(title="Doc A", url="http://example.com", type="general")]
     assert resp.trace_id == "trace-123"
 
     eval_ctx = mock_wf.extract_eval_context({})

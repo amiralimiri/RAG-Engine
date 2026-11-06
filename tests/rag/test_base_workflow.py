@@ -335,6 +335,6 @@ def test_workflow_output_structured_evidence_alignment():
 
     assert wf_out.source_used == "vectorstore"
     assert len(wf_out.citations) == 1
-    assert wf_out.citations[0]["title"] == "Network Guide"
-    assert wf_out.citations[0]["type"] == "private_kb"
+    assert wf_out.citations[0].title == "Network Guide"
+    assert wf_out.citations[0].type == "private_kb"
     assert wf_out.retrieved_contexts == ["Network configuration steps."]

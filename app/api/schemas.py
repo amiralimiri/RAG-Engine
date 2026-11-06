@@ -158,10 +158,11 @@ class StreamMetadataEvent(BaseModel):
     """SSE event emitted upon graph completion with final trace and citations."""
 
     trace_id: str | None = Field(default=None, description="Langfuse trace identifier")
+    session_id: str | None = Field(default=None, description="Conversational session identifier")
     source_used: str = Field(..., description="Information source used (e.g. private_kb, web, direct)")
     workflow: str = Field(..., description="Workflow executed")
     trace: list[str] = Field(default_factory=list, description="Execution step trace list")
-    citations: list[dict[str, Any]] = Field(
+    citations: CitationList = Field(
         default_factory=list, description="Document citations and source references"
     )
     rewritten_query: str | None = Field(default=None, description="Rewritten search query if applicable")
@@ -182,7 +183,7 @@ class ChatTurnResponse(BaseModel):
     user_query: str = Field(..., description="User query or question text")
     assistant_answer: str = Field(..., description="Final assistant answer text")
     attachments: list[dict[str, Any]] = Field(default_factory=list, description="Turn attachments")
-    citations: list[dict[str, Any]] = Field(default_factory=list, description="Source citations")
+    citations: CitationList = Field(default_factory=list, description="Source citations")
     source_used: str = Field(default="direct", description="Information source utilized")
     trace_id: str | None = Field(default=None, description="Optional Langfuse trace identifier")
     created_at: datetime = Field(..., description="Turn creation timestamp")

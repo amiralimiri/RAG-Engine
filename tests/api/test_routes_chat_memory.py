@@ -97,7 +97,7 @@ class TestChatMemoryRoutes:
         assert turn.assistant_answer == "VPN setup requires connecting to gateway vpn.internal."
         assert turn.source_used == "private_kb"
         assert len(turn.citations) == 1
-        assert turn.citations[0]["title"] == "vpn_setup.pdf"
+        assert turn.citations[0].title == "vpn_setup.pdf"
 
         # Also verify GET /api/chat/sessions includes this session
         list_resp = client.get("/api/chat/sessions")

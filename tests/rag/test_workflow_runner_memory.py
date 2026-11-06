@@ -11,6 +11,7 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from app.rag.memory.base import ConversationTurn
 from app.rag.memory.in_memory import InMemoryConversationStore
+from app.rag.state import Citation
 from app.rag.workflows.base import (
     EvalContext,
     WorkflowInfo,
@@ -598,7 +599,7 @@ async def test_runner_persist_turn_delegates_to_aappend_turn():
         user_query="How does auth work?",
         assistant_answer="Auth uses JWT tokens.",
         attachments=[{"name": "token.json", "size": 128}],
-        citations=[{"title": "auth.md", "url": "http://docs/auth", "type": "private_kb"}],
+        citations=[Citation(title="auth.md", url="http://docs/auth", type="private_kb")],
         source_used="vectorstore",
         trace_id="tid-persist-123",
     )
@@ -632,7 +633,7 @@ async def test_runner_persist_turn_delegates_to_aappend_turn():
         assistant_answer="Auth uses JWT tokens.",
         rewind_turn_index=2,
         attachments=[{"name": "token.json", "size": 128}],
-        citations=[{"title": "auth.md", "url": "http://docs/auth", "type": "private_kb"}],
+        citations=[Citation(title="auth.md", url="http://docs/auth", type="private_kb")],
         source_used="vectorstore",
         trace_id="tid-persist-123",
     )

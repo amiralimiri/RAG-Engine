@@ -95,7 +95,7 @@ class TestMemoryPersistenceListener:
             workflow="react_agent",
             answer="LangGraph is an agentic framework.",
             source_used="private_kb",
-            citations=[{"id": "doc_1", "text": "evidence"}],
+            citations=[{"title": "doc_1", "text": "evidence"}],
             trace_id="out-trace-1",
         )
 
@@ -109,7 +109,8 @@ class TestMemoryPersistenceListener:
         assert turn.user_query == "What is LangGraph?"
         assert turn.assistant_answer == "LangGraph is an agentic framework."
         assert turn.source_used == "private_kb"
-        assert turn.citations == [{"id": "doc_1", "text": "evidence"}]
+        assert len(turn.citations) == 1
+        assert turn.citations[0].title == "doc_1"
         assert turn.attachments == [{"name": "doc.pdf", "type": "pdf"}]
         assert turn.trace_id == "out-trace-1"
 
@@ -266,7 +267,8 @@ class TestOnlineEvaluationListener:
             workflow="fix_single_llm",
             answer="Transformers use self-attention mechanisms.",
             source_used="private_kb",
-            citations=[{"content": "Doc 1 text"}, {"text": "Doc 2 text"}],
+            citations=[{"title": "Doc 1"}, {"title": "Doc 2"}],
+            retrieved_contexts=["Doc 1 text", "Doc 2 text"],
             trace_id="out-trace-456",
         )
 
@@ -315,7 +317,8 @@ class TestOnlineEvaluationListener:
             workflow="fix_single_jev",
             answer="RAG combines retrieval with LLMs.",
             source_used="private_kb",
-            citations=[{"snippet": "Snippet text"}],
+            citations=[{"title": "Doc 1"}],
+            retrieved_contexts=["Snippet text"],
         )
 
         await listener.on_background_task(request, output)
@@ -330,7 +333,7 @@ class TestOnlineEvaluationListener:
 
     @pytest.mark.asyncio
     async def test_on_background_task_with_custom_context_extractor(self) -> None:
-        """Verify custom context extractor hook takes precedence over citations."""
+        """Verify custom context extractor hook takes precedence over retrieved_contexts."""
         mock_eval_task = AsyncMock()
         custom_extractor = MagicMock(return_value=["Custom Context 1", "Custom Context 2"])
         listener = OnlineEvaluationListener(
@@ -342,7 +345,8 @@ class TestOnlineEvaluationListener:
         output = WorkflowOutput(
             workflow="fix_single_llm",
             answer="Answer",
-            citations=[{"content": "Ignored Citation"}],
+            citations=[{"title": "Ignored Citation"}],
+            retrieved_contexts=["Original Context"],
             trace_id="trace-custom",
         )
 
@@ -358,8 +362,8 @@ class TestOnlineEvaluationListener:
         )
 
     @pytest.mark.asyncio
-    async def test_on_background_task_skips_dict_citations_without_text(self) -> None:
-        """Verify dict citations without standard content keys are safely ignored."""
+    async def test_on_background_task_citations_without_retrieved_contexts_yields_empty_evidence(self) -> None:
+        """Verify citations without retrieved_contexts do NOT treat citation metadata as document evidence."""
         mock_eval_task = AsyncMock()
         listener = OnlineEvaluationListener(eval_task_fn=mock_eval_task)
 
@@ -367,14 +371,14 @@ class TestOnlineEvaluationListener:
         output = WorkflowOutput(
             workflow="fix_single_llm",
             answer="Answer",
-            citations=[{"text": "Direct text context 1"}, {"title": "Doc without text"}],
+            citations=[{"title": "Doc without text", "url": "https://example.com"}],
             trace_id="trace-str",
         )
 
         await listener.on_background_task(request, output)
 
         call_kwargs = mock_eval_task.call_args.kwargs
-        assert call_kwargs["retrieved_contexts"] == ["Direct text context 1"]
+        assert call_kwargs["retrieved_contexts"] == []
 
     @pytest.mark.asyncio
     async def test_on_background_task_noops_when_no_evaluator_or_fn(self) -> None:

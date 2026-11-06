@@ -129,7 +129,7 @@ async def test_adapter_execution_completed_event():
         "workflow": "fix_single_jev",
         "source_used": "rag",
         "citations": [
-            {"source": "doc1.pdf", "page": 1},
+            {"title": "doc1.pdf", "url": "", "type": "general"},
         ],
         "trace": ["retrieve", "generate"],
         "rewritten_query": "What is the capital?",
@@ -163,8 +163,8 @@ async def test_adapter_execution_completed_event_with_model_citations():
     json_str = frames[0].split("data: ", 1)[1].rstrip("\n")
     metadata = json.loads(json_str)
     assert metadata["citations"] == [
-        {"source": "doc1.pdf", "page": 1},
-        {"title": "Doc 2", "url": "https://example.com/2"},
+        {"title": "doc1.pdf", "url": "", "type": "general"},
+        {"title": "Doc 2", "url": "https://example.com/2", "type": "general"},
     ]
 
 

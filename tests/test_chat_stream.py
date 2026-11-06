@@ -411,7 +411,7 @@ class TestWireEventSequence:
         assert meta["source_used"] == "direct"
         assert meta["workflow"] == "fix_single_llm"
         assert isinstance(meta["trace"], list)
-        assert meta["citations"] == [{"title": "guide.md"}]
+        assert meta["citations"] == [{"title": "guide.md", "url": "", "type": "general"}]
         assert meta["rewritten_query"] == "rewritten query"
 
         # Verify callback flush invocation
@@ -745,7 +745,7 @@ class TestBackwardCompatibility:
         assert data["answer"] == "Backward compatible synchronous answer."
         assert data["trace_id"] == "trace-bc-006"
         assert data["source_used"] == "knowledge_base"
-        assert data["citations"] == [{"title": "network_guide.pdf"}]
+        assert data["citations"] == [{"title": "network_guide.pdf", "url": "", "type": "general"}]
 
 
 # ═══════════════════════════════════════════════════════════════════════════

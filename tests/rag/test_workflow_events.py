@@ -115,7 +115,7 @@ class TestExecutionCompletedEvent:
             workflow="fix_single_llm",
             answer="Here is the verified answer.",
             source_used="private_kb",
-            citations=[{"id": "doc_1", "text": "Evidence snippet"}],
+            citations=[{"title": "doc_1", "text": "Evidence snippet"}],
             trace=["retrieve", "grade_evidence", "generate"],
             rewritten_query="rewritten user query",
             trace_id="trace-12345",

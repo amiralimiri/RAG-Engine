@@ -22,6 +22,7 @@ from app.core.telemetry import (
     get_langfuse_callback,
 )
 from app.rag.evaluation import FakeEvaluator, get_evaluator
+from app.rag.state import Citation
 from app.rag.workflows.base import (
     EvalContext,
     ExecutionProfile,
@@ -336,7 +337,7 @@ def test_execute_registered_workflow():
     assert response.workflow == "test_wf"
     assert response.answer == "Mock Answer"
     assert response.source_used == "vectorstore"
-    assert response.citations[0]["title"] == "doc1.pdf"
+    assert response.citations[0].title == "doc1.pdf"
 
     # Verify configurable thread_id passed to graph.invoke
     assert mock_wf.mock_graph.invoke.called
@@ -372,7 +373,7 @@ def test_execute_canonical_fix_single_jev_registered_workflow(monkeypatch):
     assert response.answer == "Canonical JEV response"
     assert response.source_used == "vectorstore"
     assert len(response.citations) == 1
-    assert response.citations[0]["title"] == "corp_vpn.pdf"
+    assert response.citations[0].title == "corp_vpn.pdf"
 
 
 def test_execute_canonical_react_agent_registered_workflow(monkeypatch):
@@ -876,7 +877,7 @@ async def test_stream_emits_whitelisted_steps_filtered_tokens_and_metadata():
     assert meta["workflow"] == "stream_test_wf"
     assert meta["trace_id"] == "streamtrace001"
     assert meta["trace"] == ["step_1", "generate"]
-    assert meta["citations"][0]["title"] == "network_guide.pdf"
+    assert meta["citations"][0].title == "network_guide.pdf"
     assert meta["rewritten_query"] == "rewritten query"
 
 
@@ -1863,7 +1864,7 @@ async def test_runner_bridges_workflow_output_in_stream(clean_registry):
     meta_output = completed_events[0].output
     assert meta_output.workflow == "stream_pure_wf"
     assert meta_output.source_used == "vectorstore"
-    assert meta_output.citations == [{"title": "guide.pdf"}]
+    assert meta_output.citations == [Citation(title="guide.pdf")]
     assert meta_output.trace_id == "trace_stream_1"
 
 

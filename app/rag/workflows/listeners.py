@@ -141,22 +141,14 @@ class OnlineEvaluationListener(BaseExecutionLifecycleListener):
         return self._eval_task_fn
 
     def _extract_contexts(self, output: WorkflowOutput) -> list[str]:
-        """Extract retrieved context strings from citations or custom extractor."""
+        """Extract retrieved context strings from workflow output or custom extractor."""
         if self._context_extractor is not None:
             return self._context_extractor(output)
 
         if getattr(output, "retrieved_contexts", None):
             return list(output.retrieved_contexts)
 
-        contexts: list[str] = []
-        for c in output.citations:
-            if isinstance(c, dict):
-                text = c.get("content") or c.get("text") or c.get("snippet")
-                if text:
-                    contexts.append(str(text))
-            elif isinstance(c, str) and c.strip():
-                contexts.append(c)
-        return contexts
+        return []
 
     async def on_background_task(self, request: WorkflowInput, output: WorkflowOutput) -> None:
         """Dispatches judge model evaluation safely without throwing exceptions."""
