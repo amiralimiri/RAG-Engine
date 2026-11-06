@@ -225,11 +225,7 @@ class SQLiteConversationStore(ConversationMemoryAdapter):
                 attachments_clean = attachments or []
                 coerced_citations: list[Citation] = coerce_citations(citations)
                 attachments_json = json.dumps(attachments_clean) if attachments_clean else None
-                citations_json = (
-                    json.dumps([c.model_dump() for c in coerced_citations])
-                    if coerced_citations
-                    else None
-                )
+                citations_json = json.dumps([c.model_dump() for c in coerced_citations]) if coerced_citations else None
 
                 with self._connection() as conn:
                     with conn:
@@ -298,11 +294,7 @@ class SQLiteConversationStore(ConversationMemoryAdapter):
                 created_iso = turn.created_at.isoformat()
                 title = turn.user_query[:60].strip() or "Untitled Session"
                 attachments_json = json.dumps(turn.attachments) if turn.attachments else None
-                citations_json = (
-                    json.dumps([c.model_dump() for c in turn.citations])
-                    if turn.citations
-                    else None
-                )
+                citations_json = json.dumps([c.model_dump() for c in turn.citations]) if turn.citations else None
 
                 with self._connection() as conn:
                     with conn:

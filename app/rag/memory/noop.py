@@ -14,6 +14,7 @@ from app.rag.memory.base import (
     ConversationTurn,
     SessionInfo,
 )
+from app.rag.state import coerce_citations
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -56,14 +57,13 @@ class NoOpMemoryStore(ConversationMemoryAdapter):
     ) -> ConversationTurn:
         """Return an ephemeral ConversationTurn model without state persistence."""
         turn_index = rewind_turn_index if rewind_turn_index is not None else 0
-        citations_list = list(citations) if citations is not None else []
         return ConversationTurn(
             session_id=session_id,
             turn_index=turn_index,
             user_query=user_query,
             assistant_answer=assistant_answer,
             attachments=attachments or [],
-            citations=citations_list,
+            citations=coerce_citations(citations),
             source_used=source_used,
             trace_id=trace_id,
         )

@@ -15,6 +15,7 @@ from app.rag.memory.base import (
     ConversationTurn,
     SessionInfo,
 )
+from app.rag.state import coerce_citations
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -90,7 +91,7 @@ class InMemoryConversationStore(ConversationMemoryAdapter):
                 user_query=user_query,
                 assistant_answer=assistant_answer,
                 attachments=attachments or [],
-                citations=list(citations) if citations is not None else [],
+                citations=coerce_citations(citations),
                 source_used=source_used,
                 trace_id=trace_id,
                 created_at=now,

@@ -45,7 +45,7 @@ class ConversationTurn(BaseModel):
     user_query: str
     assistant_answer: str
     attachments: list[dict[str, Any]] = Field(default_factory=list)
-    citations: list[dict[str, Any]] = Field(default_factory=list)
+    citations: CitationList = Field(default_factory=list)
     source_used: str = "direct"
     trace_id: str | None = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
