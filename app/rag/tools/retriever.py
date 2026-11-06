@@ -8,7 +8,8 @@ from langchain_core.documents import Document
 from langchain_core.runnables import RunnableConfig
 from pydantic import BaseModel, Field
 
-from app.rag.tools.base import Citation, RAGTool, ToolEvidenceArtifact, rag_tool
+from app.rag.state import Citation
+from app.rag.tools.base import RAGTool, ToolEvidenceArtifact, rag_tool
 
 logger = structlog.get_logger(__name__)
 

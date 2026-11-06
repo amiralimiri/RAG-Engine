@@ -90,7 +90,8 @@ def test_react_agent_to_initial_state_multi_turn():
 
 
 def test_react_agent_to_workflow_output_citations_and_source():
-    from app.rag.tools.base import Citation, ToolEvidenceArtifact
+    from app.rag.state import Citation
+    from app.rag.tools.base import ToolEvidenceArtifact
 
     wf = ReActAgentWorkflow(llm=MockChatModel(), tools=[mock_dummy_tool])
 

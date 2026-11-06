@@ -315,7 +315,8 @@ def test_workflow_output_structured_evidence_alignment():
     """Verify WorkflowOutput correctly accepts structured citations and contexts from ToolEvidenceArtifact."""
     from langchain_core.messages import ToolMessage
 
-    from app.rag.tools.base import Citation, ToolEvidenceArtifact, aggregate_tool_evidence
+    from app.rag.state import Citation
+    from app.rag.tools.base import ToolEvidenceArtifact, aggregate_tool_evidence
 
     artifact = ToolEvidenceArtifact(
         citations=[Citation(title="Network Guide", url="https://corp.local/net", type="private_kb")],

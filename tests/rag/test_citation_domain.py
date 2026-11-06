@@ -28,12 +28,12 @@ class TestCitationDomainModel:
         assert citation.url == ""
         assert citation.type == "general"
 
-    def test_citation_reexported_from_tools_package(self) -> None:
-        from app.rag.tools import Citation as ToolsCitation
-        from app.rag.tools.base import Citation as BaseToolsCitation
+    def test_citation_pruned_from_tools_package(self) -> None:
+        import app.rag.tools as tools_pkg
+        import app.rag.tools.base as tools_base
 
-        assert ToolsCitation is Citation
-        assert BaseToolsCitation is Citation
+        assert not hasattr(tools_pkg, "Citation")
+        assert "Citation" not in tools_base.__all__
 
     def test_citation_zero_shim_no_dict_accessors(self) -> None:
         citation = Citation(title="Doc", url="https://example.com")
@@ -159,3 +159,16 @@ class TestBoundaryCoercion:
         assert len(instance.citations) == 2
         assert instance.citations[0] == Citation(title="it_guide.md")
         assert instance.citations[1] == Citation(title="network.pdf", url="https://network.pdf", type="kb")
+
+    @pytest.mark.parametrize(
+        "model_cls, kwargs",
+        [
+            (WorkflowOutput, {"workflow": "test_wf", "answer": "ok"}),
+            (ConversationTurn, {"session_id": "s1", "turn_index": 0, "user_query": "q", "assistant_answer": "a"}),
+            (ChatResponse, {"workflow": "test_wf", "answer": "ok", "source_used": "direct"}),
+        ],
+    )
+    def test_coercion_invalid_dict_raises_validation_error(self, model_cls, kwargs) -> None:
+        raw_invalid = [{"invalid_key": "no_title_or_source"}]
+        with pytest.raises(ValidationError):
+            model_cls(**kwargs, citations=raw_invalid)

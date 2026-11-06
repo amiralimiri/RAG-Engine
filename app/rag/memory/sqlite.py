@@ -96,6 +96,13 @@ def _row_to_session_info(row: sqlite3.Row) -> SessionInfo:
     )
 
 
+def _dump_citations_json(citations: Sequence[Citation] | None) -> str | None:
+    """Serialize a sequence of Citation value objects to JSON string, or None if empty."""
+    if not citations:
+        return None
+    return json.dumps([c.model_dump() for c in citations])
+
+
 def _row_to_turn(row: sqlite3.Row) -> ConversationTurn:
     """Map a database row to a canonical ConversationTurn domain model."""
     attachments: list[dict[str, Any]] = json.loads(row["attachments_json"]) if row["attachments_json"] else []
@@ -225,7 +232,7 @@ class SQLiteConversationStore(ConversationMemoryAdapter):
                 attachments_clean = attachments or []
                 coerced_citations: list[Citation] = coerce_citations(citations)
                 attachments_json = json.dumps(attachments_clean) if attachments_clean else None
-                citations_json = json.dumps([c.model_dump() for c in coerced_citations]) if coerced_citations else None
+                citations_json = _dump_citations_json(coerced_citations)
 
                 with self._connection() as conn:
                     with conn:
@@ -294,7 +301,7 @@ class SQLiteConversationStore(ConversationMemoryAdapter):
                 created_iso = turn.created_at.isoformat()
                 title = turn.user_query[:60].strip() or "Untitled Session"
                 attachments_json = json.dumps(turn.attachments) if turn.attachments else None
-                citations_json = json.dumps([c.model_dump() for c in turn.citations]) if turn.citations else None
+                citations_json = _dump_citations_json(turn.citations)
 
                 with self._connection() as conn:
                     with conn:

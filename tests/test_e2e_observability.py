@@ -8,7 +8,8 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from app.core.config import get_settings
 from app.main import app
-from app.rag.tools import Citation, ToolEvidenceArtifact
+from app.rag.state import Citation
+from app.rag.tools import ToolEvidenceArtifact
 from app.rag.workflows import get_workflow_registry
 from app.rag.workflows.runner import get_workflow_runner
 from tests.test_chat_stream import parse_sse_lines

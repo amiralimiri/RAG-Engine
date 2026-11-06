@@ -9,7 +9,8 @@ from langchain_core.messages import AIMessage
 from langchain_core.tools import BaseTool
 
 from app.rag.classifiers import FakeClassifierAdapter
-from app.rag.tools import Citation, ToolEvidenceArtifact, ToolResult
+from app.rag.state import Citation
+from app.rag.tools import ToolEvidenceArtifact, ToolResult
 from app.rag.workflows import get_workflow_registry
 from app.rag.workflows.self_corrective import SelfCorrectiveRagWorkflow
 from tests.rag.test_workflow_contracts import BaseWorkflowContractTest

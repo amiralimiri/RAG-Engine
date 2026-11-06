@@ -29,7 +29,8 @@ from langchain_core.messages.tool import ToolCallChunk
 from app.api.streaming import SseStreamAdapter
 from app.main import app
 from app.rag.classifiers import FakeClassifierAdapter
-from app.rag.tools import Citation, ToolEvidenceArtifact, ToolResult
+from app.rag.state import Citation
+from app.rag.tools import ToolEvidenceArtifact, ToolResult
 from app.rag.workflows import get_workflow_registry
 from app.rag.workflows.base import WorkflowInput
 from app.rag.workflows.runner import get_workflow_runner

@@ -395,7 +395,6 @@ class FakeRAGTool(RAGTool):
 
 
 __all__ = [
-    "Citation",
     "ToolEvidenceArtifact",
     "ToolResult",
     "AggregatedEvidence",

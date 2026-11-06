@@ -17,7 +17,8 @@ from app.rag.engine import (
     get_chat_model,
 )
 from app.rag.prompts import LocalPromptStore
-from app.rag.tools import Citation, ToolEvidenceArtifact, ToolResult, create_retriever_tool, create_web_search_tool
+from app.rag.state import Citation
+from app.rag.tools import ToolEvidenceArtifact, ToolResult, create_retriever_tool, create_web_search_tool
 
 
 @pytest.fixture

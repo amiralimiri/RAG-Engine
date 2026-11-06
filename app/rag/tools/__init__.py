@@ -2,7 +2,6 @@
 
 from app.rag.tools.base import (
     AggregatedEvidence,
-    Citation,
     FakeRAGTool,
     RAGTool,
     ToolEvidenceArtifact,
@@ -17,7 +16,6 @@ __all__ = [
     "RAGTool",
     "rag_tool",
     "FakeRAGTool",
-    "Citation",
     "ToolEvidenceArtifact",
     "ToolResult",
     "AggregatedEvidence",

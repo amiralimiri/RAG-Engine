@@ -9,7 +9,7 @@ from typing import Any, Protocol, TypedDict, runtime_checkable
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.rag.state import CitationList
+from app.rag.state import Citation, CitationList, coerce_citations
 
 
 class WorkflowInfo(BaseModel):
@@ -441,24 +441,17 @@ class PluggableWorkflow:
             else:
                 source_used = "direct"
 
-        citations: list[dict[str, Any]] = []
-        for c in final_state.get("citations") or []:
-            if isinstance(c, dict):
-                citations.append(c)
-            elif hasattr(c, "model_dump"):
-                citations.append(c.model_dump())
-            else:
-                citations.append({"text": str(c)})
+        citations: list[Citation] = coerce_citations(final_state.get("citations") or [])
 
         if not citations:
             messages = final_state.get("messages")
             if isinstance(messages, Sequence):
                 for m in messages:
                     artifact = getattr(m, "artifact", None)
-                    if isinstance(artifact, list):
-                        for item in artifact:
-                            if isinstance(item, dict) and item not in citations:
-                                citations.append(item)
+                    if artifact:
+                        for c in coerce_citations(artifact):
+                            if c not in citations:
+                                citations.append(c)
 
         raw_trace = final_state.get("trace")
         if isinstance(raw_trace, list):

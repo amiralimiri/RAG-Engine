@@ -10,9 +10,9 @@ from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import BaseTool
 from pydantic import ValidationError
 
+from app.rag.state import Citation
 from app.rag.tools import (
     AggregatedEvidence,
-    Citation,
     FakeRAGTool,
     KnowledgeSearchInput,
     RAGTool,
@@ -781,12 +781,11 @@ def test_zero_shim_pruning_and_clean_exports():
     assert not hasattr(tools_pkg, "_UNSET")
     assert not hasattr(tools_pkg, "get_invoke_config")
 
-    # Canonical 12 exports
+    # Canonical 11 exports (Citation canonical in app.rag.state)
     expected_exports = {
         "RAGTool",
         "rag_tool",
         "FakeRAGTool",
-        "Citation",
         "ToolEvidenceArtifact",
         "ToolResult",
         "AggregatedEvidence",

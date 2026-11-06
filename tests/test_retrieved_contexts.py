@@ -8,8 +8,8 @@ from app.api.schemas import ChatRequest
 from app.rag import engine
 from app.rag.engine import create_agentic_rag_graph
 from app.rag.prompts import LocalPromptStore
-from app.rag.state import AgentState
-from app.rag.tools import Citation, ToolEvidenceArtifact, ToolResult
+from app.rag.state import AgentState, Citation
+from app.rag.tools import ToolEvidenceArtifact, ToolResult
 from app.rag.workflows.registry import get_workflow_registry
 from app.rag.workflows.runner import WorkflowRunner
 

@@ -17,7 +17,8 @@ from app.api.schemas import (
     WorkflowListResponse,
 )
 from app.main import app
-from app.rag.tools import Citation, ToolEvidenceArtifact
+from app.rag.state import Citation
+from app.rag.tools import ToolEvidenceArtifact
 from app.rag.workflows import (
     get_workflow_registry,
 )

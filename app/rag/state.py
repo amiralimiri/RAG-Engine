@@ -32,17 +32,14 @@ def coerce_citations(val: Sequence[Any] | Any | None = None) -> list[Citation]:
                 return _to_citation(dumped)
             return None
         if isinstance(item, dict):
-            # Prefer explicit title, with fallback only to standard source attribute
-            title = item.get("title")
-            if not title:
-                source = item.get("source")
-                if source and str(source).strip():
-                    title = str(source).strip()
-            if not title:
-                return None
-            url = str(item.get("url") or "")
-            ctype = str(item.get("type") or "general")
-            return Citation(title=str(title).strip(), url=url, type=ctype)
+            # If title is missing, fallback to source attribute if present
+            data = dict(item)
+            if not data.get("title") and data.get("source"):
+                source_val = str(data.get("source")).strip()
+                if source_val:
+                    data["title"] = source_val
+            # Construct Citation directly to enforce validation (raises ValidationError if invalid)
+            return Citation(**data)
         if isinstance(item, str) and item.strip():
             return Citation(title=item.strip())
         return None
