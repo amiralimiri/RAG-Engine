@@ -138,7 +138,7 @@ def test_branch_kb_good(mock_llm, mock_kb_tool, mock_web_tool, fake_retriever):
     assert any("PRIVATE KB" in t for t in result["trace"])
     assert fake_retriever.invoke.call_count == 1
     assert len(result["citations"]) == 1
-    assert result["citations"][0]["title"] == "vpn_policy.md"
+    assert result["citations"][0].title == "vpn_policy.md"
 
 
 def test_branch_kb_weak_web_good(mock_llm, mock_kb_tool, mock_web_tool, mock_web_client):
@@ -288,7 +288,7 @@ async def test_create_agentic_rag_graph_accepts_injected_kb_and_web_tools(mock_l
     custom_kb_tool.aexecute.assert_awaited_once()
     assert result["kb_docs"] == [custom_kb_doc]
     assert result["retrieved_contexts"] == ["Injected KB content"]
-    assert result["citations"] == [{"title": "kb.md", "url": "", "type": "private_kb"}]
+    assert result["citations"] == [Citation(title="kb.md", url="", type="private_kb")]
 
 
 @pytest.mark.asyncio
@@ -325,7 +325,7 @@ async def test_create_agentic_rag_graph_injected_web_tool_fallback(mock_llm):
     custom_web_tool.aexecute.assert_awaited_once()
     assert result["source_used"] == "web_search"
     assert result["web_results"] == "Injected web snippet"
-    assert result["citations"] == [{"title": "Custom Web", "url": "https://custom.com", "type": "web"}]
+    assert result["citations"] == [Citation(title="Custom Web", url="https://custom.com", type="web")]
     assert result["retrieved_contexts"] == ["Title: Custom Web\nURL: https://custom.com\nContent: Injected web snippet"]
 
 

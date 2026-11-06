@@ -138,21 +138,12 @@ class SelfCorrectiveRagWorkflow:
 
     def to_workflow_output(self, final_state: dict[str, Any], trace_id: str | None = None) -> WorkflowOutput:
         resolved_tid = trace_id or final_state.get("trace_id")
-        citations = []
-        for c in final_state.get("citations") or []:
-            if isinstance(c, dict):
-                citations.append(c)
-            elif hasattr(c, "model_dump"):
-                citations.append(c.model_dump())
-            else:
-                citations.append({"text": str(c)})
-
         return WorkflowOutput(
             workflow=self.info.id,
             answer=final_state.get("answer") or "",
             source_used=final_state.get("source_used") or "direct",
             trace=final_state.get("trace") or [],
-            citations=citations,
+            citations=list(final_state.get("citations") or []),
             rewritten_query=final_state.get("current_query") or final_state.get("question"),
             trace_id=resolved_tid,
         )

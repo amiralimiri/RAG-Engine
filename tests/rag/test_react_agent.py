@@ -127,10 +127,10 @@ def test_react_agent_to_workflow_output_citations_and_source():
     assert response.answer == "You can download OpenVPN following our internal guide."
     assert response.source_used == "react_agent"
     assert len(response.citations) == 2
-    assert response.citations[0]["title"] == "vpn_setup.md"
-    assert response.citations[0]["type"] == "private_kb"
-    assert response.citations[1]["url"] == "https://openvpn.net"
-    assert response.citations[1]["type"] == "web"
+    assert response.citations[0].title == "vpn_setup.md"
+    assert response.citations[0].type == "private_kb"
+    assert response.citations[1].url == "https://openvpn.net"
+    assert response.citations[1].type == "web"
     assert response.trace_id == "trace_777"
 
 

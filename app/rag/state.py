@@ -81,7 +81,7 @@ class AgentState(TypedDict):
     source_used: str
     retry_count: int
     trace: Annotated[list[str], operator.add]
-    citations: list[dict]
+    citations: Sequence[Citation]
     trace_id: NotRequired[str]
     retrieved_contexts: NotRequired[list[str]]
     messages: Annotated[list[BaseMessage], operator.add]

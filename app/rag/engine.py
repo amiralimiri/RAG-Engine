@@ -135,6 +135,7 @@ async def direct_answer(
         "answer": answer,
         "source_used": "direct",
         "retrieved_contexts": [],
+        "citations": [],
         "trace": ["Direct response → no retrieval"],
     }
 
@@ -145,6 +146,7 @@ def insufficient(state: AgentState) -> dict[str, Any]:
         "answer": "I couldn't find enough reliable evidence in the company knowledge base or external search to answer confidently. Please contact the IT help desk or provide more details.",
         "source_used": "insufficient_evidence",
         "retrieved_contexts": [],
+        "citations": [],
         "trace": ["Stopped → insufficient reliable evidence"],
     }
 
@@ -219,7 +221,7 @@ def create_agentic_rag_graph(
         result = await active_kb_tool.aexecute({"query": search_query}, config=config)
 
         docs = result.artifact.raw_payload if isinstance(result.artifact.raw_payload, list) else []
-        citations = [c.model_dump() for c in result.artifact.citations]
+        citations = list(result.artifact.citations)
         retrieved_contexts = (
             result.artifact.retrieved_contexts
             if result.artifact.retrieved_contexts
@@ -252,7 +254,7 @@ def create_agentic_rag_graph(
         search_query = state.get("current_query") or state["question"]
         result = await active_web_tool.aexecute({"query": search_query}, config=config)
 
-        citations = [c.model_dump() for c in result.artifact.citations]
+        citations = list(result.artifact.citations)
         contexts = (
             result.artifact.retrieved_contexts
             if result.artifact.retrieved_contexts

@@ -219,7 +219,9 @@ async def test_self_corrective_workflow_execution_with_injected_tools():
     result = await graph.ainvoke({"question": "How to configure VPN?", "retry_count": 0})
     mock_kb_tool.aexecute.assert_awaited_once()
     assert result["kb_docs"] == [custom_doc]
-    assert result["citations"] == [{"title": "kb.md", "url": "", "type": "private_kb"}]
+    assert result["citations"] == [Citation(title="kb.md", url="", type="private_kb")]
+    assert result["citations"][0].title == "kb.md"
+    assert result["citations"][0].type == "private_kb"
 
 
 def test_self_corrective_workflow_accepts_injected_prompt_store():
