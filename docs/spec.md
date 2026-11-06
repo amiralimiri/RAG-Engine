@@ -3,8 +3,8 @@
 - **ADR Reference:** `docs/adr/0025-unified-end-to-end-citation-value-objects-across-memory-and-transport-seams.md` (extends ADR-0024)
 - **Target Subsystems:** `app/rag/state.py`, `app/rag/tools/`, `app/rag/engine.py`, `app/rag/workflows/`, `app/rag/memory/`, `app/api/`, `tests/`
 - **Specification Document:** `docs/spec.md` & `docs/specs/0025-unified-end-to-end-citation-value-objects-across-memory-and-transport-seams-spec.md`
-- **Status:** Proposed / Ready for Review
-- **Triage Label:** `ready-for-agent`
+- **Status:** Implemented & Verified
+- **Triage Label:** `completed`
 
 ---
 

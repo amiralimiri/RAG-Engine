@@ -3,8 +3,8 @@
 - **Specification Reference:** [`docs/specs/0025-unified-end-to-end-citation-value-objects-across-memory-and-transport-seams-spec.md`](./0025-unified-end-to-end-citation-value-objects-across-memory-and-transport-seams-spec.md)
 - **ADR Reference:** [`docs/adr/0025-unified-end-to-end-citation-value-objects-across-memory-and-transport-seams.md`](../adr/0025-unified-end-to-end-citation-value-objects-across-memory-and-transport-seams.md)
 - **Domain Guidelines:** [`GLOSSARY.md`](../../GLOSSARY.md)
-- **Status:** Ready for Execution
-- **Triage Label:** `ready-for-agent`
+- **Status:** 100% Completed
+- **Triage Label:** `completed`
 
 ---
 
@@ -45,10 +45,10 @@
 
 | Ticket | Title | Blockers | Status |
 |---|---|---|---|
-| **Ticket 01** | Relocate Citation Domain Model, Boundary Coercion & Zero-Shim Invariants | None | `ready-for-agent` |
-| **Ticket 02** | End-to-End Workflow Engine & Agent Graph State Typing | Ticket 01 | `ready-for-agent` |
-| **Ticket 03** | Strongly-Typed Conversation Memory Storage & SQLite Deserialization | Ticket 01 | `ready-for-agent` |
-| **Ticket 04** | Transport Schemas, Streaming SSE Emission & Evaluation Seam Alignment | Ticket 02, Ticket 03 | `ready-for-agent` |
+| **Ticket 01** | Relocate Citation Domain Model, Boundary Coercion & Zero-Shim Invariants | None | `completed` |
+| **Ticket 02** | End-to-End Workflow Engine & Agent Graph State Typing | Ticket 01 | `completed` |
+| **Ticket 03** | Strongly-Typed Conversation Memory Storage & SQLite Deserialization | Ticket 01 | `completed` |
+| **Ticket 04** | Transport Schemas, Streaming SSE Emission & Evaluation Seam Alignment | Ticket 02, Ticket 03 | `completed` |
 
 ---
 

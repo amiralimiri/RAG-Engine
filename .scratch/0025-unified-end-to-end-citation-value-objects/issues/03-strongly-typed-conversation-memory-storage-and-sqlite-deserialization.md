@@ -4,15 +4,15 @@
 
 **Blocked by:** 01 — Relocate Citation Domain Model, Boundary Coercion & Zero-Shim Invariants
 
-**Status:** ready-for-agent
+**Status:** completed
 
-- [ ] The conversation turn model declares citations as a typed list of `Citation`.
-- [ ] The memory adapter contract's atomic turn append accepts a typed citation list.
-- [ ] The SQLite adapter serializes typed citations to JSON on append and rehydrates them into validated `Citation` instances when reading turns back.
-- [ ] Reading a turn whose stored citations are legacy dictionaries or bare strings still yields typed `Citation` instances.
-- [ ] The in-memory adapter stores and returns typed `Citation` instances.
-- [ ] The no-op adapter satisfies the updated contract without raising.
-- [ ] Appending a turn with citations, then reading it back, returns citations equal by value to those supplied.
-- [ ] Rewinding a session preserves typed citations on the surviving turns.
-- [ ] Forking a session clones typed citations into the child session.
-- [ ] Memory test suites for SQLite, in-memory, and contract compliance pass end to end.
+- [x] The conversation turn model declares citations as a typed list of `Citation`.
+- [x] The memory adapter contract's atomic turn append accepts a typed citation list.
+- [x] The SQLite adapter serializes typed citations to JSON on append and rehydrates them into validated `Citation` instances when reading turns back.
+- [x] Reading a turn whose stored citations are legacy dictionaries or bare strings still yields typed `Citation` instances.
+- [x] The in-memory adapter stores and returns typed `Citation` instances.
+- [x] The no-op adapter satisfies the updated contract without raising.
+- [x] Appending a turn with citations, then reading it back, returns citations equal by value to those supplied.
+- [x] Rewinding a session preserves typed citations on the surviving turns.
+- [x] Forking a session clones typed citations into the child session.
+- [x] Memory test suites for SQLite, in-memory, and contract compliance pass end to end.

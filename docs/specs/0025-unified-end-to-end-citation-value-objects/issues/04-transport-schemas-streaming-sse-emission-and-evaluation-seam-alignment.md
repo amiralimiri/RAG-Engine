@@ -4,15 +4,15 @@
 
 **Blocked by:** 02 — End-to-End Workflow Engine & Agent Graph State Typing; 03 — Strongly-Typed Conversation Memory Storage & SQLite Deserialization
 
-**Status:** ready-for-agent
+**Status:** completed
 
-- [ ] The synchronous chat response declares citations as a typed list of `Citation`.
-- [ ] The streaming terminal metadata event declares citations as a typed list of `Citation`.
-- [ ] The session history turn response declares citations as a typed list of `Citation`.
-- [ ] The defensive citation-serialization helper is deleted; SSE terminal metadata frames are produced by standard model dumping.
-- [ ] A streaming run emits terminal metadata whose citations serialize to the same JSON shape clients already consume.
-- [ ] A synchronous chat response serializes citations to the same JSON shape clients already consume.
-- [ ] The online evaluation listener derives contexts exclusively from the output's retrieved contexts (or an injected context extractor), with the citation-inspection fallback removed.
-- [ ] Online evaluation with an output that has citations but no retrieved contexts does not treat citation metadata as document evidence.
-- [ ] Test assertions across the API, streaming, and evaluation suites use attribute access on citations rather than dictionary indexing.
-- [ ] The full regression suite passes end to end.
+- [x] The synchronous chat response declares citations as a typed list of `Citation`.
+- [x] The streaming terminal metadata event declares citations as a typed list of `Citation`.
+- [x] The session history turn response declares citations as a typed list of `Citation`.
+- [x] The defensive citation-serialization helper is deleted; SSE terminal metadata frames are produced by standard model dumping.
+- [x] A streaming run emits terminal metadata whose citations serialize to the same JSON shape clients already consume.
+- [x] A synchronous chat response serializes citations to the same JSON shape clients already consume.
+- [x] The online evaluation listener derives contexts exclusively from the output's retrieved contexts (or an injected context extractor), with the citation-inspection fallback removed.
+- [x] Online evaluation with an output that has citations but no retrieved contexts does not treat citation metadata as document evidence.
+- [x] Test assertions across the API, streaming, and evaluation suites use attribute access on citations rather than dictionary indexing.
+- [x] The full regression suite passes end to end.

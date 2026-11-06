@@ -4,13 +4,13 @@
 
 **Blocked by:** 01 — Relocate Citation Domain Model, Boundary Coercion & Zero-Shim Invariants
 
-**Status:** ready-for-agent
+**Status:** completed
 
-- [ ] Graph state declares its citations as a sequence of `Citation`, and the initial state seeds an empty typed sequence.
-- [ ] The knowledge-base retrieval node stores the tool artifact's citations directly, with no dictionary conversion step.
-- [ ] Direct-answer and insufficient-evidence nodes return empty typed citation collections.
-- [ ] The self-corrective workflow's output conversion passes graph-state citations through as typed models without re-serializing them.
-- [ ] The ReAct agent workflow's output conversion passes aggregated evidence citations through as typed models without re-serializing them.
-- [ ] A workflow run that retrieves knowledge-base evidence yields citations that are `Citation` instances, not dictionaries.
-- [ ] A ReAct agent run that invokes tools yields citations that are `Citation` instances, not dictionaries.
-- [ ] Contract tests for both workflows assert typed citation instances and pass end to end.
+- [x] Graph state declares its citations as a sequence of `Citation`, and the initial state seeds an empty typed sequence.
+- [x] The knowledge-base retrieval node stores the tool artifact's citations directly, with no dictionary conversion step.
+- [x] Direct-answer and insufficient-evidence nodes return empty typed citation collections.
+- [x] The self-corrective workflow's output conversion passes graph-state citations through as typed models without re-serializing them.
+- [x] The ReAct agent workflow's output conversion passes aggregated evidence citations through as typed models without re-serializing them.
+- [x] A workflow run that retrieves knowledge-base evidence yields citations that are `Citation` instances, not dictionaries.
+- [x] A ReAct agent run that invokes tools yields citations that are `Citation` instances, not dictionaries.
+- [x] Contract tests for both workflows assert typed citation instances and pass end to end.

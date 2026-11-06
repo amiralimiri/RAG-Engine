@@ -4,7 +4,7 @@
 
 **Blocked by:** 01 — Relocate Citation Domain Model, Boundary Coercion & Zero-Shim Invariants
 
-**Status:** ready-for-agent
+**Status:** completed
 
 - [x] Graph state declares its citations as a sequence of `Citation`, and the initial state seeds an empty typed sequence.
 - [x] The knowledge-base retrieval node stores the tool artifact's citations directly, with no dictionary conversion step.
