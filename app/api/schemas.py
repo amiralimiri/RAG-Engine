@@ -6,6 +6,7 @@ from typing import Any
 from pydantic import BaseModel, Field, field_validator
 
 from app.rag.memory.base import ConversationSession, ConversationTurn, SessionInfo
+from app.rag.state import Citation, coerce_citations
 from app.rag.workflows.base import WorkflowInfo, WorkflowInput, WorkflowOutput
 
 
@@ -94,7 +95,12 @@ class ChatResponse(BaseModel):
     answer: str = Field(..., description="Final assistant response text")
     source_used: str = Field(..., description="Primary information source utilized")
     trace: list[str] = Field(default_factory=list, description="Reasoning and retrieval transition trace")
-    citations: list[Any] = Field(default_factory=list, description="Cited reference materials")
+    citations: list[Citation] = Field(default_factory=list, description="Cited reference materials")
+
+    @field_validator("citations", mode="before")
+    @classmethod
+    def _validate_citations(cls, val: Any) -> list[Citation]:
+        return coerce_citations(val)
     rewritten_query: str | None = Field(default=None, description="Rewritten or original query")
     trace_id: str | None = Field(default=None, description="Langfuse trace ID")
     variant_id: str | None = Field(default=None, description="Execution variant identifier")

@@ -7,7 +7,8 @@ from collections.abc import Callable, Sequence
 from typing import Any, Protocol, TypedDict, runtime_checkable
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+from app.rag.state import Citation, coerce_citations
 
 
 class WorkflowInfo(BaseModel):
@@ -103,10 +104,15 @@ class WorkflowOutput(BaseModel):
     workflow: str = Field(..., description="Unique slug of the workflow executed")
     answer: str = Field(..., description="Final assistant response text")
     source_used: str = Field(default="direct", description="Primary information source utilized")
-    citations: list[dict[str, Any]] = Field(
+    citations: list[Citation] = Field(
         default_factory=list,
         description="Cited reference materials and document excerpts",
     )
+
+    @field_validator("citations", mode="before")
+    @classmethod
+    def _validate_citations(cls, val: Any) -> list[Citation]:
+        return coerce_citations(val)
     trace: list[str] = Field(
         default_factory=list,
         description="Reasoning and retrieval transition trace",

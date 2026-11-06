@@ -10,15 +10,7 @@ from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, ConfigDict, Field
 
-
-class Citation(BaseModel):
-    """Strongly-typed reference citation attributed to retrieved evidence."""
-
-    model_config = ConfigDict(frozen=True)
-
-    title: str
-    url: str = ""
-    type: str = "general"
+from app.rag.state import Citation
 
 
 class ToolEvidenceArtifact(BaseModel):
