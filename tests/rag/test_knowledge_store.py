@@ -8,6 +8,7 @@ from app.rag.knowledge.vectorstore import (
     InMemoryVectorStoreAdapter,
     OfflineDeterministicEmbeddings,
     PineconeVectorStoreAdapter,
+    PineconeVectorStoreRetriever,
     get_knowledge_store,
     reset_knowledge_store,
 )
@@ -308,10 +309,83 @@ async def test_pinecone_adapter_delegation_methods() -> None:
     assert len(aresults) == 1
     mock_store.asimilarity_search.assert_called_once_with("async query text", k=5)
 
-    # as_retriever
+    # as_retriever returns PineconeVectorStoreRetriever wrapping adapter
     retriever = adapter.as_retriever(search_kwargs={"k": 2})
-    assert retriever is mock_retriever
-    mock_store.as_retriever.assert_called_once_with(search_kwargs={"k": 2})
+    assert isinstance(retriever, PineconeVectorStoreRetriever)
+    assert retriever.store is adapter
+    assert retriever.search_kwargs == {"k": 2}
+
+
+@pytest.mark.asyncio
+async def test_pinecone_adapter_recovers_from_closed_async_session() -> None:
+    """Verify PineconeVectorStoreAdapter seamlessly re-establishes closed or stale async sessions across turns."""
+    from unittest.mock import MagicMock
+
+    from pinecone.db_data.index_asyncio import _IndexAsyncio
+
+    class FlakyIndexAsyncio(_IndexAsyncio):
+        def __init__(self, should_fail_initially: bool = False) -> None:
+            self.should_fail = should_fail_initially
+            self.config = MagicMock()
+            self.config.host = "https://fake-index.pinecone.io"
+            self.config.api_key = "fake-api-key"
+
+        async def __aenter__(self) -> FlakyIndexAsyncio:
+            return self
+
+        async def __aexit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
+            pass
+
+        async def query(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+            if self.should_fail:
+                raise RuntimeError("Session is closed")
+            return {"matches": []}
+
+    mock_client = MagicMock()
+    mock_client.has_index.return_value = True
+    mock_client.describe_index.return_value.dimension = 128
+
+    adapter = PineconeVectorStoreAdapter(
+        client=mock_client,
+        dimension=128,
+        embeddings=OfflineDeterministicEmbeddings(dimension=128),
+        index_name="resilient-test-index",
+    )
+
+    # Inject healthy index for Turn 1
+    adapter._store._async_index = FlakyIndexAsyncio(should_fail_initially=False)
+    adapter._store._async_index_provided = True
+
+    # Turn 1 succeeds
+    turn1_docs = await adapter.asimilarity_search("query turn 1", k=2)
+    assert turn1_docs == []
+
+    # Simulate underlying aiohttp session becoming closed between turns (Turn 2)
+    adapter._store._async_index = FlakyIndexAsyncio(should_fail_initially=True)
+    adapter._store._async_index_provided = True
+
+    # Without reconnect logic or if reset doesn't provide a healthy index, it fails:
+    # Set up recovery index upon reset
+    original_reset = getattr(adapter, "_reset_async_session", None)
+
+    def reset_with_healthy() -> None:
+        if original_reset is not None:
+            original_reset()
+        adapter._store._async_index = FlakyIndexAsyncio(should_fail_initially=False)
+        adapter._store._async_index_provided = True
+
+    adapter._reset_async_session = reset_with_healthy
+
+    # Turn 2 should recover cleanly instead of raising RuntimeError("Session is closed")
+    turn2_docs = await adapter.asimilarity_search("query turn 2", k=2)
+    assert turn2_docs == []
+
+    # Also verify retriever.ainvoke delegates and recovers seamlessly across turns
+    retriever = adapter.as_retriever(search_kwargs={"k": 2})
+    adapter._store._async_index = FlakyIndexAsyncio(should_fail_initially=True)
+    adapter._store._async_index_provided = True
+    retriever_docs = await retriever.ainvoke("query turn 3")
+    assert retriever_docs == []
 
 
 def test_get_knowledge_store_factory() -> None:

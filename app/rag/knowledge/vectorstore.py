@@ -225,10 +225,11 @@ class PineconeVectorStoreAdapter:
             )
 
         # 2. Resolve desired vector dimension
+        emb_dim = getattr(self.embeddings, "dimension", None)
         if dimension is not None:
             self.dimension = dimension
-        elif hasattr(self.embeddings, "dimension") and isinstance(getattr(self.embeddings, "dimension"), int):
-            self.dimension = self.embeddings.dimension
+        elif isinstance(emb_dim, int):
+            self.dimension = emb_dim
         else:
             self.dimension = get_embedding_dimension(
                 getattr(self.settings, "embed_model", None), settings=self.settings
@@ -296,6 +297,27 @@ class PineconeVectorStoreAdapter:
         except TypeError:
             return pc.Index(index_name)
 
+    def _reset_async_session(self) -> None:
+        """Reset internal async index and context state on underlying PineconeVectorStore."""
+        store = getattr(self, "_store", None)
+        if store is not None:
+            if getattr(store, "_async_index_context_open", False):
+                store._async_index_context_open = False
+                store._async_index_ctx_manager = None
+            store._async_index = None
+            store._async_index_provided = False
+
+    async def _execute_async_with_retry(self, coro_fn: Any) -> Any:
+        """Execute an asynchronous vectorstore operation with reconnection on closed sessions."""
+        try:
+            return await coro_fn()
+        except RuntimeError as exc:
+            msg = str(exc).lower()
+            if "session is closed" in msg or "event loop is closed" in msg:
+                self._reset_async_session()
+                return await coro_fn()
+            raise
+
     def add_documents(self, documents: list[Document], ids: list[str] | None = None, **kwargs: Any) -> list[str]:
         if not documents:
             return []
@@ -310,18 +332,40 @@ class PineconeVectorStoreAdapter:
         call_kwargs = dict(kwargs)
         if ids is not None:
             call_kwargs["ids"] = ids
-        return await self._store.aadd_documents(documents, **call_kwargs)
+        return await self._execute_async_with_retry(lambda: self._store.aadd_documents(documents, **call_kwargs))
 
     def similarity_search(self, query: str, k: int = 4, **kwargs: Any) -> list[Document]:
         return self._store.similarity_search(query, k=k, **kwargs)
 
     async def asimilarity_search(self, query: str, k: int = 4, **kwargs: Any) -> list[Document]:
-        return await self._store.asimilarity_search(query, k=k, **kwargs)
+        return await self._execute_async_with_retry(lambda: self._store.asimilarity_search(query, k=k, **kwargs))
 
     def as_retriever(self, search_kwargs: dict[str, Any] | None = None, **kwargs: Any) -> Any:
         merged = dict(search_kwargs or {})
         merged.update(kwargs)
-        return self._store.as_retriever(search_kwargs=merged)
+        return PineconeVectorStoreRetriever(
+            store=self,
+            search_kwargs=merged,
+        )
+
+
+class PineconeVectorStoreRetriever(BaseRetriever):
+    """LangChain-compatible retriever wrapping PineconeVectorStoreAdapter with resilient session lifecycle."""
+
+    store: VectorStoreAdapter = Field(exclude=True)
+    search_kwargs: dict[str, Any] = Field(default_factory=dict)
+
+    def _get_relevant_documents(
+        self, query: str, *, run_manager: CallbackManagerForRetrieverRun | None = None
+    ) -> list[Document]:
+        k = self.search_kwargs.get("k", 4)
+        return self.store.similarity_search(query, k=k)
+
+    async def _aget_relevant_documents(
+        self, query: str, *, run_manager: AsyncCallbackManagerForRetrieverRun | None = None
+    ) -> list[Document]:
+        k = self.search_kwargs.get("k", 4)
+        return await self.store.asimilarity_search(query, k=k)
 
 
 _knowledge_store_lock = threading.RLock()
