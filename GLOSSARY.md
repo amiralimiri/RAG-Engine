@@ -172,3 +172,23 @@ _Avoid_: Runner helper, prep handler, parameter manager
 ### Bound Execution Context
 An immutable domain value object (`BoundExecutionContext`) produced by `ExecutionContextBinder`, encapsulating the resolved workflow definition, initial graph state, pre-merged runnable configuration with callbacks, and telemetry identifiers ready for immediate graph invocation.
 _Avoid_: Prep tuple, runner context dict, execution config dictionary
+
+### Workflow Step (Step Seam)
+A strongly-typed protocol seam (`WorkflowStep` in `app/rag/steps/base.py`) defining the execution contract for individual graph nodes. Step instances encapsulate their own injected dependencies (models, tools, prompt stores, classifiers), define `inputs` / `outputs` blackboard key mappings, and are directly callable (`async def __call__` delegating to `async def execute(self, state, config) -> dict[str, Any]`), enabling plug-and-play assembly into LangGraph topologies without nested wrapper closures.
+_Avoid_: Node closure, graph helper, inline step lambda
+
+### Step Catalog
+The central thread-safe registry (`StepCatalog` in `app/rag/steps/base.py`) managing built-in and dynamically registered step types, exposing the `@register_step("alias")` decorator and supporting dotted Python path fallbacks (`"module.path:StepClass"`) for bespoke execution logic.
+_Avoid_: Step map, node dictionary, ad-hoc step loader
+
+### Workflow Compiler
+The declarative topology compiler (`WorkflowCompiler` in `app/rag/workflows/compiler.py`) that reads declarative workflow manifests (YAML / JSON) and compiles them into executable, registered `WorkflowDefinition` instances backed by LangGraph topologies, wiring step instances, isolated tool scopes, and conditional edges automatically.
+_Avoid_: YAML loader, graph builder helper, topology script
+
+### Attachment
+The canonical, strongly-typed domain value object (`Attachment` in `app/rag/state.py`) representing multimodal and structured payloads (images, PDFs, audio, structured data files), encapsulating `id: str`, `mime_type: str`, `url: str | None`, `content_bytes: bytes | None`, and `metadata: dict[str, Any]`. Preserved across API transport schemas, conversational memory turns, and LangChain message content blocks.
+_Avoid_: Attachment dict, raw file tuple, untyped payload dictionary
+
+### Agent Handoff
+A first-class routing mechanism and declarative YAML primitive enabling an autonomous agent step to transfer conversational execution to another specialized agent or supervisor, synthesized by the `WorkflowCompiler` into dynamic transfer tools and LangGraph conditional edges.
+_Avoid_: Sub-agent jump, tool redirect, ad-hoc router function
