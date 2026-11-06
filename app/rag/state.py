@@ -4,7 +4,7 @@ from typing import Annotated, Any, Literal, NotRequired
 
 from langchain_core.documents import Document
 from langchain_core.messages import BaseMessage
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field
 from typing_extensions import TypedDict
 
 
@@ -18,7 +18,7 @@ class Citation(BaseModel):
     type: str = "general"
 
 
-def coerce_citations(val: Any) -> list[Citation]:
+def coerce_citations(val: Sequence[Any] | Any | None = None) -> list[Citation]:
     """Boundary validator coercing legacy dictionaries and shorthand strings into Citation models."""
     if not val:
         return []
@@ -26,16 +26,18 @@ def coerce_citations(val: Any) -> list[Citation]:
     def _to_citation(item: Any) -> Citation | None:
         if isinstance(item, Citation):
             return item
+        if isinstance(item, BaseModel):
+            dumped = item.model_dump()
+            if isinstance(dumped, dict):
+                return _to_citation(dumped)
+            return None
         if isinstance(item, dict):
-            # If title is directly present, prefer it
+            # Prefer explicit title, with fallback only to standard source attribute
             title = item.get("title")
             if not title:
-                # Fallback to legacy dictionary keys: source, id, text, snippet, filename
-                for key in ("source", "id", "text", "snippet", "filename"):
-                    candidate = item.get(key)
-                    if candidate and str(candidate).strip():
-                        title = str(candidate).strip()
-                        break
+                source = item.get("source")
+                if source and str(source).strip():
+                    title = str(source).strip()
             if not title:
                 return None
             url = str(item.get("url") or "")
@@ -43,10 +45,6 @@ def coerce_citations(val: Any) -> list[Citation]:
             return Citation(title=str(title).strip(), url=url, type=ctype)
         if isinstance(item, str) and item.strip():
             return Citation(title=item.strip())
-        if not isinstance(item, str) and hasattr(item, "model_dump"):
-            dumped = item.model_dump()
-            if isinstance(dumped, dict):
-                return _to_citation(dumped)
         return None
 
     if isinstance(val, (list, tuple, set)):
@@ -59,6 +57,9 @@ def coerce_citations(val: Any) -> list[Citation]:
 
     c = _to_citation(val)
     return [c] if c is not None else []
+
+
+CitationList = Annotated[list[Citation], BeforeValidator(coerce_citations)]
 
 
 class RouteDecision(BaseModel):

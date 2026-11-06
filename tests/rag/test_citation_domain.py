@@ -5,7 +5,7 @@ from pydantic import ValidationError
 
 from app.api.schemas import ChatResponse
 from app.rag.memory.base import ConversationTurn
-from app.rag.state import Citation
+from app.rag.state import Citation, CitationList
 from app.rag.workflows.base import WorkflowOutput
 
 
@@ -43,6 +43,9 @@ class TestCitationDomainModel:
             _ = citation["title"]  # type: ignore[index]
 
         assert not hasattr(citation, "get")
+
+    def test_citation_list_annotated_type_exported(self) -> None:
+        assert CitationList is not None
 
 
 class TestBoundaryCoercion:
@@ -147,12 +150,12 @@ class TestBoundaryCoercion:
             (ChatResponse, {"workflow": "test_wf", "answer": "ok", "source_used": "direct"}),
         ],
     )
-    def test_coercion_from_legacy_dict_keys(self, model_cls, kwargs) -> None:
+    def test_coercion_from_source_dict_fallback(self, model_cls, kwargs) -> None:
         raw = [
-            {"source": "it_guide.md", "snippet": "Password steps"},
-            {"id": "doc_99", "text": "Snippet text"},
+            {"source": "it_guide.md"},
+            {"source": "network.pdf", "url": "https://network.pdf", "type": "kb"},
         ]
         instance = model_cls(**kwargs, citations=raw)
         assert len(instance.citations) == 2
         assert instance.citations[0] == Citation(title="it_guide.md")
-        assert instance.citations[1] == Citation(title="doc_99")
+        assert instance.citations[1] == Citation(title="network.pdf", url="https://network.pdf", type="kb")

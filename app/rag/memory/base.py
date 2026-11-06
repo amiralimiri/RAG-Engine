@@ -6,8 +6,9 @@ from datetime import UTC, datetime
 from typing import Any, Protocol, runtime_checkable
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
-from pydantic import BaseModel, Field, field_validator
-from app.rag.state import Citation, coerce_citations
+from pydantic import BaseModel, Field
+
+from app.rag.state import CitationList
 
 
 class ConversationTurn(BaseModel):
@@ -18,12 +19,7 @@ class ConversationTurn(BaseModel):
     user_query: str
     assistant_answer: str
     attachments: list[dict[str, Any]] = Field(default_factory=list)
-    citations: list[Citation] = Field(default_factory=list)
-
-    @field_validator("citations", mode="before")
-    @classmethod
-    def _validate_citations(cls, val: Any) -> list[Citation]:
-        return coerce_citations(val)
+    citations: CitationList = Field(default_factory=list)
     source_used: str = Field(default="direct")
     trace_id: str | None = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
