@@ -18,6 +18,7 @@ from app.rag.memory import (
     get_conversation_memory,
     reset_conversation_memory,
 )
+from app.rag.state import Citation
 
 
 @pytest.mark.asyncio
@@ -80,7 +81,7 @@ async def test_in_memory_save_and_get_turns_and_messages() -> None:
         turn_index=0,
         user_query="How do I setup Docker?",
         assistant_answer="Install Docker Desktop and start the daemon.",
-        citations=[{"source": "docker_guide.md"}],
+        citations=[Citation(title="docker_guide.md")],
         source_used="vectorstore",
     )
     turn_1 = ConversationTurn(
@@ -553,7 +554,9 @@ async def test_in_memory_append_turn_rewind_truncation() -> None:
         assistant_answer="New A2",
     )
     assert next_turn.turn_index == 2
-    assert (await store.aget_session(session_id)).turn_count == 3
+    res_session = await store.aget_session(session_id)
+    assert res_session is not None
+    assert res_session.turn_count == 3
 
 
 @pytest.mark.asyncio
@@ -601,7 +604,7 @@ async def test_in_memory_append_turn_preserves_attachments_citations_and_metadat
     session_id = "session-rich-append"
 
     attachments = [{"name": "spec.pdf", "type": "application/pdf"}]
-    citations = [{"source": "kb/doc1.md", "snippet": "relevant snippet"}]
+    citations = [Citation(title="kb/doc1.md", url="", type="general")]
 
     turn = await store.aappend_turn(
         session_id=session_id,
@@ -615,7 +618,10 @@ async def test_in_memory_append_turn_preserves_attachments_citations_and_metadat
 
     assert turn.turn_index == 0
     assert turn.attachments == attachments
-    assert turn.citations == citations
+    assert turn.citations == [Citation(title="kb/doc1.md", url="", type="general")]
+    assert turn.citations[0].title == "kb/doc1.md"
+    assert turn.citations[0].url == ""
+    assert turn.citations[0].type == "general"
     assert turn.source_used == "vectorstore"
     assert turn.trace_id == "trace-12345"
 
@@ -624,7 +630,10 @@ async def test_in_memory_append_turn_preserves_attachments_citations_and_metadat
     assert len(retrieved_turns) == 1
     stored = retrieved_turns[0]
     assert stored.attachments == attachments
-    assert stored.citations == citations
+    assert stored.citations == [Citation(title="kb/doc1.md", url="", type="general")]
+    assert stored.citations[0].title == "kb/doc1.md"
+    assert stored.citations[0].url == ""
+    assert stored.citations[0].type == "general"
     assert stored.source_used == "vectorstore"
     assert stored.trace_id == "trace-12345"
 
@@ -765,3 +774,69 @@ async def test_noop_memory_store_aget_session_and_afork_session() -> None:
     assert ephemeral_explicit.forked_from_turn == -1
     assert ephemeral_explicit.turn_count == 0
     assert ephemeral_explicit.turns == []
+
+
+@pytest.mark.asyncio
+async def test_in_memory_citations_typed_across_append_rewind_fork() -> None:
+    """Validate that in-memory append, rewind (atruncate_from), and afork_session preserve typed Citation instances."""
+    store = InMemoryConversationStore()
+    session_id = "session-in-memory-citations"
+    c0 = Citation(title="Doc 0", url="https://example.com/0", type="web")
+    c1 = Citation(title="Doc 1", url="https://example.com/1", type="kb")
+    c2 = Citation(title="Doc 2", url="https://example.com/2", type="kb")
+
+    # 1. Append turns
+    t0 = await store.aappend_turn(
+        session_id=session_id,
+        user_query="Q0",
+        assistant_answer="A0",
+        citations=[c0],
+    )
+    assert len(t0.citations) == 1
+    assert isinstance(t0.citations[0], Citation)
+    assert t0.citations[0].title == "Doc 0"
+    assert t0.citations[0].url == "https://example.com/0"
+    assert t0.citations[0].type == "web"
+    assert t0.citations[0] == c0
+
+    t1 = await store.aappend_turn(
+        session_id=session_id,
+        user_query="Q1",
+        assistant_answer="A1",
+        citations=[c1],
+    )
+    assert t1.citations[0] == c1
+
+    t2 = await store.aappend_turn(
+        session_id=session_id,
+        user_query="Q2",
+        assistant_answer="A2",
+        citations=[c2],
+    )
+    assert t2.citations[0] == c2
+
+    # 2. Fork session up to turn 1
+    forked = await store.afork_session(session_id, upto_turn_index=1)
+    assert len(forked.turns) == 2
+    for turn, expected_citation in zip(forked.turns, [c0, c1]):
+        assert len(turn.citations) == 1
+        assert isinstance(turn.citations[0], Citation)
+        assert turn.citations[0].title == expected_citation.title
+        assert turn.citations[0].url == expected_citation.url
+        assert turn.citations[0].type == expected_citation.type
+        assert turn.citations[0] == expected_citation
+
+    # Verify retrieved fork turns from store
+    forked_turns = await store.aget_turns(forked.session_id)
+    assert len(forked_turns) == 2
+    assert forked_turns[0].citations[0] == c0
+    assert forked_turns[1].citations[0] == c1
+
+    # 3. Rewind (truncate from turn 2)
+    await store.atruncate_from(session_id, turn_index=2)
+    surviving_turns = await store.aget_turns(session_id)
+    assert len(surviving_turns) == 2
+    assert surviving_turns[0].citations[0] == c0
+    assert surviving_turns[1].citations[0] == c1
+    assert isinstance(surviving_turns[0].citations[0], Citation)
+    assert isinstance(surviving_turns[1].citations[0], Citation)

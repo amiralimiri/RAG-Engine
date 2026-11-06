@@ -1,7 +1,7 @@
 """Tests for domain DTOs, protocol seam, and configuration in the conversation memory subsystem."""
 
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage
@@ -16,6 +16,10 @@ from app.rag.memory.base import (
     SessionInfo,
 )
 from app.rag.memory.noop import NoOpMemoryStore
+from app.rag.state import Citation
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 
 def test_conversation_turn_creation_and_to_messages() -> None:
@@ -27,7 +31,7 @@ def test_conversation_turn_creation_and_to_messages() -> None:
         user_query="How do I reset my password?",
         assistant_answer="Go to the IT portal and click 'Reset Password'.",
         attachments=[],
-        citations=[{"source": "it_guide.md", "snippet": "Password reset steps"}],
+        citations=[Citation(title="it_guide.md")],
         source_used="vectorstore",
         trace_id="trace-abc",
         created_at=now,
@@ -39,6 +43,10 @@ def test_conversation_turn_creation_and_to_messages() -> None:
     assert turn.assistant_answer == "Go to the IT portal and click 'Reset Password'."
     assert turn.attachments == []
     assert len(turn.citations) == 1
+    assert isinstance(turn.citations[0], Citation)
+    assert turn.citations[0].title == "it_guide.md"
+    assert turn.citations[0].url == ""
+    assert turn.citations[0].type == "general"
     assert turn.source_used == "vectorstore"
     assert turn.trace_id == "trace-abc"
     assert turn.created_at == now
@@ -209,7 +217,7 @@ def test_protocol_runtime_checkable() -> None:
             *,
             rewind_turn_index: int | None = None,
             attachments: list[dict[str, Any]] | None = None,
-            citations: list[dict[str, Any]] | None = None,
+            citations: Sequence[Citation] | None = None,
             source_used: str = "direct",
             trace_id: str | None = None,
         ) -> ConversationTurn:
@@ -325,7 +333,7 @@ async def test_noop_memory_store_conformance_and_append_turn() -> None:
         assistant_answer="Rewound answer",
         rewind_turn_index=3,
         attachments=[{"type": "doc", "name": "spec.pdf"}],
-        citations=[{"source": "spec.pdf", "snippet": "requirements"}],
+        citations=[Citation(title="spec.pdf")],
         source_used="vectorstore",
         trace_id="trace-xyz",
     )
@@ -335,7 +343,10 @@ async def test_noop_memory_store_conformance_and_append_turn() -> None:
     assert turn2.user_query == "Rewound question"
     assert turn2.assistant_answer == "Rewound answer"
     assert turn2.attachments == [{"type": "doc", "name": "spec.pdf"}]
-    assert turn2.citations == [{"source": "spec.pdf", "snippet": "requirements"}]
+    assert turn2.citations == [Citation(title="spec.pdf", url="", type="general")]
+    assert turn2.citations[0].title == "spec.pdf"
+    assert turn2.citations[0].url == ""
+    assert turn2.citations[0].type == "general"
     assert turn2.source_used == "vectorstore"
     assert turn2.trace_id == "trace-xyz"
 

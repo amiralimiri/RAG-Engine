@@ -3,12 +3,17 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from pydantic import BaseModel, Field
 
 from app.rag.state import CitationList
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from app.rag.state import Citation
 
 
 class ConversationTurn(BaseModel):
@@ -81,7 +86,7 @@ class ConversationMemoryAdapter(Protocol):
         *,
         rewind_turn_index: int | None = None,
         attachments: list[dict[str, Any]] | None = None,
-        citations: list[dict[str, Any]] | None = None,
+        citations: Sequence[Citation] | None = None,
         source_used: str = "direct",
         trace_id: str | None = None,
     ) -> ConversationTurn:

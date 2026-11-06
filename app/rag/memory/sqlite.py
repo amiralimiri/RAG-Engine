@@ -20,9 +20,10 @@ from app.rag.memory.base import (
     ConversationTurn,
     SessionInfo,
 )
+from app.rag.state import Citation, coerce_citations
 
 if TYPE_CHECKING:
-    from collections.abc import Generator
+    from collections.abc import Generator, Sequence
 
     from langchain_core.messages import BaseMessage
 
@@ -98,7 +99,8 @@ def _row_to_session_info(row: sqlite3.Row) -> SessionInfo:
 def _row_to_turn(row: sqlite3.Row) -> ConversationTurn:
     """Map a database row to a canonical ConversationTurn domain model."""
     attachments: list[dict[str, Any]] = json.loads(row["attachments_json"]) if row["attachments_json"] else []
-    citations: list[dict[str, Any]] = json.loads(row["citations_json"]) if row["citations_json"] else []
+    raw_citations: Any = json.loads(row["citations_json"]) if row["citations_json"] else []
+    citations: list[Citation] = coerce_citations(raw_citations)
     return ConversationTurn(
         session_id=row["session_id"],
         turn_index=row["turn_index"],
@@ -210,7 +212,7 @@ class SQLiteConversationStore(ConversationMemoryAdapter):
         *,
         rewind_turn_index: int | None = None,
         attachments: list[dict[str, Any]] | None = None,
-        citations: list[dict[str, Any]] | None = None,
+        citations: Sequence[Citation] | None = None,
         source_used: str = "direct",
         trace_id: str | None = None,
     ) -> ConversationTurn:
@@ -221,9 +223,13 @@ class SQLiteConversationStore(ConversationMemoryAdapter):
                 now_iso = datetime.now(UTC).isoformat()
                 title = user_query[:60].strip() or "Untitled Session"
                 attachments_clean = attachments or []
-                citations_clean = citations or []
+                coerced_citations: list[Citation] = coerce_citations(citations)
                 attachments_json = json.dumps(attachments_clean) if attachments_clean else None
-                citations_json = json.dumps(citations_clean) if citations_clean else None
+                citations_json = (
+                    json.dumps([c.model_dump() for c in coerced_citations])
+                    if coerced_citations
+                    else None
+                )
 
                 with self._connection() as conn:
                     with conn:
@@ -275,7 +281,7 @@ class SQLiteConversationStore(ConversationMemoryAdapter):
                             user_query=user_query,
                             assistant_answer=assistant_answer,
                             attachments=attachments_clean,
-                            citations=citations_clean,
+                            citations=coerced_citations,
                             source_used=source_used,
                             trace_id=trace_id,
                             created_at=_parse_iso_datetime(now_iso),
@@ -292,7 +298,11 @@ class SQLiteConversationStore(ConversationMemoryAdapter):
                 created_iso = turn.created_at.isoformat()
                 title = turn.user_query[:60].strip() or "Untitled Session"
                 attachments_json = json.dumps(turn.attachments) if turn.attachments else None
-                citations_json = json.dumps(turn.citations) if turn.citations else None
+                citations_json = (
+                    json.dumps([c.model_dump() for c in turn.citations])
+                    if turn.citations
+                    else None
+                )
 
                 with self._connection() as conn:
                     with conn:

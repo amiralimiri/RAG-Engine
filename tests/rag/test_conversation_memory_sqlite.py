@@ -20,6 +20,7 @@ from app.rag.memory import (
     reset_conversation_memory,
 )
 from app.rag.memory.sqlite import SQLiteConversationStore
+from app.rag.state import Citation
 
 
 @pytest.fixture
@@ -47,7 +48,7 @@ async def test_sqlite_persistence_across_connections(tmp_path: Path) -> None:
         user_query="What is WAL mode?",
         assistant_answer="Write-Ahead Logging provides concurrency and durability.",
         attachments=[{"type": "image", "url": "https://example.com/wal.png"}],
-        citations=[{"source": "sqlite_docs.md", "page": 42}],
+        citations=[Citation(title="sqlite_docs.md")],
         source_used="vectorstore",
         trace_id="trace-persist-001",
     )
@@ -69,7 +70,10 @@ async def test_sqlite_persistence_across_connections(tmp_path: Path) -> None:
     assert turns[0].user_query == "What is WAL mode?"
     assert turns[0].assistant_answer == "Write-Ahead Logging provides concurrency and durability."
     assert turns[0].attachments == [{"type": "image", "url": "https://example.com/wal.png"}]
-    assert turns[0].citations == [{"source": "sqlite_docs.md", "page": 42}]
+    assert turns[0].citations == [Citation(title="sqlite_docs.md", url="", type="general")]
+    assert turns[0].citations[0].title == "sqlite_docs.md"
+    assert turns[0].citations[0].url == ""
+    assert turns[0].citations[0].type == "general"
     assert turns[0].source_used == "vectorstore"
     assert turns[0].trace_id == "trace-persist-001"
 
@@ -82,7 +86,7 @@ async def test_sqlite_save_and_get_turns_and_messages(sqlite_store: SQLiteConver
         turn_index=0,
         user_query="Tell me about python sqlite3",
         assistant_answer="Python includes sqlite3 in the standard library.",
-        citations=[{"file": "sqlite.txt"}],
+        citations=[Citation(title="sqlite.txt")],
         source_used="vectorstore",
     )
     turn_1 = ConversationTurn(
@@ -100,7 +104,10 @@ async def test_sqlite_save_and_get_turns_and_messages(sqlite_store: SQLiteConver
     assert len(turns) == 2
     assert turns[0].turn_index == 0
     assert turns[0].user_query == "Tell me about python sqlite3"
-    assert turns[0].citations == [{"file": "sqlite.txt"}]
+    assert turns[0].citations == [Citation(title="sqlite.txt", url="", type="general")]
+    assert turns[0].citations[0].title == "sqlite.txt"
+    assert turns[0].citations[0].url == ""
+    assert turns[0].citations[0].type == "general"
     assert turns[1].turn_index == 1
     assert turns[1].user_query == "Does it support WAL?"
 
@@ -459,7 +466,7 @@ async def test_sqlite_append_turn_monotonic_indexing(sqlite_store: SQLiteConvers
         "Query 0",
         "Answer 0",
         attachments=[{"type": "doc", "id": "1"}],
-        citations=[{"source": "test.txt"}],
+        citations=[Citation(title="test.txt")],
         source_used="vectorstore",
         trace_id="tr-0",
     )
@@ -469,7 +476,10 @@ async def test_sqlite_append_turn_monotonic_indexing(sqlite_store: SQLiteConvers
     assert turn_0.turn_index == 0
     assert turn_0.user_query == "Query 0"
     assert turn_0.attachments == [{"type": "doc", "id": "1"}]
-    assert turn_0.citations == [{"source": "test.txt"}]
+    assert turn_0.citations == [Citation(title="test.txt", url="", type="general")]
+    assert turn_0.citations[0].title == "test.txt"
+    assert turn_0.citations[0].url == ""
+    assert turn_0.citations[0].type == "general"
     assert turn_0.source_used == "vectorstore"
     assert turn_0.trace_id == "tr-0"
     assert turn_1.turn_index == 1
@@ -748,3 +758,69 @@ async def test_sqlite_afork_session_empty_title_fallback(
 
     forked = await sqlite_store.afork_session(source_id, upto_turn_index=-1)
     assert forked.title == f"Fork of {source_id}"
+
+
+@pytest.mark.asyncio
+async def test_sqlite_citations_typed_across_append_rewind_fork(
+    sqlite_store: SQLiteConversationStore,
+) -> None:
+    """Validate that append, rewind (atruncate_from), and afork_session preserve typed Citation instances."""
+    session_id = "session-citation-lifecycle"
+    c0 = Citation(title="Doc 0", url="https://example.com/0", type="web")
+    c1 = Citation(title="Doc 1", url="https://example.com/1", type="kb")
+    c2 = Citation(title="Doc 2", url="https://example.com/2", type="kb")
+
+    # 1. Append turns with strongly typed citations
+    t0 = await sqlite_store.aappend_turn(
+        session_id=session_id,
+        user_query="Q0",
+        assistant_answer="A0",
+        citations=[c0],
+    )
+    assert len(t0.citations) == 1
+    assert isinstance(t0.citations[0], Citation)
+    assert t0.citations[0].title == "Doc 0"
+    assert t0.citations[0].url == "https://example.com/0"
+    assert t0.citations[0].type == "web"
+
+    t1 = await sqlite_store.aappend_turn(
+        session_id=session_id,
+        user_query="Q1",
+        assistant_answer="A1",
+        citations=[c1],
+    )
+    assert t1.citations[0] == c1
+
+    t2 = await sqlite_store.aappend_turn(
+        session_id=session_id,
+        user_query="Q2",
+        assistant_answer="A2",
+        citations=[c2],
+    )
+    assert t2.citations[0] == c2
+
+    # 2. Fork session up to turn 1
+    forked = await sqlite_store.afork_session(session_id, upto_turn_index=1)
+    assert len(forked.turns) == 2
+    for turn, expected_citation in zip(forked.turns, [c0, c1]):
+        assert len(turn.citations) == 1
+        assert isinstance(turn.citations[0], Citation)
+        assert turn.citations[0].title == expected_citation.title
+        assert turn.citations[0].url == expected_citation.url
+        assert turn.citations[0].type == expected_citation.type
+        assert turn.citations[0] == expected_citation
+
+    # Verify retrieved fork turns from DB directly
+    forked_turns = await sqlite_store.aget_turns(forked.session_id)
+    assert len(forked_turns) == 2
+    assert forked_turns[0].citations[0] == c0
+    assert forked_turns[1].citations[0] == c1
+
+    # 3. Rewind (truncate from turn 2)
+    await sqlite_store.atruncate_from(session_id, turn_index=2)
+    surviving_turns = await sqlite_store.aget_turns(session_id)
+    assert len(surviving_turns) == 2
+    assert surviving_turns[0].citations[0] == c0
+    assert surviving_turns[1].citations[0] == c1
+    assert isinstance(surviving_turns[0].citations[0], Citation)
+    assert isinstance(surviving_turns[1].citations[0], Citation)

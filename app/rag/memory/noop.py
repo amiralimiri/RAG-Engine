@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from langchain_core.messages import BaseMessage
 
@@ -14,6 +14,11 @@ from app.rag.memory.base import (
     ConversationTurn,
     SessionInfo,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from app.rag.state import Citation
 
 
 class NoOpMemoryStore(ConversationMemoryAdapter):
@@ -45,19 +50,20 @@ class NoOpMemoryStore(ConversationMemoryAdapter):
         *,
         rewind_turn_index: int | None = None,
         attachments: list[dict[str, Any]] | None = None,
-        citations: list[dict[str, Any]] | None = None,
+        citations: Sequence[Citation] | None = None,
         source_used: str = "direct",
         trace_id: str | None = None,
     ) -> ConversationTurn:
         """Return an ephemeral ConversationTurn model without state persistence."""
         turn_index = rewind_turn_index if rewind_turn_index is not None else 0
+        citations_list = list(citations) if citations is not None else []
         return ConversationTurn(
             session_id=session_id,
             turn_index=turn_index,
             user_query=user_query,
             assistant_answer=assistant_answer,
             attachments=attachments or [],
-            citations=citations or [],
+            citations=citations_list,
             source_used=source_used,
             trace_id=trace_id,
         )
