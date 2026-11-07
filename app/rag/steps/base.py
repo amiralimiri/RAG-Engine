@@ -257,8 +257,8 @@ def reset_step_catalog() -> None:
     """Reset the global default StepCatalog singleton and repopulate built-in steps."""
     _default_step_catalog.clear()
 
-    # Imported lazily to avoid circular imports: the package module imports this base module.
-    from app.rag.steps import register_default_steps
+    # Imported lazily so this low-level module does not import concrete step modules at load time.
+    from app.rag.steps.defaults import register_default_steps
 
     register_default_steps(_default_step_catalog)
 

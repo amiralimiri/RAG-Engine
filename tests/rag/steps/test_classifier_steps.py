@@ -1,6 +1,6 @@
 """Unit tests for ClassifierRouteStep and ClassifierGradingStep in isolation."""
 
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from langchain_core.documents import Document
@@ -179,11 +179,30 @@ async def test_grade_honors_nested_input_and_output_mappings() -> None:
     assert classifier.grade_kb_calls[0]["current_query"] == "nested search"
 
 
+@pytest.mark.asyncio
+async def test_grade_accepts_target_keyword_from_spec() -> None:
+    classifier = FakeWorkflowClassifier(web_grade="good")
+    step = ClassifierGradingStep(classifier, target="web")
+
+    result = await step({"question": "Where is Docker?", "web_results": "Docker page"})
+
+    assert result == {"web_grade": "good", "trace": ["Web evidence grade → GOOD"]}
+    assert step.name == "grade_web"
+    assert step.grade_key == "web_grade"
+
+
 def test_grading_step_rejects_unknown_mode() -> None:
     classifier = FakeWorkflowClassifier()
 
     with pytest.raises(ValueError, match="Unsupported grading mode"):
-        ClassifierGradingStep(classifier, mode="hybrid")
+        ClassifierGradingStep(classifier, mode=cast(Any, "hybrid"))
+
+
+def test_grading_step_rejects_conflicting_target_and_mode() -> None:
+    classifier = FakeWorkflowClassifier()
+
+    with pytest.raises(ValueError, match="Conflicting grading target"):
+        ClassifierGradingStep(classifier, target="kb", mode="web")
 
 
 def test_classifier_steps_are_registered_under_canonical_aliases() -> None:

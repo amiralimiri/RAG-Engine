@@ -38,7 +38,7 @@ async def test_execute_emits_default_evidence_outputs() -> None:
 
     assert result["retrieved_contexts"] == ["Use OpenVPN with the company profile."]
     assert result["citations"] == [Citation(title="vpn.md", type="private_kb")]
-    assert result["source_used"] == "vectorstore"
+    assert "source_used" not in result
     assert result["trace"] == ["Tool retrieval → 2 results"]
     assert "documents" not in result
     assert "content" not in result
@@ -71,6 +71,16 @@ async def test_execute_can_preserve_existing_source_used_decision() -> None:
 
 
 @pytest.mark.asyncio
+async def test_execute_emits_source_used_when_explicitly_enabled() -> None:
+    tool = _kb_tool()
+    step = ToolRetrievalStep(tool, emit_source_used=True)
+
+    result = await step({"question": "vpn", "source_used": "kb"})
+
+    assert result["source_used"] == "vectorstore"
+
+
+@pytest.mark.asyncio
 async def test_execute_falls_back_to_question_when_current_query_missing() -> None:
     tool = _kb_tool()
     step = ToolRetrievalStep(tool)
@@ -86,7 +96,7 @@ async def test_execute_uses_tool_content_when_artifact_contexts_are_empty() -> N
         content="Only display content",
         artifact=ToolEvidenceArtifact(source_used="web_search"),
     )
-    step = ToolRetrievalStep(tool)
+    step = ToolRetrievalStep(tool, emit_source_used=True)
 
     result = await step({"question": "Search the web"})
 
@@ -95,10 +105,28 @@ async def test_execute_uses_tool_content_when_artifact_contexts_are_empty() -> N
 
 
 @pytest.mark.asyncio
+async def test_execute_counts_contexts_when_raw_payload_is_not_a_list() -> None:
+    tool = FakeRAGTool(
+        content="Web display content",
+        artifact=ToolEvidenceArtifact(
+            retrieved_contexts=["result one", "result two", "result three"],
+            source_used="web_search",
+            raw_payload={"results": ["one", "two", "three"]},
+        ),
+    )
+    step = ToolRetrievalStep(tool)
+
+    result = await step({"question": "Search the web"})
+
+    assert result["trace"] == ["Tool retrieval → 3 results"]
+
+
+@pytest.mark.asyncio
 async def test_execute_honors_nested_input_and_output_mappings() -> None:
     tool = _kb_tool()
     step = ToolRetrievalStep(
         tool,
+        emit_source_used=True,
         inputs={"query": "context.search.query"},
         outputs={
             "retrieved_contexts": "context.kb.chunks",
@@ -144,7 +172,8 @@ async def test_step_is_callable_as_langgraph_node() -> None:
 
     result = await step({"question": "vpn"})
 
-    assert result["source_used"] == "vectorstore"
+    assert result["retrieved_contexts"] == ["Use OpenVPN with the company profile."]
+    assert "source_used" not in result
 
 
 def test_step_is_registered_under_canonical_alias() -> None:

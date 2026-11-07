@@ -17,7 +17,11 @@ class ToolRetrievalStep(BaseStep):
 
     The step reads its search query from ``current_query`` (falling back to ``question``),
     invokes the injected tool asynchronously, aggregates the returned evidence artifact,
-    and writes ``retrieved_contexts``, ``citations``, ``source_used``, and ``trace``.
+    and writes ``retrieved_contexts``, ``citations``, and ``trace``.
+
+    ``source_used`` is only emitted when ``emit_source_used=True`` (or an explicit
+    ``source_used`` override is supplied) so retrieval does not overwrite an upstream
+    router decision by default.
 
     Optional ``documents`` and ``content`` logical outputs are only emitted when they are
     explicitly mapped (for KB document payloads or raw web/search display content).
@@ -39,7 +43,7 @@ class ToolRetrievalStep(BaseStep):
         outputs: dict[str, str] | None = None,
         trace_template: str = "Tool retrieval → {count} results",
         source_used: str | None = None,
-        emit_source_used: bool = True,
+        emit_source_used: bool = False,
     ) -> None:
         super().__init__(
             name=name or tool.name,
@@ -51,9 +55,7 @@ class ToolRetrievalStep(BaseStep):
         self.source_used = source_used
         self.emit_source_used = emit_source_used
 
-    async def execute(
-        self, state: dict[str, Any], config: RunnableConfig | None = None
-    ) -> dict[str, Any]:
+    async def execute(self, state: dict[str, Any], config: RunnableConfig | None = None) -> dict[str, Any]:
         structlog.contextvars.bind_contextvars(step=self.name)
 
         # A logical "query" input is only honored when explicitly mapped; otherwise
@@ -72,10 +74,14 @@ class ToolRetrievalStep(BaseStep):
         evidence = aggregate_tool_evidence([artifact])
 
         contexts = evidence.retrieved_contexts or ([result.content] if result.content else [])
-        documents = artifact.raw_payload if isinstance(artifact.raw_payload, list) else []
+        raw_payload = artifact.raw_payload
+        documents = raw_payload if isinstance(raw_payload, list) else []
+        # Web search tools expose a dict payload, so fall back to normalized context count
+        # instead of falsely reporting "0 results".
+        count = len(documents) if isinstance(raw_payload, list) else len(contexts)
         resolved_source = self.source_used or evidence.source_used
         trace = self.trace_template.format(
-            count=len(documents),
+            count=count,
             content=result.content,
             query=query,
             source=resolved_source,
@@ -86,7 +92,7 @@ class ToolRetrievalStep(BaseStep):
             "citations": evidence.citations,
             "trace": [trace],
         }
-        if self.emit_source_used:
+        if self.emit_source_used or self.source_used is not None:
             payload["source_used"] = resolved_source
         if "documents" in self.outputs:
             payload["documents"] = documents

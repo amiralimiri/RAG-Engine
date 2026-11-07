@@ -2,15 +2,14 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
 from typing import Any, cast
 
 import structlog
 from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig
 
 from app.rag.prompts import PromptStore, RenderedPrompt, get_prompt_store
+from app.rag.prompts.formatting import format_chat_history
 from app.rag.steps.base import BaseStep, register_step
 from app.rag.tools.retriever import format_documents
 
@@ -26,33 +25,6 @@ REFORMULATION_MODES: dict[str, tuple[str, str]] = {
     "condense": ("rag:condense_query", "condense_query"),
     "rewrite": ("rag:rewrite_query", "rewrite_query"),
 }
-
-
-def format_chat_history(messages: Any) -> str:
-    """Format conversational messages into a compact role-prefixed transcript."""
-    if not messages or not isinstance(messages, Sequence):
-        return ""
-    lines: list[str] = []
-    for m in messages:
-        if isinstance(m, HumanMessage):
-            role = "Human"
-            content = m.content
-        elif isinstance(m, AIMessage):
-            role = "Assistant"
-            content = m.content
-        elif isinstance(m, SystemMessage):
-            role = "System"
-            content = m.content
-        elif isinstance(m, dict):
-            role = (m.get("role") or "User").capitalize()
-            content = m.get("content", "")
-        else:
-            role = getattr(m, "type", getattr(m, "role", "Message")).capitalize()
-            content = getattr(m, "content", str(m))
-        if not isinstance(content, str):
-            content = str(content)
-        lines.append(f"{role}: {content}")
-    return "\n".join(lines)
 
 
 class _ModelPromptStep(BaseStep):
@@ -125,9 +97,7 @@ class PromptGenerationStep(_ModelPromptStep):
             },
         )
 
-    async def execute(
-        self, state: dict[str, Any], config: RunnableConfig | None = None
-    ) -> dict[str, Any]:
+    async def execute(self, state: dict[str, Any], config: RunnableConfig | None = None) -> dict[str, Any]:
         structlog.contextvars.bind_contextvars(step=self.name)
 
         question = self.resolve_input(state, "question", default="") or ""
@@ -202,18 +172,14 @@ class QueryReformulationStep(_ModelPromptStep):
             outputs=outputs if outputs is not None else default_outputs,
         )
 
-    async def execute(
-        self, state: dict[str, Any], config: RunnableConfig | None = None
-    ) -> dict[str, Any]:
+    async def execute(self, state: dict[str, Any], config: RunnableConfig | None = None) -> dict[str, Any]:
         structlog.contextvars.bind_contextvars(step=self.name)
 
         if self.mode == "condense":
             return await self._condense(state, config)
         return await self._rewrite(state, config)
 
-    async def _condense(
-        self, state: dict[str, Any], config: RunnableConfig | None
-    ) -> dict[str, Any]:
+    async def _condense(self, state: dict[str, Any], config: RunnableConfig | None) -> dict[str, Any]:
         question = self.resolve_input(state, "question", default="") or ""
         messages = self.resolve_input(state, "messages", default=[]) or []
         raw_history = messages[:-1] if messages else []
@@ -239,9 +205,7 @@ class QueryReformulationStep(_ModelPromptStep):
             state,
         )
 
-    async def _rewrite(
-        self, state: dict[str, Any], config: RunnableConfig | None
-    ) -> dict[str, Any]:
+    async def _rewrite(self, state: dict[str, Any], config: RunnableConfig | None) -> dict[str, Any]:
         question = self.resolve_input(state, "question", default="") or ""
         current_query = self.resolve_input(state, "current_query") or question
 

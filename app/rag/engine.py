@@ -1,10 +1,8 @@
 import logging
-from collections.abc import Sequence
 from typing import Any, Literal, cast
 
 import structlog
 from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig
 from langchain_openai import ChatOpenAI
 from langgraph.graph import END, START, StateGraph
@@ -13,6 +11,7 @@ from app.core.concurrency import wrap_safe_invoke
 from app.core.config import get_settings
 from app.rag.classifiers import WorkflowClassifier
 from app.rag.prompts import PromptStore, RenderedPrompt, get_prompt_store
+from app.rag.prompts.formatting import format_chat_history
 from app.rag.state import AgentState
 from app.rag.tools import RAGTool, create_retriever_tool, create_web_search_tool
 
@@ -26,32 +25,6 @@ __all__ = [
     "create_agentic_rag_graph",
     "route_start",
 ]
-
-
-def _format_chat_history(messages: Any) -> str:
-    if not messages or not isinstance(messages, Sequence):
-        return ""
-    lines: list[str] = []
-    for m in messages:
-        if isinstance(m, HumanMessage):
-            role = "Human"
-            content = m.content
-        elif isinstance(m, AIMessage):
-            role = "Assistant"
-            content = m.content
-        elif isinstance(m, SystemMessage):
-            role = "System"
-            content = m.content
-        elif isinstance(m, dict):
-            role = (m.get("role") or "User").capitalize()
-            content = m.get("content", "")
-        else:
-            role = getattr(m, "type", getattr(m, "role", "Message")).capitalize()
-            content = getattr(m, "content", str(m))
-        if not isinstance(content, str):
-            content = str(content)
-        lines.append(f"{role}: {content}")
-    return "\n".join(lines)
 
 
 def get_chat_model() -> BaseChatModel:
@@ -99,7 +72,7 @@ def _prepare_generation_prompt(
     """Extract conversation history, format context variables, and compile prompt with history fallback prep."""
     store = prompt_store if prompt_store is not None else get_prompt_store()
     raw_history = state.get("messages", [])[:-1] if state.get("messages") else []
-    history_str = _format_chat_history(raw_history) if raw_history else ""
+    history_str = format_chat_history(raw_history) if raw_history else ""
     current_q = state.get("current_query") or state["question"]
 
     compile_kwargs = {
@@ -183,7 +156,7 @@ def create_agentic_rag_graph(
     async def node_condense_query(state: AgentState, config: RunnableConfig | None = None) -> dict[str, Any]:
         structlog.contextvars.bind_contextvars(step="condense_query")
         raw_history = state.get("messages", [])[:-1] if state.get("messages") else []
-        history_str = _format_chat_history(raw_history)
+        history_str = format_chat_history(raw_history)
         current_question = state["question"]
         rendered = active_prompt_store.render(
             "rag:condense_query",

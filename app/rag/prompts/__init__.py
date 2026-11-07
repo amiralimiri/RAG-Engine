@@ -12,6 +12,7 @@ from app.rag.prompts.base import (
     RenderedPrompt,
     interpolate_mustache,
 )
+from app.rag.prompts.formatting import format_chat_history
 from app.rag.prompts.langfuse import LangfusePromptStore
 from app.rag.prompts.local import LocalPromptStore
 
@@ -69,6 +70,7 @@ __all__ = [
     "LocalPromptStore",
     "PromptStore",
     "RenderedPrompt",
+    "format_chat_history",
     "get_prompt_store",
     "interpolate_mustache",
     "reset_prompt_store",

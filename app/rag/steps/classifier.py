@@ -1,6 +1,6 @@
 """Classifier workflow steps wrapping routing and evidence grading seam calls."""
 
-from typing import Any
+from typing import Any, Literal
 
 import structlog
 from langchain_core.runnables import RunnableConfig
@@ -11,6 +11,7 @@ from app.rag.steps.base import BaseStep, register_step
 logger = structlog.get_logger(__name__)
 
 GRADING_MODES = {"kb", "web"}
+GradingMode = Literal["kb", "web"]
 
 
 @register_step("classifier_route")
@@ -38,9 +39,7 @@ class ClassifierRouteStep(BaseStep):
         )
         self.classifier = classifier
 
-    async def execute(
-        self, state: dict[str, Any], config: RunnableConfig | None = None
-    ) -> dict[str, Any]:
+    async def execute(self, state: dict[str, Any], config: RunnableConfig | None = None) -> dict[str, Any]:
         structlog.contextvars.bind_contextvars(step=self.name)
 
         question = self.resolve_input(state, "question", default="") or ""
@@ -70,27 +69,29 @@ class ClassifierGradingStep(BaseStep):
         self,
         classifier: WorkflowClassifier,
         *,
-        mode: str = "kb",
+        target: GradingMode | None = None,
+        mode: GradingMode | None = None,
         name: str | None = None,
         inputs: dict[str, str] | None = None,
         outputs: dict[str, str] | None = None,
     ) -> None:
-        if mode not in GRADING_MODES:
-            raise ValueError(f"Unsupported grading mode '{mode}'. Expected one of {sorted(GRADING_MODES)}.")
+        if target is not None and mode is not None and target != mode:
+            raise ValueError(f"Conflicting grading target '{target}' and mode '{mode}'.")
+        resolved_mode = target or mode or "kb"
+        if resolved_mode not in GRADING_MODES:
+            raise ValueError(f"Unsupported grading mode '{resolved_mode}'. Expected one of {sorted(GRADING_MODES)}.")
 
-        self.mode = mode
-        grade_key = f"{mode}_grade"
+        self.mode = resolved_mode
+        grade_key = f"{resolved_mode}_grade"
         super().__init__(
-            name=name or f"grade_{mode}",
+            name=name or f"grade_{resolved_mode}",
             inputs=inputs,
             outputs=outputs if outputs is not None else {grade_key: grade_key, "trace": "trace"},
         )
         self.classifier = classifier
         self.grade_key = grade_key
 
-    async def execute(
-        self, state: dict[str, Any], config: RunnableConfig | None = None
-    ) -> dict[str, Any]:
+    async def execute(self, state: dict[str, Any], config: RunnableConfig | None = None) -> dict[str, Any]:
         structlog.contextvars.bind_contextvars(step=self.name)
 
         question = self.resolve_input(state, "question", default="") or ""
@@ -124,4 +125,4 @@ class ClassifierGradingStep(BaseStep):
         )
 
 
-__all__ = ["ClassifierRouteStep", "ClassifierGradingStep", "GRADING_MODES"]
+__all__ = ["ClassifierRouteStep", "ClassifierGradingStep", "GRADING_MODES", "GradingMode"]
