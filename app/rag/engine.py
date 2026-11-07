@@ -10,9 +10,15 @@ from langgraph.graph import END, START, StateGraph
 from app.core.concurrency import wrap_safe_invoke
 from app.core.config import get_settings
 from app.rag.classifiers import WorkflowClassifier
-from app.rag.prompts import PromptStore, RenderedPrompt, get_prompt_store
-from app.rag.prompts.formatting import format_chat_history
+from app.rag.prompts import PromptStore, get_prompt_store
 from app.rag.state import AgentState
+from app.rag.steps import (
+    ClassifierGradingStep,
+    ClassifierRouteStep,
+    PromptGenerationStep,
+    QueryReformulationStep,
+    ToolRetrievalStep,
+)
 from app.rag.tools import RAGTool, create_retriever_tool, create_web_search_tool
 
 logger = logging.getLogger(__name__)
@@ -47,49 +53,19 @@ def route_start(state: AgentState) -> Literal["condense_query", "route_question"
 
 
 def route_after_router(state: AgentState) -> Literal["retrieve_kb", "direct_answer"]:
-    return "retrieve_kb" if state["source_used"] == "kb" else "direct_answer"
+    return "retrieve_kb" if state.get("source_used") == "kb" else "direct_answer"
 
 
 def after_kb(state: AgentState) -> Literal["generate_from_kb", "search_web"]:
-    return "generate_from_kb" if state["kb_grade"] == "good" else "search_web"
+    return "generate_from_kb" if state.get("kb_grade") == "good" else "search_web"
 
 
 def after_web(state: AgentState) -> Literal["generate_from_web", "rewrite_query", "insufficient"]:
-    if state["web_grade"] == "good":
+    if state.get("web_grade") == "good":
         return "generate_from_web"
-    if state["retry_count"] < get_settings().max_retries:
+    if state.get("retry_count", 0) < get_settings().max_retries:
         return "rewrite_query"
     return "insufficient"
-
-
-def _prepare_generation_prompt(
-    prompt_key: str,
-    state: AgentState,
-    config: RunnableConfig | None = None,
-    prompt_store: PromptStore | None = None,
-    **extra_kwargs: Any,
-) -> RenderedPrompt:
-    """Extract conversation history, format context variables, and compile prompt with history fallback prep."""
-    store = prompt_store if prompt_store is not None else get_prompt_store()
-    raw_history = state.get("messages", [])[:-1] if state.get("messages") else []
-    history_str = format_chat_history(raw_history) if raw_history else ""
-    current_q = state.get("current_query") or state["question"]
-
-    compile_kwargs = {
-        "question": state["question"],
-        "current_query": current_q,
-        **extra_kwargs,
-    }
-
-    if history_str:
-        compile_kwargs["chat_history"] = history_str
-        compile_kwargs["history"] = history_str
-
-    rendered = store.render(prompt_key, config=config, **compile_kwargs)
-    if history_str and history_str not in rendered.text:
-        rendered = rendered.with_prefix(f"Chat History:\n{history_str}\n\n")
-
-    return rendered
 
 
 async def direct_answer(
@@ -99,18 +75,16 @@ async def direct_answer(
     model: BaseChatModel | None = None,
     prompt_store: PromptStore | None = None,
 ) -> dict[str, Any]:
-    structlog.contextvars.bind_contextvars(step="direct_answer")
-    rendered = _prepare_generation_prompt("rag:direct_answer", state, config=config, prompt_store=prompt_store)
+    """Execute the direct-response path through the canonical generation step."""
     active_model = model if model is not None else get_chat_model()
-    response = await active_model.ainvoke(rendered.text, config=cast(RunnableConfig, rendered.config))
-    answer = response.content if hasattr(response, "content") else str(response)
-    return {
-        "answer": answer,
-        "source_used": "direct",
-        "retrieved_contexts": [],
-        "citations": [],
-        "trace": ["Direct response → no retrieval"],
-    }
+    step = PromptGenerationStep(
+        active_model,
+        mode="direct",
+        prompt_key="rag:direct_answer",
+        source_used="direct",
+        prompt_store=prompt_store,
+    )
+    return await step(cast(dict[str, Any], state), config)
 
 
 def insufficient(state: AgentState) -> dict[str, Any]:
@@ -153,187 +127,76 @@ def create_agentic_rag_graph(
     active_web_tool = web_tool if web_tool is not None else create_web_search_tool()
     active_prompt_store = prompt_store if prompt_store is not None else get_prompt_store()
 
-    async def node_condense_query(state: AgentState, config: RunnableConfig | None = None) -> dict[str, Any]:
-        structlog.contextvars.bind_contextvars(step="condense_query")
-        raw_history = state.get("messages", [])[:-1] if state.get("messages") else []
-        history_str = format_chat_history(raw_history)
-        current_question = state["question"]
-        rendered = active_prompt_store.render(
-            "rag:condense_query",
-            config=config,
-            question=current_question,
-            chat_history=history_str,
-            history=history_str,
-        )
-        response = await active_model.ainvoke(rendered.text, config=cast(RunnableConfig, rendered.config))
-        raw_query = response.content if hasattr(response, "content") else str(response)
-        standalone_query = (raw_query if isinstance(raw_query, str) else str(raw_query)).strip()
-        if not standalone_query:
-            standalone_query = current_question
-        return {
-            "current_query": standalone_query,
-            "trace": [f"Query contextualized → '{standalone_query}'"],
-        }
-
-    def node_route_question(state: AgentState, config: RunnableConfig | None = None) -> dict[str, Any]:
-        structlog.contextvars.bind_contextvars(step="route_question")
-        messages = state.get("messages") or []
-        query = state.get("current_query") if len(messages) > 1 else state["question"]
-        if not query:
-            query = state["question"]
-        decision = classifier.route(query, config=config)
-        return {
-            "current_query": query,
-            "source_used": decision.route,
-            "trace": [f"Router → {decision.route.upper()}"],
-        }
-
-    async def node_retrieve_kb(state: AgentState, config: RunnableConfig | None = None) -> dict[str, Any]:
-        structlog.contextvars.bind_contextvars(step="retrieve_kb")
-        search_query = state.get("current_query") or state["question"]
-        result = await active_kb_tool.aexecute({"query": search_query}, config=config)
-
-        docs = result.artifact.raw_payload if isinstance(result.artifact.raw_payload, list) else []
-        citations = list(result.artifact.citations)
-        retrieved_contexts = (
-            result.artifact.retrieved_contexts
-            if result.artifact.retrieved_contexts
-            else ([result.content] if result.content else [])
-        )
-
-        return {
-            "kb_docs": docs,
-            "retrieved_contexts": retrieved_contexts,
-            "citations": citations,
-            "trace": [f"Private KB retrieval → {len(docs)} chunks"],
-        }
-
-    def node_grade_kb(state: AgentState, config: RunnableConfig | None = None) -> dict[str, Any]:
-        structlog.contextvars.bind_contextvars(step="grade_kb")
-        search_query = state.get("current_query") or state["question"]
-        grade = classifier.grade_kb(
-            question=state["question"],
-            current_query=search_query,
-            kb_docs=state["kb_docs"],
-            config=config,
-        )
-        return {
-            "kb_grade": grade.grade,
-            "trace": [f"KB evidence grade → {grade.grade.upper()}"],
-        }
-
-    async def node_search_web(state: AgentState, config: RunnableConfig | None = None) -> dict[str, Any]:
-        structlog.contextvars.bind_contextvars(step="search_web")
-        search_query = state.get("current_query") or state["question"]
-        result = await active_web_tool.aexecute({"query": search_query}, config=config)
-
-        citations = list(result.artifact.citations)
-        contexts = (
-            result.artifact.retrieved_contexts
-            if result.artifact.retrieved_contexts
-            else ([result.content] if result.content else [])
-        )
-
-        return {
-            "web_results": result.content,
-            "citations": citations,
-            "source_used": result.artifact.source_used,
-            "retrieved_contexts": contexts,
-            "trace": ["Web fallback → Tavily search"],
-        }
-
-    def node_grade_web(state: AgentState, config: RunnableConfig | None = None) -> dict[str, Any]:
-        structlog.contextvars.bind_contextvars(step="grade_web")
-        search_query = state.get("current_query") or state["question"]
-        grade = classifier.grade_web(
-            question=state["question"],
-            current_query=search_query,
-            web_results=state["web_results"],
-            config=config,
-        )
-        return {
-            "web_grade": grade.grade,
-            "trace": [f"Web evidence grade → {grade.grade.upper()}"],
-        }
-
-    async def rewrite_query(state: AgentState, config: RunnableConfig | None = None) -> dict[str, Any]:
-        structlog.contextvars.bind_contextvars(step="rewrite_query")
-        search_query = state.get("current_query") or state["question"]
-        rendered = active_prompt_store.render(
-            "rag:rewrite_query",
-            config=config,
-            question=state["question"],
-            current_query=search_query,
-        )
-        response = await active_model.ainvoke(rendered.text, config=cast(RunnableConfig, rendered.config))
-        raw_rewritten = response.content if hasattr(response, "content") else str(response)
-        rewritten = (raw_rewritten if isinstance(raw_rewritten, str) else str(raw_rewritten)).strip()
-        return {
-            "current_query": rewritten,
-            "retry_count": state["retry_count"] + 1,
-            "trace": [f"Query rewrite → {rewritten}"],
-        }
-
-    async def generate_from_kb(state: AgentState, config: RunnableConfig | None = None) -> dict[str, Any]:
-        structlog.contextvars.bind_contextvars(step="generate_from_kb")
-        context = "\n\n".join(
-            f"[Source: {d.metadata.get('source', 'unknown')}]\n{d.page_content}" for d in state["kb_docs"]
-        )
-        rendered = _prepare_generation_prompt(
-            "rag:generate_kb",
-            state,
-            config=config,
-            prompt_store=active_prompt_store,
-            context=context,
-        )
-        response = await active_model.ainvoke(rendered.text, config=cast(RunnableConfig, rendered.config))
-        answer = response.content if hasattr(response, "content") else str(response)
-        return {
-            "answer": answer,
-            "source_used": "vectorstore",
-            "citations": state.get("citations", []),
-            "retrieved_contexts": state.get("retrieved_contexts", []),
-            "trace": ["Answer generation → PRIVATE KB"],
-        }
-
-    async def generate_from_web(state: AgentState, config: RunnableConfig | None = None) -> dict[str, Any]:
-        structlog.contextvars.bind_contextvars(step="generate_from_web")
-        rendered = _prepare_generation_prompt(
-            "rag:generate_web",
-            state,
-            config=config,
-            prompt_store=active_prompt_store,
-            web_results=state["web_results"],
-        )
-        response = await active_model.ainvoke(rendered.text, config=cast(RunnableConfig, rendered.config))
-        answer = response.content if hasattr(response, "content") else str(response)
-        return {
-            "answer": answer,
-            "source_used": "web_search",
-            "retrieved_contexts": state.get("retrieved_contexts", []),
-            "citations": state.get("citations", []),
-            "trace": ["Answer generation → WEB SEARCH"],
-        }
-
-    async def node_direct_answer(state: AgentState, config: RunnableConfig | None = None) -> dict[str, Any]:
-        return await direct_answer(state, config=config, model=active_model, prompt_store=active_prompt_store)
+    condense_query = QueryReformulationStep(active_model, mode="condense", prompt_store=active_prompt_store)
+    route_question = ClassifierRouteStep(classifier)
+    retrieve_kb = ToolRetrievalStep(
+        active_kb_tool,
+        name="retrieve_kb",
+        trace_template="Private KB retrieval → {count} chunks",
+        source_used="vectorstore",
+        emit_source_used=False,
+        outputs={
+            "documents": "kb_docs",
+            "retrieved_contexts": "retrieved_contexts",
+            "citations": "citations",
+            "trace": "trace",
+        },
+    )
+    grade_kb = ClassifierGradingStep(classifier, target="kb")
+    search_web = ToolRetrievalStep(
+        active_web_tool,
+        name="search_web",
+        trace_template="Web fallback → Tavily search",
+        source_used="web_search",
+        emit_source_used=True,
+        outputs={
+            "content": "web_results",
+            "retrieved_contexts": "retrieved_contexts",
+            "citations": "citations",
+            "source_used": "source_used",
+            "trace": "trace",
+        },
+    )
+    grade_web = ClassifierGradingStep(classifier, target="web")
+    rewrite_query = QueryReformulationStep(active_model, mode="rewrite", prompt_store=active_prompt_store)
+    generate_from_kb = PromptGenerationStep(
+        active_model,
+        mode="kb",
+        prompt_key="rag:generate_kb",
+        source_used="vectorstore",
+        prompt_store=active_prompt_store,
+    )
+    generate_from_web = PromptGenerationStep(
+        active_model,
+        mode="web",
+        prompt_key="rag:generate_web",
+        source_used="web_search",
+        prompt_store=active_prompt_store,
+    )
+    direct_answer_step = PromptGenerationStep(
+        active_model,
+        mode="direct",
+        prompt_key="rag:direct_answer",
+        source_used="direct",
+        prompt_store=active_prompt_store,
+    )
 
     graph = StateGraph(AgentState)
-    nodes = {
-        "condense_query": node_condense_query,
-        "route_question": node_route_question,
-        "retrieve_kb": node_retrieve_kb,
-        "grade_kb": node_grade_kb,
-        "search_web": node_search_web,
-        "grade_web": node_grade_web,
-        "rewrite_query": rewrite_query,
-        "generate_from_kb": generate_from_kb,
-        "generate_from_web": generate_from_web,
-        "direct_answer": node_direct_answer,
-        "insufficient": insufficient,
-    }
-    for name, fn in nodes.items():
-        graph.add_node(name, fn)
+    nodes: list[tuple[str, Any]] = [
+        ("condense_query", condense_query),
+        ("route_question", route_question),
+        ("retrieve_kb", retrieve_kb),
+        ("grade_kb", grade_kb),
+        ("search_web", search_web),
+        ("grade_web", grade_web),
+        ("rewrite_query", rewrite_query),
+        ("generate_from_kb", generate_from_kb),
+        ("generate_from_web", generate_from_web),
+        ("direct_answer", direct_answer_step),
+        ("insufficient", insufficient),
+    ]
+    for node_name, step in nodes:
+        graph.add_node(node_name, step)
 
     graph.add_conditional_edges(
         START,

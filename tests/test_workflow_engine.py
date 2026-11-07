@@ -333,20 +333,15 @@ async def test_create_agentic_rag_graph_injected_web_tool_fallback(mock_llm):
 def test_graph_nodes_are_native_async_coroutines():
     classifier = FakeClassifierAdapter()
     graph = create_agentic_rag_graph(classifier)
-    retrieve_kb_node = graph.nodes["retrieve_kb"]
-    search_web_node = graph.nodes["search_web"]
 
-    assert retrieve_kb_node.bound.func is None, "retrieve_kb must not have a sync fallback runner"
-    assert not isinstance(retrieve_kb_node.bound.afunc, functools.partial), (
-        "retrieve_kb must not be wrapped in run_in_executor"
-    )
-    assert inspect.iscoroutinefunction(retrieve_kb_node.bound.afunc), "retrieve_kb afunc must be a coroutine function"
+    def _is_async_callable(fn: Any) -> bool:
+        return inspect.iscoroutinefunction(fn) or inspect.iscoroutinefunction(getattr(fn, "__call__", None))
 
-    assert search_web_node.bound.func is None, "search_web must not have a sync fallback runner"
-    assert not isinstance(search_web_node.bound.afunc, functools.partial), (
-        "search_web must not be wrapped in run_in_executor"
-    )
-    assert inspect.iscoroutinefunction(search_web_node.bound.afunc), "search_web afunc must be a coroutine function"
+    for node_name in ("retrieve_kb", "search_web"):
+        bound = graph.nodes[node_name].bound
+        assert bound.func is None, f"{node_name} must not have a sync fallback runner"
+        assert not isinstance(bound.afunc, functools.partial), f"{node_name} must not be wrapped in run_in_executor"
+        assert _is_async_callable(bound.afunc), f"{node_name} afunc must be an async callable"
 
 
 @pytest.mark.asyncio

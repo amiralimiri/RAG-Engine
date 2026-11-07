@@ -40,7 +40,7 @@ Guidelines and architecture patterns established in ADR-0018 (Unified Prompt Sto
    - The template engine must be resilient to arbitrary whitespace inside brackets (e.g. `{{  variable  }}`), handle backslashes in values safely without regex escape corruption, and preserve missing/unprovided variables verbatim rather than crashing.
 
 5. **Explicit Dependency Injection Across Engine & Classifiers**:
-   - Node functions (`node_condense_query`, `direct_answer`, `_prepare_generation_prompt`) and classifier adapters (`OpenAIClassifierAdapter`, `JevClassifierAdapter`) must accept `prompt_store: PromptStore | None = None` and default to `get_prompt_store()`.
+   - Prompt-backed steps (`PromptGenerationStep`, `QueryReformulationStep`), the retained `direct_answer` helper, and classifier adapters (`OpenAIClassifierAdapter`, `JevClassifierAdapter`) must accept `prompt_store: PromptStore | None = None` and default to `get_prompt_store()`.
    - Workflows (such as `SelfCorrectiveRagWorkflow`) must accept and forward `prompt_store` to graph factory functions and expose a `prompt_store` property.
 
 6. **Zero-Shim Pruning**:
