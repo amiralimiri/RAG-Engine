@@ -1,7 +1,7 @@
 import mimetypes
 import operator
 from collections.abc import Sequence
-from typing import Annotated, Any, Literal, NotRequired
+from typing import Annotated, Any, Literal
 
 from langchain_core.documents import Document
 from langchain_core.messages import BaseMessage
@@ -145,8 +145,8 @@ class AgentState(TypedDict, total=False):
     active_agent: str | None
     citations: Sequence[Citation]
     trace: Annotated[list[str], operator.add]
-    trace_id: NotRequired[str]
-    retrieved_contexts: NotRequired[list[str]]
+    trace_id: str
+    retrieved_contexts: list[str]
     answer: str
     source_used: str
 
