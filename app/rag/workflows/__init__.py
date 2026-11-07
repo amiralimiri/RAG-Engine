@@ -13,6 +13,14 @@ from app.rag.workflows.base import (
     WorkflowOutput,
 )
 from app.rag.workflows.binder import ExecutionContextBinder
+from app.rag.workflows.compiler import (
+    CompiledDeclarativeWorkflow,
+    EdgeConfig,
+    StepConfig,
+    WorkflowCompiler,
+    WorkflowManifest,
+    WorkflowValidationError,
+)
 from app.rag.workflows.events import (
     ExecutionCompletedEvent,
     ExecutionFailedEvent,
@@ -105,4 +113,10 @@ __all__ = [
     "PluggableWorkflow",
     "StandardWorkflowState",
     "register_default_workflows",
+    "WorkflowManifest",
+    "StepConfig",
+    "EdgeConfig",
+    "WorkflowCompiler",
+    "CompiledDeclarativeWorkflow",
+    "WorkflowValidationError",
 ]

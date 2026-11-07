@@ -14,12 +14,12 @@ Implements `WorkflowCompiler.compile(manifest: WorkflowManifest, ...) -> Workflo
 04: Multi-Agent Step with Dynamic Handoffs, 05: Zero-Shim Refactoring of Engine Factory
 
 **Status:**
-ready-for-agent
+completed
 
-- [ ] Create `app/rag/workflows/compiler.py` with Pydantic v2 `StepConfig`, `EdgeConfig`, and `WorkflowManifest` models.
-- [ ] Implement `WorkflowCompiler` class with `compile(manifest, ...)` and `compile_yaml(yaml_str_or_path, ...)`.
-- [ ] Implement dependency resolvers for tools, chat models, and prompt store during step instantiation.
-- [ ] Implement automatic edge synthesis for `handoffs: [...]` lists on agent steps.
-- [ ] Implement `CompiledDeclarativeWorkflow` implementing the `WorkflowDefinition` protocol.
-- [ ] Add unit test suite in `tests/rag/workflows/test_compiler.py` verifying YAML parsing, validation errors, step resolution, dynamic handoff edge construction, and execution.
-- [ ] Pass `ruff check` and `pyright` on modified modules.
+- [x] Create `app/rag/workflows/compiler.py` with Pydantic v2 `StepConfig`, `EdgeConfig`, and `WorkflowManifest` models.
+- [x] Implement `WorkflowCompiler` class with `compile(manifest, ...)` and `compile_yaml(yaml_str_or_path, ...)`.
+- [x] Implement dependency resolvers for tools, chat models, and prompt store during step instantiation.
+- [x] Implement automatic edge synthesis for `handoffs: [...]` lists on agent steps.
+- [x] Implement `CompiledDeclarativeWorkflow` implementing the `WorkflowDefinition` protocol.
+- [x] Add unit test suite in `tests/rag/workflows/test_compiler.py` verifying YAML parsing, validation errors, step resolution, dynamic handoff edge construction, and execution.
+- [x] Pass `ruff check` and `pyright` on modified modules.
