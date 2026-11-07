@@ -82,6 +82,22 @@ class TestAttachmentDomainModel:
 
         assert att.metadata == {}
 
+    def test_attachment_metadata_nested_values_are_immutable(self) -> None:
+        att = Attachment(
+            id="att-6",
+            mime_type="application/json",
+            metadata={"tags": ["alpha", "beta"], "nested": {"owner": "alice"}},
+        )
+
+        with pytest.raises(TypeError):
+            att.metadata["nested"]["owner"] = "mallory"  # type: ignore[index]
+
+        with pytest.raises(AttributeError):
+            att.metadata["tags"].append("gamma")  # type: ignore[attr-defined]
+
+        assert att.metadata["tags"] == ("alpha", "beta")
+        assert att.metadata["nested"] == {"owner": "alice"}
+
     def test_attachment_repr_suppresses_content_bytes(self) -> None:
         att = Attachment(
             id="att-secret",

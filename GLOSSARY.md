@@ -186,7 +186,7 @@ The declarative topology compiler (`WorkflowCompiler` in `app/rag/workflows/comp
 _Avoid_: YAML loader, graph builder helper, topology script
 
 ### Attachment
-The canonical, strongly-typed domain value object (`Attachment` in `app/rag/state.py`) representing multimodal and structured payloads (images, PDFs, audio, structured data files), encapsulating `id: str`, `mime_type: str`, `url: str | None`, `content_bytes: bytes | None`, and `metadata: dict[str, Any]`. Preserved across API transport schemas, conversational memory turns, and LangChain message content blocks.
+The canonical, strongly-typed domain value object (`Attachment` in `app/rag/state.py`) representing multimodal and structured payloads (images, PDFs, audio, structured data files), encapsulating `id: str`, `mime_type: str`, `url: str | None`, `content_bytes: bytes | None`, and `metadata: Mapping[str, Any]` (recursively frozen and read-only). Preserved across API transport schemas, conversational memory turns, and LangChain message content blocks.
 _Avoid_: Attachment dict, raw file tuple, untyped payload dictionary
 
 ### Agent Handoff

@@ -265,7 +265,7 @@ async def test_agent_step_terminal_finish_handoff_completes_workflow() -> None:
 
     assert result["active_agent"] == "finish"
     assert result["trace"] == ["Agent 'agent' completed workflow via 'transfer_to_finish': issue resolved"]
-    assert "answer" not in result
+    assert result["answer"] == "That resolves the request."
     assert [bound.name for bound in model.bind_calls[0]] == ["transfer_to_finish"]
 
 

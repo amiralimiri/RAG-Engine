@@ -121,8 +121,9 @@ class AgentStep(BaseStep):
 
     Evidence outputs (``citations``, ``retrieved_contexts``, ``source_used``) are only
     emitted when the loop genuinely produced new evidence, so upstream blackboard state
-    is preserved otherwise. Handoff turns never emit ``answer`` because intermediate
-    transfer utterances are not user-facing responses.
+    is preserved otherwise. Intermediate handoffs never emit ``answer`` because transfer
+    utterances are not user-facing responses; terminal handoffs (``finish``/``end``)
+    preserve the assistant's final message as the answer.
     """
 
     DEFAULT_OUTPUTS: dict[str, str] = {
@@ -214,7 +215,7 @@ class AgentStep(BaseStep):
         new_messages: list[BaseMessage] = []
         trace: list[str] = []
         active_agent: str | None = None
-        handed_off = False
+        intermediate_handoff = False
 
         tools = self.executable_tools
         tool_map = {tool.name: tool for tool in tools}
@@ -256,7 +257,7 @@ class AgentStep(BaseStep):
                     new_messages.append(handoff_message)
                     active_agent = target_agent
                     handoff_target = target_agent
-                    handed_off = True
+                    intermediate_handoff = target_agent not in TERMINAL_HANDOFF_TARGETS
                     if getattr(handoff_message, "status", "success") == "error":
                         trace.append(
                             f"Agent '{self.name}' handoff tool '{tool_name}' failed; "
@@ -296,7 +297,7 @@ class AgentStep(BaseStep):
         if not trace:
             trace.append(f"Agent '{self.name}' completed")
 
-        answer = self._final_answer(new_messages, allow_answer=not handed_off)
+        answer = self._final_answer(new_messages, allow_answer=not intermediate_handoff)
         evidence = aggregate_tool_evidence(new_messages)
 
         payload: dict[str, Any] = {
@@ -370,10 +371,11 @@ class AgentStep(BaseStep):
 
     @staticmethod
     def _final_answer(messages: Sequence[BaseMessage], *, allow_answer: bool = True) -> str:
-        """Return the last non-empty assistant response, unless a handoff occurred.
+        """Return the last non-empty assistant response, unless an intermediate handoff occurred.
 
-        On handoff turns the model's trailing text is an intermediate transfer utterance,
-        not the user-facing answer, so an empty string is returned.
+        On intermediate handoff turns the model's trailing text is a transfer utterance,
+        not the user-facing answer, so an empty string is returned. Terminal handoffs keep
+        the trailing text because it is the workflow's final answer.
         """
         if not allow_answer:
             return ""

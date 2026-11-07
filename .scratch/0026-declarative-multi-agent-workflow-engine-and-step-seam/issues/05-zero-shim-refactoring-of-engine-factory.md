@@ -9,14 +9,14 @@ Preserves the exact external signature of `create_agentic_rag_graph` and all pub
 03: Concrete Step Implementations
 
 **Status:**
-ready-for-agent
+completed
 
-- [ ] Delete the 9 nested closure functions inside `create_agentic_rag_graph` in `app/rag/engine.py` (`node_condense_query`, `node_route_question`, `node_retrieve_kb`, `node_grade_kb`, `node_search_web`, `node_grade_web`, `rewrite_query`, `generate_from_kb`, `generate_from_web`, `node_direct_answer`).
-- [ ] Refactor `create_agentic_rag_graph` to instantiate and add step classes directly:
+- [x] Delete the 9 nested closure functions inside `create_agentic_rag_graph` in `app/rag/engine.py` (`node_condense_query`, `node_route_question`, `node_retrieve_kb`, `node_grade_kb`, `node_search_web`, `node_grade_web`, `rewrite_query`, `generate_from_kb`, `generate_from_web`, `node_direct_answer`).
+- [x] Refactor `create_agentic_rag_graph` to instantiate and add step classes directly:
   - `QueryReformulationStep` for `condense_query` and `rewrite_query`.
   - `ClassifierRouteStep` and `ClassifierGradingStep` for `route_question`, `grade_kb`, and `grade_web`.
   - `ToolRetrievalStep` for `retrieve_kb` and `search_web`.
   - `PromptGenerationStep` for `generate_from_kb`, `generate_from_web`, and `direct_answer`.
-- [ ] Keep conditional routing functions (`route_start`, `route_after_router`, `after_kb`, `after_web`) intact.
-- [ ] Run all existing tests in `tests/rag/test_engine.py`, `tests/rag/test_workflows.py`, and `tests/rag/test_react_agent.py` ensuring 100% pass rate with zero regression.
-- [ ] Pass `ruff check` and `pyright` on `app/rag/engine.py`.
+- [x] Keep conditional routing functions (`route_start`, `route_after_router`, `after_kb`, `after_web`) intact.
+- [x] Run all existing tests in `tests/rag/test_engine.py`, `tests/rag/test_workflows.py`, and `tests/rag/test_react_agent.py` ensuring 100% pass rate with zero regression.
+- [x] Pass `ruff check` and `pyright` on `app/rag/engine.py`.

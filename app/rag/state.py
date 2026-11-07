@@ -1,3 +1,4 @@
+import copy
 import mimetypes
 import operator
 from collections.abc import Iterator, Mapping, Sequence
@@ -62,7 +63,7 @@ CitationList = Annotated[list[Citation], BeforeValidator(coerce_citations)]
 
 
 class _ImmutableMetadata(Mapping[str, Any]):
-    """Read-only mapping that rejects all in-place mutation paths for frozen models."""
+    """Recursively frozen mapping that rejects every in-place mutation path."""
 
     __slots__ = ("_data",)
 
@@ -71,7 +72,8 @@ class _ImmutableMetadata(Mapping[str, Any]):
     _data: Mapping[str, Any]
 
     def __init__(self, data: Mapping[str, Any] | None = None) -> None:
-        object.__setattr__(self, "_data", MappingProxyType(dict(data or {})))
+        frozen = {key: _freeze_metadata_value(value) for key, value in (data or {}).items()}
+        object.__setattr__(self, "_data", MappingProxyType(frozen))
 
     def __getitem__(self, key: str) -> Any:
         return self._data[key]
@@ -87,7 +89,8 @@ class _ImmutableMetadata(Mapping[str, Any]):
 
     def __eq__(self, other: object) -> bool:
         if isinstance(other, Mapping):
-            return dict(self.items()) == dict(other.items())
+            # Compare thawed containers so frozen tuples still equal caller-supplied lists.
+            return _thaw_metadata_value(dict(self)) == _thaw_metadata_value(dict(other))
         return NotImplemented
 
     def __setattr__(self, name: str, value: Any) -> None:
@@ -118,7 +121,26 @@ class _ImmutableMetadata(Mapping[str, Any]):
         return self
 
     def __deepcopy__(self, memo: dict[int, Any]) -> _ImmutableMetadata:
-        return self
+        """Return an isolated copy so mutable nested values are never aliased."""
+        return _ImmutableMetadata({key: copy.deepcopy(value, memo) for key, value in self._data.items()})
+
+
+def _freeze_metadata_value(value: Any) -> Any:
+    """Recursively freeze nested mappings and sequences into read-only containers."""
+    if isinstance(value, Mapping):
+        return _ImmutableMetadata(value)
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return tuple(_freeze_metadata_value(item) for item in value)
+    return value
+
+
+def _thaw_metadata_value(value: Any) -> Any:
+    """Widen frozen containers back into JSON-friendly dictionaries and lists."""
+    if isinstance(value, Mapping):
+        return {key: _thaw_metadata_value(item) for key, item in value.items()}
+    if isinstance(value, (tuple, frozenset)):
+        return [_thaw_metadata_value(item) for item in value]
+    return value
 
 
 class Attachment(BaseModel):
@@ -139,15 +161,15 @@ class Attachment(BaseModel):
     @field_validator("metadata", mode="after")
     @classmethod
     def _freeze_metadata(cls, value: Mapping[str, Any]) -> Mapping[str, Any]:
-        """Wrap metadata in an immutable mapping so frozen models cannot be mutated in place."""
+        """Recursively freeze metadata, including nested mappings and sequences."""
         if isinstance(value, _ImmutableMetadata):
             return value
         return _ImmutableMetadata(value)
 
     @field_serializer("metadata")
     def _serialize_metadata(self, value: Mapping[str, Any]) -> dict[str, Any]:
-        """Serialize immutable metadata as a plain dictionary for JSON/model dumps."""
-        return dict(value)
+        """Serialize frozen metadata, widening nested containers for JSON/model dumps."""
+        return {key: _thaw_metadata_value(item) for key, item in value.items()}
 
 
 def coerce_attachments(val: Sequence[Any] | Any | None = None) -> list[Attachment]:

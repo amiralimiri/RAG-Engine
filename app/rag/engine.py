@@ -147,7 +147,7 @@ def create_agentic_rag_graph(
         active_web_tool,
         name="search_web",
         trace_template="Web fallback → Tavily search",
-        source_used="web_search",
+        source_used=None,
         emit_source_used=True,
         outputs={
             "content": "web_results",

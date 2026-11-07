@@ -9,12 +9,12 @@ When `handoffs: list[str]` are specified, `AgentStep` automatically synthesizes 
 03: Concrete Step Implementations
 
 **Status:**
-ready-for-agent
+completed
 
-- [ ] Implement `AgentStep` in `app/rag/steps/agent.py` subtyping `BaseStep` and registering as `@register_step("agent")`.
-- [ ] Implement `create_handoff_tool(target_agent: str) -> StructuredTool` generating dynamic transfer tools with typed docstrings and schemas.
-- [ ] Implement tool-calling execution loop with model binding and error isolation.
-- [ ] Handle transfer tool calls by appending an `AIMessage` with tool call details and updating `active_agent: str` in state.
-- [ ] Re-export `AgentStep` from `app/rag/steps/__init__.py`.
-- [ ] Add unit test suite in `tests/rag/steps/test_agent_step.py` verifying tool invocation, prompt compilation, and dynamic handoff tool execution with fake models and tools.
-- [ ] Pass `ruff check` and `pyright` on modified modules.
+- [x] Implement `AgentStep` in `app/rag/steps/agent.py` subtyping `BaseStep` and registering as `@register_step("agent")`.
+- [x] Implement `create_handoff_tool(target_agent: str) -> StructuredTool` generating dynamic transfer tools with typed docstrings and schemas.
+- [x] Implement tool-calling execution loop with model binding and error isolation.
+- [x] Handle transfer tool calls by appending an `AIMessage` with tool call details and updating `active_agent: str` in state.
+- [x] Re-export `AgentStep` from `app/rag/steps/__init__.py`.
+- [x] Add unit test suite in `tests/rag/steps/test_agent_step.py` verifying tool invocation, prompt compilation, and dynamic handoff tool execution with fake models and tools.
+- [x] Pass `ruff check` and `pyright` on modified modules.
