@@ -64,7 +64,7 @@ def create_handoff_tool(target_agent: str) -> StructuredTool:
     )
 
 
-def _message_text(message: BaseMessage | Any) -> str:
+def _message_text(message: Any) -> str:
     """Extract plain text from a chat message or model response content payload."""
     content = getattr(message, "content", message)
     if isinstance(content, str):
@@ -136,10 +136,12 @@ class AgentStep(BaseStep):
         # Preserve declaration order while de-duplicating repeated handoff targets.
         unique_handoffs = list(dict.fromkeys(target for target in (handoffs or []) if target))
         self.handoffs = unique_handoffs
-        self.handoff_tools: list[StructuredTool] = [create_handoff_tool(target) for target in unique_handoffs]
-        self._handoff_tools_by_name: dict[str, StructuredTool] = {tool.name: tool for tool in self.handoff_tools}
+        self._handoff_tools_by_name: dict[str, StructuredTool] = {
+            tool.name: tool for tool in (create_handoff_tool(target) for target in unique_handoffs)
+        }
+        self.handoff_tools: list[StructuredTool] = list(self._handoff_tools_by_name.values())
         self._handoff_targets: dict[str, str] = {
-            f"{HANDOFF_TOOL_PREFIX}{target}": target for target in unique_handoffs
+            name: name.removeprefix(HANDOFF_TOOL_PREFIX) for name in self._handoff_tools_by_name
         }
 
     @property
@@ -191,11 +193,25 @@ class AgentStep(BaseStep):
             if not tool_calls:
                 break
 
-            handoff_detected = False
+            handoff_target: str | None = None
             for tool_call in tool_calls:
                 tool_name = str(tool_call.get("name") or "")
                 tool_args = tool_call.get("args") or {}
                 tool_call_id = str(tool_call.get("id") or f"call_{iteration}_{tool_name}")
+
+                if handoff_target is not None:
+                    # Every tool call must receive a ToolMessage for valid replay history.
+                    skipped = ToolMessage(
+                        content=(
+                            f"Tool call skipped because control was transferred to agent '{handoff_target}'."
+                        ),
+                        name=tool_name,
+                        tool_call_id=tool_call_id,
+                    )
+                    conversation.append(skipped)
+                    new_messages.append(skipped)
+                    trace.append(f"Agent '{self.name}' skipped tool '{tool_name}' after handoff")
+                    continue
 
                 target_agent = self._handoff_targets.get(tool_name)
                 if target_agent is not None:
@@ -206,9 +222,15 @@ class AgentStep(BaseStep):
                     conversation.append(handoff_message)
                     new_messages.append(handoff_message)
                     active_agent = target_agent
-                    trace.append(f"Agent '{self.name}' → {tool_name}: {reason}")
-                    handoff_detected = True
-                    break
+                    handoff_target = target_agent
+                    if getattr(handoff_message, "status", "success") == "error":
+                        trace.append(
+                            f"Agent '{self.name}' handoff tool '{tool_name}' failed; "
+                            f"forcing transfer to '{target_agent}'"
+                        )
+                    else:
+                        trace.append(f"Agent '{self.name}' → {tool_name}: {reason}")
+                    continue
 
                 tool = tool_map.get(tool_name)
                 if tool is None:
@@ -222,7 +244,9 @@ class AgentStep(BaseStep):
                     trace.append(f"Agent '{self.name}' blocked unavailable tool '{tool_name}'")
                     continue
 
-                tool_message = await self._execute_tool(tool, tool_name, tool_call_id, tool_args, config)
+                tool_message = await self._execute_tool(
+                    tool, tool_name, tool_call_id, tool_args, call_config
+                )
                 conversation.append(tool_message)
                 new_messages.append(tool_message)
                 if getattr(tool_message, "status", "success") == "error":
@@ -230,7 +254,7 @@ class AgentStep(BaseStep):
                 else:
                     trace.append(f"Agent '{self.name}' executed tool '{tool_name}'")
 
-            if handoff_detected:
+            if handoff_target is not None:
                 break
         else:
             trace.append(f"Agent '{self.name}' stopped after {self.max_iterations} iterations")
@@ -274,11 +298,11 @@ class AgentStep(BaseStep):
             return ToolMessage(content=_message_text(raw), name=tool_name, tool_call_id=tool_call_id)
         except Exception as exc:  # noqa: BLE001 - handoff failure must not abort the graph
             logger.warning("agent_handoff_tool_failed", tool=tool_name, error=str(exc))
-            target = self._handoff_targets[tool_name]
             return ToolMessage(
-                content=f"Transferring control to agent '{target}'. Reason: {tool_args.get('reason', '')}",
+                content=f"Error executing handoff tool '{tool_name}': {exc}",
                 name=tool_name,
                 tool_call_id=tool_call_id,
+                status="error",
             )
 
     async def _execute_tool(

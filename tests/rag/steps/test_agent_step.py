@@ -92,6 +92,7 @@ async def test_agent_step_executes_tool_loop_and_emits_evidence() -> None:
     assert "active_agent" not in result
 
     assert tool.aexecute_calls[0]["input"] == {"query": "vpn setup"}
+    assert tool.aexecute_calls[0]["config"]["metadata"]["prompt_name"] == "rag:agent"
     assert len(result["messages"]) == 3
     assert isinstance(result["messages"][1], ToolMessage)
     assert result["messages"][1].tool_call_id == "call_1"
@@ -167,6 +168,83 @@ async def test_agent_step_dynamic_handoff_updates_active_agent_and_trace() -> No
     assert result["messages"][1].tool_call_id == "call_handoff"
     assert result["messages"][1].name == "transfer_to_security_agent"
     assert "requires security review" in result["messages"][1].content
+
+
+@pytest.mark.asyncio
+async def test_agent_step_answers_all_parallel_tool_calls_when_handoff_fires() -> None:
+    model = FakeChatModel(
+        response_messages=[
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {"name": "knowledge_base_search", "args": {"query": "breach"}, "id": "call_1", "type": "tool_call"},
+                    {
+                        "name": "transfer_to_security_agent",
+                        "args": {"reason": "needs incident response"},
+                        "id": "call_2",
+                        "type": "tool_call",
+                    },
+                ],
+            )
+        ]
+    )
+    tool = _kb_tool()
+    step = AgentStep(
+        model,
+        [tool],
+        handoffs=["security_agent"],
+        prompt_store=FakePromptStore(),
+    )
+
+    result = await step({"question": "breach", "messages": []})
+
+    assert result["active_agent"] == "security_agent"
+    assert result["trace"] == [
+        "Agent 'agent' executed tool 'knowledge_base_search'",
+        "Agent 'agent' → transfer_to_security_agent: needs incident response",
+    ]
+    assert tool.aexecute_calls[0]["input"] == {"query": "breach"}
+    tool_messages = [m for m in result["messages"] if isinstance(m, ToolMessage)]
+    assert [m.tool_call_id for m in tool_messages] == ["call_1", "call_2"]
+
+
+@pytest.mark.asyncio
+async def test_agent_step_skips_parallel_tool_calls_after_handoff() -> None:
+    model = FakeChatModel(
+        response_messages=[
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "transfer_to_security_agent",
+                        "args": {"reason": "needs incident response"},
+                        "id": "call_1",
+                        "type": "tool_call",
+                    },
+                    {"name": "knowledge_base_search", "args": {"query": "breach"}, "id": "call_2", "type": "tool_call"},
+                ],
+            )
+        ]
+    )
+    tool = _kb_tool()
+    step = AgentStep(
+        model,
+        [tool],
+        handoffs=["security_agent"],
+        prompt_store=FakePromptStore(),
+    )
+
+    result = await step({"question": "breach", "messages": []})
+
+    assert result["active_agent"] == "security_agent"
+    assert result["trace"] == [
+        "Agent 'agent' → transfer_to_security_agent: needs incident response",
+        "Agent 'agent' skipped tool 'knowledge_base_search' after handoff",
+    ]
+    assert tool.aexecute_calls == []
+    tool_messages = [m for m in result["messages"] if isinstance(m, ToolMessage)]
+    assert [m.tool_call_id for m in tool_messages] == ["call_1", "call_2"]
+    assert "skipped" in tool_messages[1].content
 
 
 @pytest.mark.asyncio
