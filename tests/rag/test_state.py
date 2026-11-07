@@ -56,6 +56,32 @@ class TestAttachmentDomainModel:
         with pytest.raises(ValidationError):
             att.mime_type = "image/jpeg"  # type: ignore[misc]
 
+    def test_attachment_metadata_is_immutable_in_place(self) -> None:
+        att = Attachment(
+            id="att-4",
+            mime_type="text/plain",
+            metadata={"source": "manual_upload"},
+        )
+
+        with pytest.raises(TypeError):
+            att.metadata["source"] = "mutated"  # type: ignore[index]
+
+        with pytest.raises(TypeError):
+            att.metadata.update({"source": "mutated"})  # type: ignore[attr-defined]
+
+        with pytest.raises(TypeError):
+            del att.metadata["source"]  # type: ignore[attr-defined]
+
+        assert att.metadata == {"source": "manual_upload"}
+
+    def test_attachment_default_metadata_is_immutable_in_place(self) -> None:
+        att = Attachment(id="att-5", mime_type="application/pdf")
+
+        with pytest.raises(TypeError):
+            att.metadata["source"] = "mutated"  # type: ignore[index]
+
+        assert att.metadata == {}
+
     def test_attachment_repr_suppresses_content_bytes(self) -> None:
         att = Attachment(
             id="att-secret",
@@ -143,9 +169,7 @@ class TestCoerceAttachments:
         assert coerce_attachments([]) == []
         assert coerce_attachments(["", "   "]) == []
         # Single string / dict instead of list
-        assert coerce_attachments("single.pdf") == [
-            Attachment(id="single.pdf", mime_type="application/pdf")
-        ]
+        assert coerce_attachments("single.pdf") == [Attachment(id="single.pdf", mime_type="application/pdf")]
         assert coerce_attachments({"id": "d1", "mime_type": "text/plain"}) == [
             Attachment(id="d1", mime_type="text/plain")
         ]

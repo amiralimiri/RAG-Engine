@@ -21,15 +21,11 @@ logger = structlog.get_logger(__name__)
 class WorkflowStep(Protocol):
     """Protocol seam defining execution contracts for discrete workflow nodes."""
 
-    async def execute(
-        self, state: dict[str, Any], config: RunnableConfig | None = None
-    ) -> dict[str, Any]:
+    async def execute(self, state: dict[str, Any], config: RunnableConfig | None = None) -> dict[str, Any]:
         """Execute step logic against state and configuration, returning delta state updates."""
         ...
 
-    async def __call__(
-        self, state: dict[str, Any], config: RunnableConfig | None = None
-    ) -> dict[str, Any]:
+    async def __call__(self, state: dict[str, Any], config: RunnableConfig | None = None) -> dict[str, Any]:
         """LangGraph node compatibility entrypoint, delegating directly to execute."""
         ...
 
@@ -49,15 +45,11 @@ class BaseStep(abc.ABC):
         self.outputs = dict(outputs) if outputs else {}
 
     @abc.abstractmethod
-    async def execute(
-        self, state: dict[str, Any], config: RunnableConfig | None = None
-    ) -> dict[str, Any]:
+    async def execute(self, state: dict[str, Any], config: RunnableConfig | None = None) -> dict[str, Any]:
         """Execute step logic against state and configuration, returning delta updates."""
         raise NotImplementedError
 
-    async def __call__(
-        self, state: dict[str, Any], config: RunnableConfig | None = None
-    ) -> dict[str, Any]:
+    async def __call__(self, state: dict[str, Any], config: RunnableConfig | None = None) -> dict[str, Any]:
         """LangGraph node compatibility entrypoint, delegating directly to execute."""
         return await self.execute(state, config)
 

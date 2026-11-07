@@ -218,6 +218,96 @@ async def test_agent_step_dynamic_handoff_updates_active_agent_and_trace() -> No
 
 
 @pytest.mark.asyncio
+async def test_agent_step_does_not_emit_transfer_utterance_as_answer() -> None:
+    model = FakeChatModel(
+        response_messages=[
+            AIMessage(
+                content="Transferring you to the security team now.",
+                tool_calls=[
+                    {
+                        "name": "transfer_to_security_agent",
+                        "args": {"reason": "requires security review"},
+                        "id": "call_handoff_text",
+                        "type": "tool_call",
+                    }
+                ],
+            )
+        ]
+    )
+    step = AgentStep(model, handoffs=["security_agent"], prompt_store=FakePromptStore())
+
+    result = await step({"question": "breach", "messages": [HumanMessage(content="breach")]})
+
+    assert result["active_agent"] == "security_agent"
+    assert "answer" not in result
+
+
+@pytest.mark.asyncio
+async def test_agent_step_terminal_finish_handoff_completes_workflow() -> None:
+    model = FakeChatModel(
+        response_messages=[
+            AIMessage(
+                content="That resolves the request.",
+                tool_calls=[
+                    {
+                        "name": "transfer_to_finish",
+                        "args": {"reason": "issue resolved"},
+                        "id": "call_finish",
+                        "type": "tool_call",
+                    }
+                ],
+            )
+        ]
+    )
+    step = AgentStep(model, handoffs=["finish"], prompt_store=FakePromptStore())
+
+    result = await step({"question": "done", "messages": [HumanMessage(content="done")]})
+
+    assert result["active_agent"] == "finish"
+    assert result["trace"] == ["Agent 'agent' completed workflow via 'transfer_to_finish': issue resolved"]
+    assert "answer" not in result
+    assert [bound.name for bound in model.bind_calls[0]] == ["transfer_to_finish"]
+
+
+def test_create_handoff_tool_describes_terminal_target_separately() -> None:
+    tool = create_handoff_tool("finish")
+
+    assert tool.name == "transfer_to_finish"
+    assert "Complete the workflow" in tool.description
+    assert "specialist agent" not in tool.description
+    assert tool.invoke({"reason": "resolved"}) == "Completing workflow via 'finish'. Reason: resolved"
+
+
+def test_create_handoff_tool_accepts_end_as_terminal_target() -> None:
+    tool = create_handoff_tool("end")
+
+    assert tool.name == "transfer_to_end"
+    assert "Complete the workflow" in tool.description
+
+
+@pytest.mark.asyncio
+async def test_agent_step_preserves_upstream_evidence_when_no_tools_ran() -> None:
+    model = FakeChatModel(response_text="Hello! How can I help?")
+    step = AgentStep(model, [], prompt_store=FakePromptStore())
+    upstream_citations = [Citation(title="vpn.md", type="private_kb")]
+
+    result = await step(
+        {
+            "question": "hi",
+            "messages": [HumanMessage(content="hi")],
+            "source_used": "kb",
+            "citations": upstream_citations,
+            "retrieved_contexts": ["upstream evidence"],
+        }
+    )
+
+    assert result["answer"] == "Hello! How can I help?"
+    assert "citations" not in result
+    assert "retrieved_contexts" not in result
+    assert "source_used" not in result
+
+
+@pytest.mark.asyncio
 async def test_agent_step_answers_all_parallel_tool_calls_when_handoff_fires() -> None:
     model = FakeChatModel(
         response_messages=[

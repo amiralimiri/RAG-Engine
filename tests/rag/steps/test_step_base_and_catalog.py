@@ -22,32 +22,24 @@ from app.rag.steps.base import (
 class DummyConformingStep(BaseStep):
     """Test step inheriting BaseStep."""
 
-    async def execute(
-        self, state: dict[str, Any], config: RunnableConfig | None = None
-    ) -> dict[str, Any]:
+    async def execute(self, state: dict[str, Any], config: RunnableConfig | None = None) -> dict[str, Any]:
         return {"result": "executed", "config_passed": config is not None}
 
 
 class IndependentConformingStep:
     """Independent step implementing WorkflowStep protocol without BaseStep inheritance."""
 
-    async def execute(
-        self, state: dict[str, Any], config: RunnableConfig | None = None
-    ) -> dict[str, Any]:
+    async def execute(self, state: dict[str, Any], config: RunnableConfig | None = None) -> dict[str, Any]:
         return {"status": "ok"}
 
-    async def __call__(
-        self, state: dict[str, Any], config: RunnableConfig | None = None
-    ) -> dict[str, Any]:
+    async def __call__(self, state: dict[str, Any], config: RunnableConfig | None = None) -> dict[str, Any]:
         return await self.execute(state, config)
 
 
 class IncompleteStepMissingCall:
     """Class missing __call__."""
 
-    async def execute(
-        self, state: dict[str, Any], config: RunnableConfig | None = None
-    ) -> dict[str, Any]:
+    async def execute(self, state: dict[str, Any], config: RunnableConfig | None = None) -> dict[str, Any]:
         return {}
 
 
@@ -60,18 +52,14 @@ class GraphSampleState(TypedDict):
 class IncrementStep(BaseStep):
     """Concrete step exercising LangGraph-native node execution."""
 
-    async def execute(
-        self, state: dict[str, Any], config: RunnableConfig | None = None
-    ) -> dict[str, Any]:
+    async def execute(self, state: dict[str, Any], config: RunnableConfig | None = None) -> dict[str, Any]:
         return {"value": state["value"] + 1}
 
 
 class IncompleteStepMissingExecute:
     """Class missing execute."""
 
-    async def __call__(
-        self, state: dict[str, Any], config: RunnableConfig | None = None
-    ) -> dict[str, Any]:
+    async def __call__(self, state: dict[str, Any], config: RunnableConfig | None = None) -> dict[str, Any]:
         return {}
 
 
@@ -177,9 +165,7 @@ class TestBaseStepApplyOutputs:
         assert state == {"question": "Hello"}
 
     def test_apply_outputs_nested_paths_creates_structures(self) -> None:
-        step = DummyConformingStep(
-            outputs={"evidence": "context.evidence", "agent_info": "context.agent.details"}
-        )
+        step = DummyConformingStep(outputs={"evidence": "context.evidence", "agent_info": "context.agent.details"})
         state: dict[str, Any] = {}
         step_outputs = {
             "evidence": ["doc1", "doc2"],
@@ -319,9 +305,7 @@ class TestStepCatalog:
 
         @register_step("decorated_step", catalog=catalog)
         class DecoratedStep(BaseStep):
-            async def execute(
-                self, state: dict[str, Any], config: RunnableConfig | None = None
-            ) -> dict[str, Any]:
+            async def execute(self, state: dict[str, Any], config: RunnableConfig | None = None) -> dict[str, Any]:
                 return {"decorated": True}
 
         assert catalog.get_step_class("decorated_step") is DecoratedStep
@@ -369,9 +353,7 @@ class TestStepCatalog:
     def test_convenience_functions_use_default_catalog(self) -> None:
         @register_step("global_dummy")
         class GlobalDummyStep(BaseStep):
-            async def execute(
-                self, state: dict[str, Any], config: RunnableConfig | None = None
-            ) -> dict[str, Any]:
+            async def execute(self, state: dict[str, Any], config: RunnableConfig | None = None) -> dict[str, Any]:
                 return {}
 
         assert get_step_class("global_dummy") is GlobalDummyStep

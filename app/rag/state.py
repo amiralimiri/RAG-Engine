@@ -1,11 +1,12 @@
 import mimetypes
 import operator
-from collections.abc import Sequence
+from collections.abc import Iterator, Mapping, Sequence
+from types import MappingProxyType
 from typing import Annotated, Any, Literal
 
 from langchain_core.documents import Document
 from langchain_core.messages import BaseMessage
-from pydantic import BaseModel, BeforeValidator, ConfigDict, Field
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, field_serializer, field_validator
 from typing_extensions import TypedDict
 
 
@@ -60,6 +61,66 @@ def coerce_citations(val: Sequence[Any] | Any | None = None) -> list[Citation]:
 CitationList = Annotated[list[Citation], BeforeValidator(coerce_citations)]
 
 
+class _ImmutableMetadata(Mapping[str, Any]):
+    """Read-only mapping that rejects all in-place mutation paths for frozen models."""
+
+    __slots__ = ("_data",)
+
+    _MESSAGE = "Attachment.metadata is immutable and cannot be modified in place."
+
+    _data: Mapping[str, Any]
+
+    def __init__(self, data: Mapping[str, Any] | None = None) -> None:
+        object.__setattr__(self, "_data", MappingProxyType(dict(data or {})))
+
+    def __getitem__(self, key: str) -> Any:
+        return self._data[key]
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._data)
+
+    def __len__(self) -> int:
+        return len(self._data)
+
+    def __repr__(self) -> str:
+        return repr(dict(self._data))
+
+    def __eq__(self, other: object) -> bool:
+        if isinstance(other, Mapping):
+            return dict(self.items()) == dict(other.items())
+        return NotImplemented
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        raise AttributeError(self._MESSAGE)
+
+    def __setitem__(self, key: str, value: Any) -> None:
+        raise TypeError(self._MESSAGE)
+
+    def __delitem__(self, key: str) -> None:
+        raise TypeError(self._MESSAGE)
+
+    def clear(self) -> None:
+        raise TypeError(self._MESSAGE)
+
+    def pop(self, *args: Any, **kwargs: Any) -> Any:
+        raise TypeError(self._MESSAGE)
+
+    def popitem(self) -> tuple[str, Any]:
+        raise TypeError(self._MESSAGE)
+
+    def setdefault(self, key: str, default: Any = None) -> Any:
+        raise TypeError(self._MESSAGE)
+
+    def update(self, *args: Any, **kwargs: Any) -> None:
+        raise TypeError(self._MESSAGE)
+
+    def __copy__(self) -> _ImmutableMetadata:
+        return self
+
+    def __deepcopy__(self, memo: dict[int, Any]) -> _ImmutableMetadata:
+        return self
+
+
 class Attachment(BaseModel):
     """Immutable domain model representing multimodal and file payloads."""
 
@@ -69,7 +130,24 @@ class Attachment(BaseModel):
     mime_type: str = Field(description="IANA media type (e.g. image/png, application/pdf)")
     url: str | None = Field(default=None, description="External or object storage URL")
     content_bytes: bytes | None = Field(default=None, repr=False, description="Raw content bytes if staged")
-    metadata: dict[str, Any] = Field(default_factory=dict, description="Arbitrary file metadata")
+    metadata: Mapping[str, Any] = Field(
+        default_factory=dict,
+        validate_default=True,
+        description="Arbitrary file metadata",
+    )
+
+    @field_validator("metadata", mode="after")
+    @classmethod
+    def _freeze_metadata(cls, value: Mapping[str, Any]) -> Mapping[str, Any]:
+        """Wrap metadata in an immutable mapping so frozen models cannot be mutated in place."""
+        if isinstance(value, _ImmutableMetadata):
+            return value
+        return _ImmutableMetadata(value)
+
+    @field_serializer("metadata")
+    def _serialize_metadata(self, value: Mapping[str, Any]) -> dict[str, Any]:
+        """Serialize immutable metadata as a plain dictionary for JSON/model dumps."""
+        return dict(value)
 
 
 def coerce_attachments(val: Sequence[Any] | Any | None = None) -> list[Attachment]:

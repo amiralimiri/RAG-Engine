@@ -27,6 +27,7 @@ logger = structlog.get_logger(__name__)
 DEFAULT_AGENT_PROMPT_KEY = "rag:agent"
 DEFAULT_MAX_ITERATIONS = 10
 HANDOFF_TOOL_PREFIX = "transfer_to_"
+TERMINAL_HANDOFF_TARGETS: frozenset[str] = frozenset({"finish", "end"})
 
 
 class HandoffTransferInput(BaseModel):
@@ -55,21 +56,34 @@ def create_handoff_tool(target_agent: str) -> StructuredTool:
 
     The generated tool follows the canonical ``transfer_to_<target_agent>`` naming
     convention and accepts a single ``reason`` argument so the transfer decision is
-    recorded in the conversation transcript and execution trace.
+    recorded in the conversation transcript and execution trace. Targets listed in
+    ``TERMINAL_HANDOFF_TARGETS`` (``finish``/``end``) are described as workflow
+    completion signals rather than specialist agents.
     """
     target = _normalize_handoff_target(target_agent)
     tool_name = f"{HANDOFF_TOOL_PREFIX}{target}"
+    is_terminal = target in TERMINAL_HANDOFF_TARGETS
 
     def _transfer(reason: str) -> str:
+        if is_terminal:
+            return f"Completing workflow via '{target}'. Reason: {reason}"
         return f"Transferring control to agent '{target}'. Reason: {reason}"
+
+    description = (
+        f"Complete the workflow and hand control back to the orchestrator under the terminal "
+        f"state '{target}' when no further specialist work is required. Provide a concise "
+        "reason explaining why the workflow is complete."
+        if is_terminal
+        else (
+            f"Transfer control to the '{target}' specialist agent when their expertise "
+            "is required. Provide a concise reason explaining why the handoff is necessary."
+        )
+    )
 
     return StructuredTool.from_function(
         func=_transfer,
         name=tool_name,
-        description=(
-            f"Transfer control to the '{target}' specialist agent when their expertise "
-            "is required. Provide a concise reason explaining why the handoff is necessary."
-        ),
+        description=description,
         args_schema=HandoffTransferInput,
     )
 
@@ -104,6 +118,11 @@ class AgentStep(BaseStep):
     plus any synthesized ``transfer_to_<agent>`` handoff tools, and executes a bounded
     tool-calling loop. When the model invokes a handoff tool, the transfer is recorded
     in the emitted messages/trace and ``active_agent`` is set to the target agent.
+
+    Evidence outputs (``citations``, ``retrieved_contexts``, ``source_used``) are only
+    emitted when the loop genuinely produced new evidence, so upstream blackboard state
+    is preserved otherwise. Handoff turns never emit ``answer`` because intermediate
+    transfer utterances are not user-facing responses.
     """
 
     DEFAULT_OUTPUTS: dict[str, str] = {
@@ -195,6 +214,7 @@ class AgentStep(BaseStep):
         new_messages: list[BaseMessage] = []
         trace: list[str] = []
         active_agent: str | None = None
+        handed_off = False
 
         tools = self.executable_tools
         tool_map = {tool.name: tool for tool in tools}
@@ -219,7 +239,7 @@ class AgentStep(BaseStep):
                 if handoff_target is not None:
                     # Every tool call must receive a ToolMessage for valid replay history.
                     skipped = ToolMessage(
-                        content=(f"Tool call skipped because control was transferred to agent '{handoff_target}'."),
+                        content=(f"Tool call skipped because control was transferred to '{handoff_target}'."),
                         name=tool_name,
                         tool_call_id=tool_call_id,
                     )
@@ -236,11 +256,14 @@ class AgentStep(BaseStep):
                     new_messages.append(handoff_message)
                     active_agent = target_agent
                     handoff_target = target_agent
+                    handed_off = True
                     if getattr(handoff_message, "status", "success") == "error":
                         trace.append(
                             f"Agent '{self.name}' handoff tool '{tool_name}' failed; "
                             f"forcing transfer to '{target_agent}'"
                         )
+                    elif target_agent in TERMINAL_HANDOFF_TARGETS:
+                        trace.append(f"Agent '{self.name}' completed workflow via '{tool_name}': {reason}")
                     else:
                         trace.append(f"Agent '{self.name}' → {tool_name}: {reason}")
                     continue
@@ -273,16 +296,19 @@ class AgentStep(BaseStep):
         if not trace:
             trace.append(f"Agent '{self.name}' completed")
 
-        answer = self._final_answer(new_messages)
+        answer = self._final_answer(new_messages, allow_answer=not handed_off)
         evidence = aggregate_tool_evidence(new_messages)
 
         payload: dict[str, Any] = {
             "messages": new_messages,
-            "citations": evidence.citations,
-            "retrieved_contexts": evidence.retrieved_contexts,
-            "source_used": evidence.source_used,
             "trace": trace,
         }
+        # Preserve upstream blackboard evidence unless this step genuinely produced new
+        # evidence. Empty default aggregation must not clobber retrieval/router state.
+        if evidence.citations or evidence.retrieved_contexts:
+            payload["citations"] = evidence.citations
+            payload["retrieved_contexts"] = evidence.retrieved_contexts
+            payload["source_used"] = evidence.source_used
         if answer:
             payload["answer"] = answer
         if active_agent is not None:
@@ -343,8 +369,14 @@ class AgentStep(BaseStep):
             )
 
     @staticmethod
-    def _final_answer(messages: Sequence[BaseMessage]) -> str:
-        """Return the last non-empty assistant response, if any."""
+    def _final_answer(messages: Sequence[BaseMessage], *, allow_answer: bool = True) -> str:
+        """Return the last non-empty assistant response, unless a handoff occurred.
+
+        On handoff turns the model's trailing text is an intermediate transfer utterance,
+        not the user-facing answer, so an empty string is returned.
+        """
+        if not allow_answer:
+            return ""
         for message in reversed(messages):
             if isinstance(message, AIMessage):
                 text = _message_text(message).strip()
@@ -360,4 +392,5 @@ __all__ = [
     "DEFAULT_AGENT_PROMPT_KEY",
     "DEFAULT_MAX_ITERATIONS",
     "HANDOFF_TOOL_PREFIX",
+    "TERMINAL_HANDOFF_TARGETS",
 ]
