@@ -65,6 +65,55 @@ def test_create_handoff_tool_rejects_empty_target() -> None:
         create_handoff_tool("   ")
 
 
+def test_create_handoff_tool_rejects_invalid_identifier_target() -> None:
+    with pytest.raises(ValueError, match="valid identifier"):
+        create_handoff_tool("security agent")
+
+
+def test_create_handoff_tool_strips_whitespace() -> None:
+    tool = create_handoff_tool("  security_agent  ")
+
+    assert tool.name == "transfer_to_security_agent"
+    assert tool.invoke({"reason": "requires review"}) == (
+        "Transferring control to agent 'security_agent'. Reason: requires review"
+    )
+
+
+def test_agent_step_normalizes_and_deduplicates_handoff_targets() -> None:
+    step = AgentStep(
+        FakeChatModel(),
+        handoffs=[" security_agent ", "security_agent", "billing_agent"],
+        prompt_store=FakePromptStore(),
+    )
+
+    assert step.handoffs == ["security_agent", "billing_agent"]
+    assert [tool.name for tool in step.handoff_tools] == [
+        "transfer_to_security_agent",
+        "transfer_to_billing_agent",
+    ]
+
+
+def test_agent_step_rejects_invalid_handoff_target() -> None:
+    with pytest.raises(ValueError, match="valid identifier"):
+        AgentStep(
+            FakeChatModel(),
+            handoffs=["security agent"],
+            prompt_store=FakePromptStore(),
+        )
+
+
+def test_agent_step_rejects_domain_tool_name_colliding_with_handoff() -> None:
+    colliding_tool = FakeRAGTool(name="transfer_to_security_agent")
+
+    with pytest.raises(ValueError, match="collide"):
+        AgentStep(
+            FakeChatModel(),
+            [colliding_tool],
+            handoffs=["security_agent"],
+            prompt_store=FakePromptStore(),
+        )
+
+
 @pytest.mark.asyncio
 async def test_agent_step_executes_tool_loop_and_emits_evidence() -> None:
     tool = _kb_tool()
@@ -156,9 +205,7 @@ async def test_agent_step_dynamic_handoff_updates_active_agent_and_trace() -> No
     )
 
     assert result["active_agent"] == "security_agent"
-    assert result["trace"] == [
-        "Agent 'agent' → transfer_to_security_agent: requires security review"
-    ]
+    assert result["trace"] == ["Agent 'agent' → transfer_to_security_agent: requires security review"]
     assert len(model.ainvoke_calls) == 1
     assert "answer" not in result
 
@@ -206,6 +253,31 @@ async def test_agent_step_answers_all_parallel_tool_calls_when_handoff_fires() -
     assert tool.aexecute_calls[0]["input"] == {"query": "breach"}
     tool_messages = [m for m in result["messages"] if isinstance(m, ToolMessage)]
     assert [m.tool_call_id for m in tool_messages] == ["call_1", "call_2"]
+
+
+@pytest.mark.asyncio
+async def test_agent_step_generates_unique_ids_when_model_omits_them() -> None:
+    model = FakeChatModel(
+        response_messages=[
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {"name": "knowledge_base_search", "args": {"query": "vpn"}, "id": "", "type": "tool_call"},
+                    {"name": "knowledge_base_search", "args": {"query": "mfa"}, "id": "", "type": "tool_call"},
+                ],
+            ),
+            AIMessage(content="Done."),
+        ]
+    )
+    step = AgentStep(model, [_kb_tool()], prompt_store=FakePromptStore())
+
+    result = await step({"question": "vpn and mfa", "messages": []})
+
+    tool_messages = [m for m in result["messages"] if isinstance(m, ToolMessage)]
+    assert [m.tool_call_id for m in tool_messages] == [
+        "call_1_1_knowledge_base_search",
+        "call_1_2_knowledge_base_search",
+    ]
 
 
 @pytest.mark.asyncio

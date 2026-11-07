@@ -37,6 +37,19 @@ class HandoffTransferInput(BaseModel):
     )
 
 
+def _normalize_handoff_target(target_agent: str) -> str:
+    """Strip and validate a handoff target agent name."""
+    target = target_agent.strip() if isinstance(target_agent, str) else ""
+    if not target:
+        raise ValueError("Handoff target agent must be a non-empty string.")
+    if not target.isidentifier():
+        raise ValueError(
+            f"Handoff target agent '{target}' must be a valid identifier "
+            "(letters, digits, and underscores only; cannot start with a digit)."
+        )
+    return target
+
+
 def create_handoff_tool(target_agent: str) -> StructuredTool:
     """Create a structured transfer tool that hands control to ``target_agent``.
 
@@ -44,10 +57,7 @@ def create_handoff_tool(target_agent: str) -> StructuredTool:
     convention and accepts a single ``reason`` argument so the transfer decision is
     recorded in the conversation transcript and execution trace.
     """
-    target = target_agent.strip() if isinstance(target_agent, str) else ""
-    if not target:
-        raise ValueError("Handoff target agent must be a non-empty string.")
-
+    target = _normalize_handoff_target(target_agent)
     tool_name = f"{HANDOFF_TOOL_PREFIX}{target}"
 
     def _transfer(reason: str) -> str:
@@ -133,8 +143,8 @@ class AgentStep(BaseStep):
         self._prompt_store = prompt_store
         self.max_iterations = max_iterations
 
-        # Preserve declaration order while de-duplicating repeated handoff targets.
-        unique_handoffs = list(dict.fromkeys(target for target in (handoffs or []) if target))
+        # Normalize, validate, and de-duplicate declared handoff targets while preserving order.
+        unique_handoffs = list(dict.fromkeys(_normalize_handoff_target(target) for target in (handoffs or [])))
         self.handoffs = unique_handoffs
         self._handoff_tools_by_name: dict[str, StructuredTool] = {
             tool.name: tool for tool in (create_handoff_tool(target) for target in unique_handoffs)
@@ -143,6 +153,13 @@ class AgentStep(BaseStep):
         self._handoff_targets: dict[str, str] = {
             name: name.removeprefix(HANDOFF_TOOL_PREFIX) for name in self._handoff_tools_by_name
         }
+
+        collisions = sorted(tool.name for tool in self.tools if tool.name in self._handoff_tools_by_name)
+        if collisions:
+            raise ValueError(
+                f"Domain tool name(s) {collisions} collide with synthesized handoff tool "
+                "names; rename the tool or handoff target."
+            )
 
     @property
     def prompt_store(self) -> PromptStore:
@@ -194,17 +211,15 @@ class AgentStep(BaseStep):
                 break
 
             handoff_target: str | None = None
-            for tool_call in tool_calls:
+            for index, tool_call in enumerate(tool_calls, start=1):
                 tool_name = str(tool_call.get("name") or "")
                 tool_args = tool_call.get("args") or {}
-                tool_call_id = str(tool_call.get("id") or f"call_{iteration}_{tool_name}")
+                tool_call_id = str(tool_call.get("id") or f"call_{iteration}_{index}_{tool_name}")
 
                 if handoff_target is not None:
                     # Every tool call must receive a ToolMessage for valid replay history.
                     skipped = ToolMessage(
-                        content=(
-                            f"Tool call skipped because control was transferred to agent '{handoff_target}'."
-                        ),
+                        content=(f"Tool call skipped because control was transferred to agent '{handoff_target}'."),
                         name=tool_name,
                         tool_call_id=tool_call_id,
                     )
@@ -216,9 +231,7 @@ class AgentStep(BaseStep):
                 target_agent = self._handoff_targets.get(tool_name)
                 if target_agent is not None:
                     reason = str(tool_args.get("reason") or "").strip()
-                    handoff_message = await self._invoke_handoff_tool(
-                        tool_name, tool_call_id, tool_args, call_config
-                    )
+                    handoff_message = await self._invoke_handoff_tool(tool_name, tool_call_id, tool_args, call_config)
                     conversation.append(handoff_message)
                     new_messages.append(handoff_message)
                     active_agent = target_agent
@@ -244,9 +257,7 @@ class AgentStep(BaseStep):
                     trace.append(f"Agent '{self.name}' blocked unavailable tool '{tool_name}'")
                     continue
 
-                tool_message = await self._execute_tool(
-                    tool, tool_name, tool_call_id, tool_args, call_config
-                )
+                tool_message = await self._execute_tool(tool, tool_name, tool_call_id, tool_args, call_config)
                 conversation.append(tool_message)
                 new_messages.append(tool_message)
                 if getattr(tool_message, "status", "success") == "error":
