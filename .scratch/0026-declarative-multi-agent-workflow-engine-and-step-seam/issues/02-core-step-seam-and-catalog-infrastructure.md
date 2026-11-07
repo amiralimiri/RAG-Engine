@@ -12,10 +12,10 @@ Implements the thread-safe `StepCatalog`, the `@register_step(alias)` decorator,
 **Status:**
 ready-for-agent
 
-- [ ] Create `app/rag/steps/__init__.py` exporting core abstractions.
-- [ ] Create `app/rag/steps/base.py` declaring `WorkflowStep(Protocol)` with `async def execute(self, state, config) -> dict[str, Any]` and `async def __call__(self, state, config) -> dict[str, Any]`.
-- [ ] Implement `BaseStep` abstract class with default `__call__` delegating to `execute`, and input/output mapping utilities (`resolve_input`, `apply_outputs`).
-- [ ] Implement thread-safe `StepCatalog` with registration methods, `get_step_class`, and `resolve_step_type` supporting dotted-path imports.
-- [ ] Implement `@register_step(alias: str)` decorator.
-- [ ] Add unit test suite in `tests/rag/steps/test_step_base_and_catalog.py` verifying protocol conformance, dot-path context resolution, registry lookups, and dynamic imports.
-- [ ] Pass `ruff check` and `pyright` on modified modules.
+- [x] Create `app/rag/steps/__init__.py` exporting core abstractions.
+- [x] Create `app/rag/steps/base.py` declaring `WorkflowStep(Protocol)` with `async def execute(self, state, config) -> dict[str, Any]` and `async def __call__(self, state, config) -> dict[str, Any]`.
+- [x] Implement `BaseStep` abstract class with default `__call__` delegating to `execute`, and input/output mapping utilities (`resolve_input`, `apply_outputs`).
+- [x] Implement thread-safe `StepCatalog` with registration methods, `get_step_class`, and `resolve_step_type` supporting dotted-path imports.
+- [x] Implement `@register_step(alias: str)` decorator.
+- [x] Add unit test suite in `tests/rag/steps/test_step_base_and_catalog.py` verifying protocol conformance, dot-path context resolution, registry lookups, and dynamic imports.
+- [x] Pass `ruff check` and `pyright` on modified modules.
