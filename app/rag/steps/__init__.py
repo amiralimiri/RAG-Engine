@@ -4,6 +4,7 @@ Exports the core step protocol seam, base step implementation, step catalog, and
 concrete steps for retrieval, classification, prompt generation, and query reformulation.
 """
 
+from app.rag.steps.agent import AgentStep, HandoffTransferInput, create_handoff_tool
 from app.rag.steps.base import (
     BaseStep,
     StepCatalog,
@@ -30,6 +31,9 @@ __all__ = [
     "resolve_step_type",
     "register_default_steps",
     "DEFAULT_STEP_CLASSES",
+    "AgentStep",
+    "HandoffTransferInput",
+    "create_handoff_tool",
     "ToolRetrievalStep",
     "ClassifierRouteStep",
     "ClassifierGradingStep",

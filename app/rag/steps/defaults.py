@@ -1,11 +1,13 @@
 """Canonical built-in workflow step registry and catalog repopulation seam."""
 
+from app.rag.steps.agent import AgentStep
 from app.rag.steps.base import StepCatalog, WorkflowStep, get_step_catalog
 from app.rag.steps.classifier import ClassifierGradingStep, ClassifierRouteStep
 from app.rag.steps.generation import PromptGenerationStep, QueryReformulationStep
 from app.rag.steps.retrieval import ToolRetrievalStep
 
 DEFAULT_STEP_CLASSES: dict[str, type[WorkflowStep]] = {
+    "agent": AgentStep,
     "tool_retrieval": ToolRetrievalStep,
     "classifier_route": ClassifierRouteStep,
     "classifier_grade": ClassifierGradingStep,

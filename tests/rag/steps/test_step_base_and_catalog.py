@@ -384,6 +384,7 @@ class TestStepCatalog:
         reset_step_catalog()
 
         assert set(get_step_catalog().list_steps()) == {
+            "agent",
             "tool_retrieval",
             "classifier_route",
             "classifier_grade",

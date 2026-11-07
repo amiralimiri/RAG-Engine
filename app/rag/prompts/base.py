@@ -90,6 +90,12 @@ Question: {{question}}
 Web evidence:
 {{web_results}}""",
     "rag:direct_answer": """Respond briefly, warmly, and naturally as an enterprise IT support copilot to: {{question}}""",
+    "rag:agent": """You are an autonomous enterprise IT support agent.
+Use the available tools to gather evidence before answering the question.
+Question: {{question}}
+Current search query: {{current_query}}
+Chat History:
+{{chat_history}}""",
     "rag:condense_query": """Given the following conversation and a follow up question, rephrase the follow up question to be a standalone search query.
 Chat History:
 {{chat_history}}

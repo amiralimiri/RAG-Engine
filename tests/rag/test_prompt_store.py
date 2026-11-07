@@ -86,11 +86,12 @@ def test_interpolate_mustache_converts_non_string_values():
     assert res == "Count: 42, Valid: True"
 
 
-def test_canonical_prompts_contains_all_11_templates():
+def test_canonical_prompts_contains_all_12_templates():
     """Verify CANONICAL_PROMPTS dictionary contains all required prompt keys."""
     from app.rag.prompts.base import CANONICAL_PROMPTS
 
     expected_keys = {
+        "rag:agent",
         "rag:router:llm",
         "rag:router:jev",
         "rag:grade_kb:llm",
