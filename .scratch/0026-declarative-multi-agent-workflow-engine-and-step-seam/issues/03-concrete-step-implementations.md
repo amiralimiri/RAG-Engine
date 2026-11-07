@@ -13,11 +13,11 @@ Extracts logic for retrieval, grading, routing, and prompt generation into dedic
 **Status:**
 ready-for-agent
 
-- [ ] Implement `ToolRetrievalStep` in `app/rag/steps/retrieval.py` supporting injected tool, query extraction, evidence aggregation, and state emission.
-- [ ] Implement `ClassifierRouteStep` and `ClassifierGradingStep` in `app/rag/steps/classifier.py` supporting `WorkflowClassifier` methods.
-- [ ] Implement `PromptGenerationStep` in `app/rag/steps/generation.py` supporting chat history formatting, `PromptStore` rendering, LLM invocation, and answer extraction.
-- [ ] Implement `QueryReformulationStep` in `app/rag/steps/generation.py` supporting condensation and rewriting modes.
-- [ ] Register all step classes in `StepCatalog` with canonical aliases (`tool_retrieval`, `classifier_route`, `classifier_grade`, `prompt_generate`, `query_reformulate`).
-- [ ] Re-export steps cleanly from `app/rag/steps/__init__.py`.
-- [ ] Add unit test suites in `tests/rag/steps/test_retrieval_step.py`, `tests/rag/steps/test_classifier_steps.py`, and `tests/rag/steps/test_generation_steps.py` using offline test doubles (`FakeChatModel`, `FakeRAGTool`, `FakeWorkflowClassifier`, `FakePromptStore`).
-- [ ] Pass `ruff check` and `pyright` on modified modules.
+- [x] Implement `ToolRetrievalStep` in `app/rag/steps/retrieval.py` supporting injected tool, query extraction, evidence aggregation, and state emission.
+- [x] Implement `ClassifierRouteStep` and `ClassifierGradingStep` in `app/rag/steps/classifier.py` supporting `WorkflowClassifier` methods.
+- [x] Implement `PromptGenerationStep` in `app/rag/steps/generation.py` supporting chat history formatting, `PromptStore` rendering, LLM invocation, and answer extraction.
+- [x] Implement `QueryReformulationStep` in `app/rag/steps/generation.py` supporting condensation and rewriting modes.
+- [x] Register all step classes in `StepCatalog` with canonical aliases (`tool_retrieval`, `classifier_route`, `classifier_grade`, `prompt_generate`, `query_reformulate`).
+- [x] Re-export steps cleanly from `app/rag/steps/__init__.py`.
+- [x] Add unit test suites in `tests/rag/steps/test_retrieval_step.py`, `tests/rag/steps/test_classifier_steps.py`, and `tests/rag/steps/test_generation_steps.py` using offline test doubles (`FakeChatModel`, `FakeRAGTool`, `FakeWorkflowClassifier`, `FakePromptStore`).
+- [x] Pass `ruff check` and `pyright` on modified modules.

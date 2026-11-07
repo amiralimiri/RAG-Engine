@@ -254,8 +254,13 @@ def get_step_catalog() -> StepCatalog:
 
 
 def reset_step_catalog() -> None:
-    """Reset the global default StepCatalog singleton for test isolation."""
+    """Reset the global default StepCatalog singleton and repopulate built-in steps."""
     _default_step_catalog.clear()
+
+    # Imported lazily to avoid circular imports: the package module imports this base module.
+    from app.rag.steps import register_default_steps
+
+    register_default_steps(_default_step_catalog)
 
 
 StepClassT = TypeVar("StepClassT", bound=type[WorkflowStep])

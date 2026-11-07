@@ -11,8 +11,10 @@ from app.rag.steps.base import (
     BaseStep,
     StepCatalog,
     WorkflowStep,
+    get_step_catalog,
     get_step_class,
     register_step,
+    reset_step_catalog,
     resolve_step_type,
 )
 
@@ -374,3 +376,17 @@ class TestStepCatalog:
 
         assert get_step_class("global_dummy") is GlobalDummyStep
         assert resolve_step_type("global_dummy") is GlobalDummyStep
+
+    def test_reset_step_catalog_repopulates_builtin_steps(self) -> None:
+        get_step_catalog().clear()
+        assert get_step_catalog().list_steps() == []
+
+        reset_step_catalog()
+
+        assert set(get_step_catalog().list_steps()) == {
+            "tool_retrieval",
+            "classifier_route",
+            "classifier_grade",
+            "prompt_generate",
+            "query_reformulate",
+        }

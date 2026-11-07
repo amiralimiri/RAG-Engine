@@ -20,15 +20,20 @@ class KnowledgeSearchInput(BaseModel):
     query: str = Field(description="Search query to find internal documentation")
 
 
-def _format_docs(docs: list[Document]) -> str:
-    if not docs:
-        return "No relevant internal documentation found."
-    formatted = []
+def format_documents(docs: list[Document]) -> str:
+    """Format documents as prompt-ready source-prefixed context blocks."""
+    blocks: list[str] = []
     for doc in docs:
         source = doc.metadata.get("source", "unknown") if hasattr(doc, "metadata") and doc.metadata else "unknown"
         content = doc.page_content if hasattr(doc, "page_content") else str(doc)
-        formatted.append(f"[Source: {source}]\n{content}")
-    return "\n\n".join(formatted)
+        blocks.append(f"[Source: {source}]\n{content}")
+    return "\n\n".join(blocks)
+
+
+def _format_docs(docs: list[Document]) -> str:
+    if not docs:
+        return "No relevant internal documentation found."
+    return format_documents(docs)
 
 
 def _extract_citations(docs: list[Document]) -> list[Citation]:
@@ -113,4 +118,5 @@ def create_retriever_tool(
 __all__ = [
     "KnowledgeSearchInput",
     "create_retriever_tool",
+    "format_documents",
 ]
