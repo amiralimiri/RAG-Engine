@@ -4,9 +4,8 @@ Defines the WorkflowStep protocol seam, BaseStep abstract base class with dot-no
 input/output mapping, and the thread-safe StepCatalog for step discovery and dynamic imports.
 """
 
-from __future__ import annotations
-
 import abc
+import copy
 import importlib
 import threading
 from collections.abc import Callable
@@ -93,66 +92,50 @@ class BaseStep(abc.ABC):
 
     def apply_outputs(
         self,
-        state_or_outputs: dict[str, Any],
-        outputs: dict[str, Any] | None = None,
+        outputs: dict[str, Any],
+        state: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """Apply step outputs into state, returning delta updates.
+        """Map step outputs into a pure delta update dictionary.
 
-        Supports writing to both top-level state fields and nested paths (like 'context.evidence').
-        Preserves existing data at intermediate levels.
+        Supports writing to both top-level state fields and nested paths (like 'context.evidence')
+        without mutating the caller's ``state``. When ``state`` is provided, existing data at the
+        target root key is deep-copied into the delta so LangGraph last-value channels preserve
+        unrelated sibling keys.
         """
-        if outputs is None:
-            state: dict[str, Any] = {}
-            step_outputs = state_or_outputs
-        else:
-            state = state_or_outputs
-            step_outputs = outputs
-
         delta: dict[str, Any] = {}
 
-        for key, val in step_outputs.items():
+        for key, val in outputs.items():
             target = self.outputs.get(key, key)
             if not target:
                 continue
 
-            parts = target.split(".")
-            if len(parts) == 1:
-                field = parts[0]
-                delta[field] = val
-                if isinstance(state, dict):
-                    state[field] = val
-            else:
-                root_key = parts[0]
-                if root_key not in delta:
-                    existing = state.get(root_key) if isinstance(state, dict) else None
-                    root_dict = dict(existing) if isinstance(existing, dict) else {}
-                    delta[root_key] = root_dict
-                else:
-                    root_dict = delta[root_key]
-                    if not isinstance(root_dict, dict):
-                        root_dict = {}
-                        delta[root_key] = root_dict
+            root_key, separator, nested_path = target.partition(".")
+            if not separator:
+                delta[root_key] = val
+                continue
 
-                curr_delta = root_dict
-                for part in parts[1:-1]:
-                    if part not in curr_delta or not isinstance(curr_delta[part], dict):
-                        curr_delta[part] = {}
-                    else:
-                        curr_delta[part] = dict(curr_delta[part])
-                    curr_delta = curr_delta[part]
-                curr_delta[parts[-1]] = val
+            if root_key not in delta or not isinstance(delta[root_key], dict):
+                existing = state.get(root_key) if isinstance(state, dict) else None
+                delta[root_key] = copy.deepcopy(existing) if isinstance(existing, dict) else {}
 
-                if isinstance(state, dict):
-                    if root_key not in state or not isinstance(state[root_key], dict):
-                        state[root_key] = {}
-                    curr_state = state[root_key]
-                    for part in parts[1:-1]:
-                        if part not in curr_state or not isinstance(curr_state[part], dict):
-                            curr_state[part] = {}
-                        curr_state = curr_state[part]
-                    curr_state[parts[-1]] = val
+            _write_dot_path(delta[root_key], nested_path, val)
 
         return delta
+
+
+def _write_dot_path(root: dict[str, Any], path: str, value: Any) -> None:
+    """Write ``value`` into ``root`` at a dot-notated path, creating intermediate dicts."""
+    parts = path.split(".")
+    current = root
+
+    for part in parts[:-1]:
+        nested = current.get(part)
+        if not isinstance(nested, dict):
+            nested = {}
+            current[part] = nested
+        current = nested
+
+    current[parts[-1]] = value
 
 
 class StepCatalog:
@@ -262,7 +245,18 @@ class StepCatalog:
 
 
 # Default singleton instance for application-wide step registration
-default_step_catalog = StepCatalog()
+_default_step_catalog = StepCatalog()
+
+
+def get_step_catalog() -> StepCatalog:
+    """Return the global default StepCatalog singleton."""
+    return _default_step_catalog
+
+
+def reset_step_catalog() -> None:
+    """Reset the global default StepCatalog singleton for test isolation."""
+    _default_step_catalog.clear()
+
 
 StepClassT = TypeVar("StepClassT", bound=type[WorkflowStep])
 
@@ -271,7 +265,7 @@ def register_step(alias: str, *, catalog: StepCatalog | None = None) -> Callable
     """Decorator to register a WorkflowStep class in the StepCatalog."""
 
     def decorator(cls: StepClassT) -> StepClassT:
-        target_catalog = catalog if catalog is not None else default_step_catalog
+        target_catalog = catalog if catalog is not None else get_step_catalog()
         target_catalog.register(alias, cls)
         return cls
 
@@ -280,11 +274,11 @@ def register_step(alias: str, *, catalog: StepCatalog | None = None) -> Callable
 
 def get_step_class(alias: str, *, catalog: StepCatalog | None = None) -> type[WorkflowStep] | None:
     """Convenience helper to retrieve a step class from the default or specified catalog."""
-    target_catalog = catalog if catalog is not None else default_step_catalog
+    target_catalog = catalog if catalog is not None else get_step_catalog()
     return target_catalog.get_step_class(alias)
 
 
 def resolve_step_type(identifier: str, *, catalog: StepCatalog | None = None) -> type[WorkflowStep]:
     """Convenience helper to resolve a step class from the default or specified catalog."""
-    target_catalog = catalog if catalog is not None else default_step_catalog
+    target_catalog = catalog if catalog is not None else get_step_catalog()
     return target_catalog.resolve_step_type(identifier)

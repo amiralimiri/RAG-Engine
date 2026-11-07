@@ -15,6 +15,7 @@ import app.core.telemetry as telemetry
 from app.rag.evaluation import reset_evaluator
 from app.rag.memory import reset_conversation_memory
 from app.rag.prompts import LocalPromptStore, get_prompt_store, reset_prompt_store
+from app.rag.steps import reset_step_catalog
 from app.rag.workflows import register_default_workflows
 from app.rag.workflows.base import (
     EvalContext,
@@ -210,6 +211,16 @@ def clean_registry() -> Generator[WorkflowRegistry]:
 
 
 @pytest.fixture(autouse=True)
+def clean_step_catalog() -> Generator[None]:
+    """Autouse fixture resetting the global StepCatalog singleton before and after each test."""
+    reset_step_catalog()
+    try:
+        yield
+    finally:
+        reset_step_catalog()
+
+
+@pytest.fixture(autouse=True)
 def clean_runner() -> Generator[None]:
     """Autouse fixture resetting global WorkflowRunner singleton before and after each test."""
     reset_workflow_runner()
@@ -287,6 +298,7 @@ __all__ = [
     "clean_prompt_store",
     "clean_registry",
     "clean_runner",
+    "clean_step_catalog",
     "clean_telemetry",
     "fake_prompt_store",
     "register_mock_workflow",

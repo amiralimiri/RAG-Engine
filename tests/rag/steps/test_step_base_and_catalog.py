@@ -1,16 +1,16 @@
 """Unit tests for WorkflowStep protocol, BaseStep mapping helpers, and StepCatalog."""
 
 import threading
-from typing import Any
+from typing import Any, TypedDict, cast
 
 import pytest
 from langchain_core.runnables import RunnableConfig
+from langgraph.graph import END, START, StateGraph
 
 from app.rag.steps.base import (
     BaseStep,
     StepCatalog,
     WorkflowStep,
-    default_step_catalog,
     get_step_class,
     register_step,
     resolve_step_type,
@@ -47,6 +47,21 @@ class IncompleteStepMissingCall:
         self, state: dict[str, Any], config: RunnableConfig | None = None
     ) -> dict[str, Any]:
         return {}
+
+
+class GraphSampleState(TypedDict):
+    """Simple graph state used for LangGraph native compatibility testing."""
+
+    value: int
+
+
+class IncrementStep(BaseStep):
+    """Concrete step exercising LangGraph-native node execution."""
+
+    async def execute(
+        self, state: dict[str, Any], config: RunnableConfig | None = None
+    ) -> dict[str, Any]:
+        return {"value": state["value"] + 1}
 
 
 class IncompleteStepMissingExecute:
@@ -154,12 +169,10 @@ class TestBaseStepApplyOutputs:
         state: dict[str, Any] = {"question": "Hello"}
         step_outputs = {"answer": "Generated answer", "source": "kb"}
 
-        delta = step.apply_outputs(state, step_outputs)
+        delta = step.apply_outputs(step_outputs, state)
 
         assert delta == {"answer": "Generated answer", "source_used": "kb"}
-        assert state["answer"] == "Generated answer"
-        assert state["source_used"] == "kb"
-        assert state["question"] == "Hello"
+        assert state == {"question": "Hello"}
 
     def test_apply_outputs_nested_paths_creates_structures(self) -> None:
         step = DummyConformingStep(
@@ -171,12 +184,11 @@ class TestBaseStepApplyOutputs:
             "agent_info": {"model": "gpt-4o"},
         }
 
-        delta = step.apply_outputs(state, step_outputs)
+        delta = step.apply_outputs(step_outputs, state)
 
         assert delta["context"]["evidence"] == ["doc1", "doc2"]
         assert delta["context"]["agent"]["details"] == {"model": "gpt-4o"}
-        assert state["context"]["evidence"] == ["doc1", "doc2"]
-        assert state["context"]["agent"]["details"] == {"model": "gpt-4o"}
+        assert state == {}
 
     def test_apply_outputs_preserves_existing_nested_data(self) -> None:
         step = DummyConformingStep(outputs={"evidence": "context.evidence"})
@@ -188,24 +200,23 @@ class TestBaseStepApplyOutputs:
         }
         step_outputs = {"evidence": ["doc-a"]}
 
-        delta = step.apply_outputs(state, step_outputs)
+        delta = step.apply_outputs(step_outputs, state)
 
         assert delta["context"]["user_id"] == "u-123"
         assert delta["context"]["prior_step"] == "init"
         assert delta["context"]["evidence"] == ["doc-a"]
 
-        assert state["context"]["user_id"] == "u-123"
-        assert state["context"]["evidence"] == ["doc-a"]
+        assert state["context"] == {"user_id": "u-123", "prior_step": "init"}
 
     def test_apply_outputs_deeply_nested_paths(self) -> None:
         step = DummyConformingStep(outputs={"result": "a.b.c.d"})
         state: dict[str, Any] = {"a": {"b": {"existing": 10}}}
 
-        delta = step.apply_outputs(state, {"result": "deep_val"})
+        delta = step.apply_outputs({"result": "deep_val"}, state)
 
         assert delta["a"]["b"]["existing"] == 10
         assert delta["a"]["b"]["c"]["d"] == "deep_val"
-        assert state["a"]["b"]["c"]["d"] == "deep_val"
+        assert state == {"a": {"b": {"existing": 10}}}
 
     def test_apply_outputs_single_argument_mode(self) -> None:
         step = DummyConformingStep(outputs={"res": "context.val"})
@@ -213,14 +224,28 @@ class TestBaseStepApplyOutputs:
         assert delta == {"context": {"val": "single_arg"}}
 
 
+class TestLangGraphNativeCompatibility:
+    """Tests verifying BaseStep instances plug directly into LangGraph StateGraph nodes."""
+
+    @pytest.mark.asyncio
+    async def test_step_executes_as_direct_state_graph_node(self) -> None:
+        step = IncrementStep(name="sample")
+
+        builder = StateGraph(GraphSampleState)
+        # WorkflowStep types state as dict[str, Any] per ADR-0026, while LangGraph's StateNode
+        # protocols are generic over TypedDict schemas. Narrow the mismatch at the wiring boundary.
+        builder.add_node("sample", cast(Any, step))
+        builder.add_edge(START, "sample")
+        builder.add_edge("sample", END)
+        graph = builder.compile()
+
+        result = await graph.ainvoke({"value": 1})
+
+        assert result == {"value": 2}
+
+
 class TestStepCatalog:
     """Tests verifying thread-safety, registration, lookups, and dynamic imports."""
-
-    @pytest.fixture(autouse=True)
-    def clean_catalog(self) -> Any:
-        default_step_catalog.clear()
-        yield
-        default_step_catalog.clear()
 
     def test_register_and_get_step_class(self) -> None:
         catalog = StepCatalog()
